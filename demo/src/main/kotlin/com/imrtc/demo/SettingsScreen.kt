@@ -12,9 +12,8 @@ import com.imrtc.engine.media.IMVideoProfile
 /**
  * 设置（草图 §02-D）。
  *
- * 草图把这一屏定义成「**Kit 配置项清单**」。Android 这边目前只有一项是真的
- * （详细日志）——悬浮窗、来电横幅那两项 Kit 还没做，**所以这里不摆开关**：
- * 摆一个拨了不生效的开关，比没有这一项更糟。等 Kit 补上再加。
+ * 草图把这一屏定义成「**Kit 配置项清单**」，三个开关**都是真的**：
+ * 拨完立刻生效、不用重登（[com.imrtc.uikit.IMCallKitConfig] 是引用类型）。
  *
  * 画质档位是**宿主策略，不是服务端下发的**（见 [IMVideoProfile]）：真实宿主从自己的
  * 配置接口拿这个值，「后台可控」在产品上就是这个意思。放在设置页里是为了让这条边界看得见。
@@ -37,14 +36,25 @@ internal class SettingsScreen(private val activity: Activity) : DemoScreen {
                         activity, "Kit 可配项",
                         listOf(
                             switchRow(
+                                "来电先出横幅",
+                                "关掉则来电直接全屏",
+                                DemoSession.bannerFirst,
+                            ) { on -> DemoSession.bannerFirst = on },
+                            switchRow(
+                                "悬浮窗",
+                                "允许把通话收成悬浮球（通话页左上角 ⌄）",
+                                DemoSession.floatingWindow,
+                            ) { on -> DemoSession.floatingWindow = on },
+                            switchRow(
                                 "详细日志",
                                 "debug 级别，含主讲人 / 网络质量那些周期事件",
                                 DemoSession.verboseLog,
                             ) { on -> DemoSession.verboseLog = on },
                             DemoUI.note(
                                 activity,
-                                "悬浮窗、来电横幅两项 Android Kit 还没实现，所以这里不摆开关——" +
-                                    "拨了不生效的开关比没有更糟。",
+                                "横幅与悬浮球都是应用内浮层，不申请 SYSTEM_ALERT_WINDOW" +
+                                    "（那是敏感权限，会影响宿主上架）。" +
+                                    "代价：离开本 App 就看不见了，通话本身不受影响。",
                             ),
                         ),
                     ),

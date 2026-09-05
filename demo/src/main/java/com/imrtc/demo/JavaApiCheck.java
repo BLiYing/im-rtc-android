@@ -9,6 +9,7 @@ import com.imrtc.engine.IMSpeaker;
 import com.imrtc.engine.media.IMVideoProfile;
 import com.imrtc.engine.webrtc.IMWebRTCAdapter;
 import com.imrtc.uikit.IMCallKit;
+import com.imrtc.uikit.IMCallKitConfig;
 
 import java.util.Arrays;
 import java.util.List;
@@ -100,8 +101,14 @@ final class JavaApiCheck {
         engine.attachView("bob", engine.createVideoView(context));
         engine.startLocalPreview(engine.createVideoView(context));
 
-        // UIKit 的入口
+        // UIKit 的入口。两参数（默认配置）与三参数（自带配置）两种形态 Java 都要能写。
+        IMCallKitConfig kitConfig = new IMCallKitConfig();
+        kitConfig.setBannerFirst(false);
+        kitConfig.setFloatingWindow(true);
+        boolean banner = kitConfig.getBannerFirst();
+
         IMCallKit.start(context, engine);
+        IMCallKit.start(context, engine, kitConfig);
         IMCallEngineListener wrapped = IMCallKit.wrap(listener);
         IMCallKit.notifyOutgoing(Arrays.asList("bob"), "video", false);
         IMCallKit.notifyMeeting("room-1");

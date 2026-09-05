@@ -32,12 +32,15 @@ internal class IMCallView(context: Context) : LinearLayout(context) {
         fun onToggleCamera()
         fun onToggleSpeaker()
         fun onSwitchCamera()
+        fun onMinimize()
     }
 
     var actions: Actions? = null
 
     private val statusTitle = TextView(context)
     private val statusSubtitle = TextView(context)
+    /** 收进悬浮球。草图 §04 里是标题栏左上角那个 ⌄。 */
+    private val minimizeButton = TextView(context)
     private val grid = GridLayout(context)
     private val controls = LinearLayout(context)
 
@@ -64,6 +67,10 @@ internal class IMCallView(context: Context) : LinearLayout(context) {
         statusSubtitle.text = state.statusText
 
         answerButton.visibility = if (state.showAnswerButton) VISIBLE else GONE
+        // 「小窗」只在接通后、且宿主开了这项时出现。**拨出中 / 来电中收起来**，
+        // 剩一个不会动的小球挂在那儿，用户既不知道对方接没接，也想不起来怎么挂断。
+        minimizeButton.visibility =
+            if (state.canMinimize && IMCallKit.config.floatingWindow) VISIBLE else GONE
         // 来电时不该显示「翻转摄像头」——还没开摄像头呢。
         switchButton.visibility =
             if (state.phase == IMCallViewState.Phase.CONNECTED && state.cameraOn) VISIBLE else GONE
@@ -132,14 +139,32 @@ internal class IMCallView(context: Context) : LinearLayout(context) {
     }
 
     private fun buildHeader(): View = LinearLayout(context).apply {
-        orientation = VERTICAL
+        orientation = HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(24), dp(48), dp(24), dp(16))
         statusTitle.setTextColor(IMKitTheme.primaryText)
         statusTitle.textSize = 22f
         statusSubtitle.setTextColor(IMKitTheme.secondaryText)
         statusSubtitle.textSize = 14f
-        addView(statusTitle)
-        addView(statusSubtitle)
+        addView(
+            LinearLayout(context).apply {
+                orientation = VERTICAL
+                addView(statusTitle)
+                addView(statusSubtitle)
+            },
+            LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f),
+        )
+
+        minimizeButton.apply {
+            text = "⌄"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setTextColor(IMKitTheme.primaryText)
+            background = IMKitTheme.circleDrawable(IMKitTheme.controlOff)
+            contentDescription = "收进悬浮球"
+            setOnClickListener { actions?.onMinimize() }
+        }
+        addView(minimizeButton, LayoutParams(dp(36), dp(36)))
     }
 
     private fun buildControls(): View = controls.apply {

@@ -26,6 +26,11 @@ internal data class IMCallViewState(
     val members: Map<String, Member> = emptyMap(),
     val speakingUid: String = "",
     val endReason: String = "",
+    /**
+     * 通话已被收进悬浮球（草图 §04）。**通话本身照常进行**——这只是呈现形态。
+     * 所以它不在通话状态机里，只在视图模型里。
+     */
+    val isMinimized: Boolean = false,
 ) {
 
     enum class Phase { IDLE, INCOMING, OUTGOING, CONNECTING, CONNECTED, ENDED }
@@ -45,6 +50,12 @@ internal data class IMCallViewState(
     enum class Action { NONE, REJECT, CANCEL, HANGUP, LEAVE_ROOM }
 
     val showAnswerButton: Boolean get() = phase == Phase.INCOMING
+
+    /**
+     * 能不能收进悬浮球。**只有已经接通了才行**：拨出中 / 来电中收起来，
+     * 剩一个不会动的小球挂在那儿，用户既不知道对方接没接，也想不起来怎么挂断。
+     */
+    val canMinimize: Boolean get() = phase == Phase.CONNECTING || phase == Phase.CONNECTED
 
     /**
      * 标题栏那一行。
@@ -148,8 +159,16 @@ internal object IMCallViewReducer {
             state
         }
 
-    fun ended(state: IMCallViewState, reason: String) =
-        state.copy(phase = IMCallViewState.Phase.ENDED, endReason = reason, speakingUid = "")
+    /**
+     * 结束。**顺手把小窗展开**：结束原因（对方拒绝 / 忙线 / 无人接听）要让用户看见，
+     * 藏在一个 60dp 的球里等于没提示。
+     */
+    fun ended(state: IMCallViewState, reason: String) = state.copy(
+        phase = IMCallViewState.Phase.ENDED,
+        endReason = reason,
+        speakingUid = "",
+        isMinimized = false,
+    )
 
     fun userEnter(state: IMCallViewState, uid: String) =
         state.copy(members = state.members + (uid to (state.members[uid] ?: IMCallViewState.Member(uid))))
@@ -163,6 +182,13 @@ internal object IMCallViewReducer {
     }
 
     fun speaking(state: IMCallViewState, uid: String) = state.copy(speakingUid = uid)
+
+    /** 收进悬浮球。**接通之前不许收**，见 [IMCallViewState.canMinimize]。 */
+    fun minimize(state: IMCallViewState) =
+        if (state.canMinimize) state.copy(isMinimized = true) else state
+
+    /** 从悬浮球 / 横幅展开回全屏。 */
+    fun expand(state: IMCallViewState) = state.copy(isMinimized = false)
 
     fun toggleMic(state: IMCallViewState) = state.copy(micOn = !state.micOn)
 

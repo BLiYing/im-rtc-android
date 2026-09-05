@@ -11,6 +11,7 @@ import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMVideoProfile
 import com.imrtc.engine.webrtc.IMWebRTCAdapter
 import com.imrtc.uikit.IMCallKit
+import com.imrtc.uikit.IMCallKitConfig
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.concurrent.thread
@@ -69,6 +70,12 @@ internal object DemoSession {
     var onChange: (() -> Unit)? = null
 
     /**
+     * Kit 的可配项。**是引用类型、随时可改**：设置页拨完开关不用重登，
+     * 下一次形态切换就读到新值（这正是它不做成构造参数的原因）。
+     */
+    val kitConfig = IMCallKitConfig()
+
+    /**
      * 采集画质档位。**换了要重登才生效**——适配器是登录时造的（见 [IMVideoProfile]）。
      */
     var videoProfile: IMVideoProfile = IMVideoProfile.DEFAULT
@@ -84,6 +91,24 @@ internal object DemoSession {
             field = value
             IMRTCLog.setMinLevel(if (value) IMRTCLog.Level.DEBUG else IMRTCLog.Level.INFO)
             prefs.edit().putBoolean(KEY_VERBOSE, value).apply()
+            notifyChanged()
+        }
+
+    /** 来电先出横幅（[IMCallKitConfig.bannerFirst]）。存本地，重启还在。 */
+    var bannerFirst: Boolean
+        get() = kitConfig.bannerFirst
+        set(value) {
+            kitConfig.bannerFirst = value
+            prefs.edit().putBoolean(KEY_BANNER, value).apply()
+            notifyChanged()
+        }
+
+    /** 悬浮窗（[IMCallKitConfig.floatingWindow]）。 */
+    var floatingWindow: Boolean
+        get() = kitConfig.floatingWindow
+        set(value) {
+            kitConfig.floatingWindow = value
+            prefs.edit().putBoolean(KEY_FLOATING, value).apply()
             notifyChanged()
         }
 
@@ -107,6 +132,8 @@ internal object DemoSession {
         videoProfile = IMVideoProfile.PRESETS
             .firstOrNull { it.name == prefs.getString(KEY_PROFILE, "") } ?: IMVideoProfile.DEFAULT
         verboseLog = prefs.getBoolean(KEY_VERBOSE, true)
+        bannerFirst = prefs.getBoolean(KEY_BANNER, true)
+        floatingWindow = prefs.getBoolean(KEY_FLOATING, true)
         DemoLogSink.install()
     }
 
@@ -203,7 +230,7 @@ internal object DemoSession {
             IMWebRTCAdapter(applicationContext, videoProfile),
         )
         engine = instance
-        IMCallKit.start(applicationContext, instance)
+        IMCallKit.start(applicationContext, instance, kitConfig)
         instance.login(newToken)
         connectionText = "连接中…"
         notifyChanged()
@@ -367,5 +394,7 @@ internal object DemoSession {
     private const val KEY_AUTO = "auto_login"
     private const val KEY_PROFILE = "video_profile"
     private const val KEY_VERBOSE = "verbose_log"
+    private const val KEY_BANNER = "banner_first"
+    private const val KEY_FLOATING = "floating_window"
     private const val KEY_RECORDS = "records"
 }

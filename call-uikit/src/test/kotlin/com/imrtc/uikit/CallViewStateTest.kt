@@ -114,6 +114,37 @@ class CallViewStateTest {
     }
 
     @Test
+    fun `接通之前不许收进悬浮球`() {
+        // 拨出中收起来，剩一个不会动的小球挂在那儿：既不知道对方接没接，
+        // 也想不起来怎么挂断。所以 minimize 在这两个阶段必须是空操作。
+        val outgoing = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
+        assertFalse(IMCallViewReducer.minimize(outgoing).isMinimized)
+
+        val incoming = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", "audio", false)
+        assertFalse(IMCallViewReducer.minimize(incoming).isMinimized)
+
+        val connected = IMCallViewReducer.connected(
+            IMCallViewReducer.begin(outgoing, "c-1", "r-1", "audio", "caller"),
+        )
+        assertTrue(IMCallViewReducer.minimize(connected).isMinimized)
+        assertFalse(IMCallViewReducer.expand(IMCallViewReducer.minimize(connected)).isMinimized)
+    }
+
+    @Test
+    fun `通话结束要把小窗展开，否则结束原因没人看见`() {
+        val connected = IMCallViewReducer.connected(
+            IMCallViewReducer.begin(IMCallViewState(), "c-1", "r-1", "audio", "caller"),
+        )
+        val minimized = IMCallViewReducer.minimize(connected)
+        assertTrue(minimized.isMinimized)
+
+        // 「对方拒绝」「对方忙线」藏在一个 60dp 的球里等于没提示。
+        val ended = IMCallViewReducer.ended(minimized, "busy")
+        assertFalse("结束时必须退出小窗", ended.isMinimized)
+        assertEquals("对方忙线", ended.statusText)
+    }
+
+    @Test
     fun `格子最多九个`() {
         var state = IMCallViewState()
         repeat(12) { state = IMCallViewReducer.userEnter(state, "u$it") }

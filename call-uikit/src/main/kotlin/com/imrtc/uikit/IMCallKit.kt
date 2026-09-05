@@ -1,11 +1,14 @@
 package com.imrtc.uikit
 
 import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.widget.FrameLayout
+import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.IMCallEngine
 import com.imrtc.engine.IMCallEngineListener
 import com.imrtc.engine.IMNetworkQuality
@@ -19,7 +22,7 @@ import com.imrtc.engine.IMSpeaker
  *
  * 它做三件事：
  * 1. 把 Engine 的回调折成 [IMCallViewState]（纯值，可单测）；
- * 2. 来电/拨出时把通话界面拉起来，结束时关掉；
+ * 2. 按当前状态**决定用哪种呈现形态**——全屏页 / 来电横幅 / 悬浮球，见 [desiredMode]；
  * 3. 把界面上的点击翻译回 Engine 的方法调用。
  */
 object IMCallKit {
@@ -29,6 +32,26 @@ object IMCallKit {
     @Volatile
     private var engine: IMCallEngine? = null
     private var appContext: Context? = null
+
+    /** Kit 的可配项。宿主可以随时改，下一次形态切换就读到新值。 */
+    @JvmStatic
+    var config: IMCallKitConfig = IMCallKitConfig()
+        private set
+
+    /** 横幅 / 悬浮球都挂在这上面（应用内浮层，不申请 SYSTEM_ALERT_WINDOW）。 */
+    private val overlay = IMCallOverlay()
+
+    /**
+     * 横幅已经被用户点开过。
+     *
+     * **它必须独立于 [IMCallViewState]**：状态里没有「用户看过横幅了」这回事，
+     * 而少了它的话，展开成全屏之后下一次刷新又会被判回横幅——界面来回跳。
+     */
+    private var bannerExpanded = false
+
+    private var mode = Mode.HIDDEN
+
+    private enum class Mode { HIDDEN, BANNER, BUBBLE, FULLSCREEN }
 
     @Volatile
     internal var state: IMCallViewState = IMCallViewState()
@@ -43,10 +66,14 @@ object IMCallKit {
      * 传进来的 `engine` 的 listener 会被 Kit 包一层：宿主自己的 listener 照常收到全部回调，
      * Kit 只是搭个便车。
      */
+    @JvmOverloads
     @JvmStatic
-    fun start(context: Context, engine: IMCallEngine) {
+    fun start(context: Context, engine: IMCallEngine, config: IMCallKitConfig = IMCallKitConfig()) {
         this.appContext = context.applicationContext
         this.engine = engine
+        this.config = config
+        // 横幅与悬浮球要知道挂到哪个 Activity 上；宿主传进来的可能是 Application，也可能是 Activity。
+        (context.applicationContext as? Application)?.let { IMActivityTracker.install(it) }
     }
 
     @JvmStatic
@@ -54,6 +81,9 @@ object IMCallKit {
         engine = null
         stopTimer()
         state = IMCallViewReducer.reset()
+        main.post { overlay.detach() }
+        mode = Mode.HIDDEN
+        bannerExpanded = false
     }
 
     /**
@@ -114,23 +144,101 @@ object IMCallKit {
 
     internal fun switchCamera() = engine?.switchCamera()
 
+    /** 收进悬浮球。接通之前不许收，见 [IMCallViewState.canMinimize]。 */
+    internal fun minimize() = update(IMCallViewReducer.minimize(state))
+
+    /** 从悬浮球 / 横幅展开回全屏。 */
+    internal fun expand() {
+        bannerExpanded = true
+        update(IMCallViewReducer.expand(state))
+    }
+
     /** 宿主主动拨出时告诉 Kit 一声，好把界面拉起来（回调里只有被叫侧的信息）。 */
     @JvmStatic
     fun notifyOutgoing(peers: List<String>, mediaType: String, isGroup: Boolean) {
         update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup))
-        present()
     }
 
     /** 宿主进会议房时同理。 */
     @JvmStatic
     fun notifyMeeting(roomId: String) {
         update(IMCallViewReducer.meeting(state, roomId))
-        present()
     }
 
     private fun update(next: IMCallViewState) {
         state = next
-        main.post { observers.toList().forEach { it(next) } }
+        main.post {
+            observers.toList().forEach { it(next) }
+            applyPresentation(next)
+        }
+    }
+
+    // ── 呈现形态：全屏 / 横幅 / 悬浮球 ────────────────────────────────
+
+    /**
+     * 按当前状态决定用哪种形态，并把上一种收掉。**每次状态更新都会走一遍**，
+     * 所以它必须便宜且幂等——一秒一次的计时也会走到这里。
+     */
+    private fun applyPresentation(current: IMCallViewState) {
+        if (current.phase == IMCallViewState.Phase.IDLE) bannerExpanded = false
+        val host = IMActivityTracker.foreground()
+        val wanted = desiredMode(current, host)
+        val changed = wanted != mode
+        mode = wanted
+        when (wanted) {
+            Mode.HIDDEN -> if (changed) overlay.detach()
+            Mode.FULLSCREEN -> {
+                overlay.detach()
+                if (changed) present()
+            }
+            Mode.BANNER -> mountBanner(host, current)
+            Mode.BUBBLE -> mountBubble(host, current)
+        }
+        if (changed) IMRTCLog.i("kit", "通话界面形态：${wanted.name.lowercase()}")
+    }
+
+    /**
+     * 形态判定。顺序有讲究，**小窗优先于横幅**：来电时不可能是小窗（还没接通），
+     * 反过来接通后也不该再出横幅。
+     *
+     * 横幅与悬浮球都是**应用内浮层**，没有前台 Activity 就挂不上去：
+     * - 来电时退回全屏 Activity（App 在后台，这本来就是系统来电的做法）；
+     * - 已经收成小窗时**什么都不显示**（HIDDEN）——通话照常，前台服务的通知还在，
+     *   把用户硬拽回 App 才是错的。
+     */
+    private fun desiredMode(current: IMCallViewState, host: Activity?): Mode = when {
+        current.phase == IMCallViewState.Phase.IDLE -> Mode.HIDDEN
+        current.isMinimized && config.floatingWindow ->
+            if (host != null) Mode.BUBBLE else Mode.HIDDEN
+        current.phase == IMCallViewState.Phase.INCOMING && config.bannerFirst &&
+            !bannerExpanded && host != null -> Mode.BANNER
+        else -> Mode.FULLSCREEN
+    }
+
+    private fun mountBanner(host: Activity?, current: IMCallViewState) {
+        val banner = overlay.mount(
+            host,
+            IMIncomingBanner::class.java,
+            { activity ->
+                IMIncomingBanner(activity).apply {
+                    onAccept = { answer() }
+                    onReject = { hangup() }
+                    onExpand = { expand() }
+                }
+            },
+            { activity -> IMCallOverlay.bannerParams(activity) },
+        )
+        banner?.render(current)
+    }
+
+    private fun mountBubble(host: Activity?, current: IMCallViewState) {
+        val bubble = overlay.mount(
+            host,
+            IMFloatingBubble::class.java,
+            { activity -> IMFloatingBubble(activity).apply { onExpand = { expand() } } },
+            { activity -> IMFloatingBubble.initialParams(activity) },
+        )
+        bubble?.render(current)
     }
 
     private fun present() {
@@ -170,13 +278,11 @@ object IMCallKit {
 
         override fun onCallReceived(callId: String, caller: String, mediaType: String, isGroup: Boolean) {
             update(IMCallViewReducer.incoming(state, callId, caller, mediaType, isGroup))
-            present()
             host.onCallReceived(callId, caller, mediaType, isGroup)
         }
 
         override fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {
             update(IMCallViewReducer.begin(state, callId, roomId, mediaType, role))
-            present()
             host.onCallBegin(callId, roomId, mediaType, role)
         }
 
@@ -273,6 +379,7 @@ class IMCallActivity : Activity() {
             override fun onToggleCamera() { IMCallKit.toggleCamera() }
             override fun onToggleSpeaker() { IMCallKit.toggleSpeaker() }
             override fun onSwitchCamera() { IMCallKit.switchCamera() }
+            override fun onMinimize() { IMCallKit.minimize() }
         }
         setContentView(view)
         IMCallKit.observe(observer)
@@ -291,6 +398,8 @@ class IMCallActivity : Activity() {
 
     private fun render(state: IMCallViewState) {
         view.render(state) { uid -> IMCallKit.videoViewFor(this, uid) }
-        if (state.phase == IMCallViewState.Phase.IDLE && !isFinishing) finish()
+        // 收进小窗 = 关掉全屏页（通话照常）。**不能只是隐藏**：留着它，宿主的界面
+        // 还是被盖着的，悬浮球也就无从谈起。
+        if ((state.phase == IMCallViewState.Phase.IDLE || state.isMinimized) && !isFinishing) finish()
     }
 }

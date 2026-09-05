@@ -1,6 +1,7 @@
 package com.imrtc.uikit
 
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 
 /**
  * 通话界面的视觉常量。
@@ -30,8 +31,24 @@ internal object IMKitTheme {
     /** 正在说话的高亮边框。 */
     val speaking = Color.parseColor("#30A46C")
 
+    /** 横幅与悬浮球的底色。**比通话页背景浅一档**：它们是浮在宿主界面之上的，
+     * 用同一个 #111214 会跟宿主的深色页面糊在一起，看不出这是一层浮层。 */
+    val bannerBackground = Color.parseColor("#22262C")
+    val avatarBackground = Color.parseColor("#3A3F47")
+
     /** 控制按钮直径（dp）。 */
     const val CONTROL_SIZE_DP = 56
 
     const val TILE_GAP_DP = 4
+
+    fun circleDrawable(color: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
+    }
+
+    fun roundedDrawable(color: Int, radiusPx: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = radiusPx.toFloat()
+        setColor(color)
+    }
 }
