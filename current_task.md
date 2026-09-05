@@ -44,14 +44,16 @@
 
 ## 已知坑 / 限制
 
-**开工前要问清楚的三件事**
-- **libwebrtc 版本能不能与 iOS 对齐**：iOS 锁的是 M152（`stasel/WebRTC` 152.0.0），
-  Android 侧 `io.github.webrtc-sdk:android` 的版本号体系不同，**有没有同一个 Chromium
-  里程碑要核对**。对不齐就要明写「两端不同里程碑」并盯着 simulcast / H.264 的行为差异。
-- **UI 用 View 还是 Compose**：UIKit 落地前定，中途换等于重写。
-- **有没有 Android 侧的首批宿主**：设计文档列的三个宿主（IMServer / IMProgram / im-web）
-  里没有 Android App。**没有宿主就没有「公开面 Java 友好」的真实校验场**，
-  `JavaApiCheck.java` 就是唯一的闸。
+**三个开工前问题已定（2026-09-05）**
+- **libwebrtc 里程碑对不齐，接受**：iOS 是 M152（`stasel/WebRTC` 152.0.0），Android 侧
+  `io.github.webrtc-sdk:android` **没有 M152**，最新是 M150（`150.7871.01`），另有仍在打补丁的
+  M144 稳定线。**锁 M150，兜底 M144**（改版本目录一行的事）。防线不是版本对齐，而是
+  协议 + 向量 + 跨端互打，见 `../im-rtc-server/docs/CLIENT_PARITY.md` §3。**H.264 要专门跨端实测。**
+- **UI 用原生 View，不用 Compose**：`SurfaceViewRenderer` 本就是 View；UIKit 是要塞进别人 App 的库，
+  不该把 Compose 运行时强加给宿主。宿主自己是 Compose 应用不受影响（`AndroidView` 能嵌）。
+- **不新建 Android 宿主空项目**：空壳证明不了任何东西。真实校验场是
+  `demo/` 里的 **`JavaApiCheck.java`**（纯 Java 调一遍全部公开 API，**编译即验证**）——
+  这一招在 iOS 侧抓到过真问题。等公司真有 Android App 要接入时，再按 P5 的方式做一次接入示例。
 
 **从另外三端搬过来的坑（别再踩第二遍）**
 - **协议里三处与旧草案不同**：下行 `timeout` → `call.no_answer`；草图 §09 的 `room_ready` →
@@ -83,6 +85,8 @@
 - 厂商 ROM 的后台限制差异很大，**「我这台过了」不等于「Android 过了」**。
 
 ## 关联工程 / 常用命令
+
+- **各端能力对照表：`../im-rtc-server/docs/CLIENT_PARITY.md`**（逐端逐特性状态的**单一真相源**，✅ 只写在那里，本文件不重复）。
 
 - 五仓（本地同级 `/Users/liying/IOSProject/im-rtc/`）：
   [im-rtc-server](https://github.com/BLiYing/im-rtc-server)（**协议契约在这里，只读引用**）·

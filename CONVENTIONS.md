@@ -140,6 +140,11 @@ libwebrtc 是几十 MB 的预编译包，一旦被 Engine 直接依赖，「跑�
 
 ## 9. UI（仅 call-uikit）
 
+- **用原生 View + ViewBinding，不用 Compose**（2026-09-05 定）：`SurfaceViewRenderer` 本就是 View；
+  UIKit 是要塞进别人 App 的库，不该把 Compose 运行时与 Material 依赖强加给宿主；
+  且 iOS 的 Kit 用的是 UIKit 而非 SwiftUI，同形态照着移植最省事。
+  **宿主自己是 Compose 应用没关系**——View 能用 `AndroidView` 嵌进 Compose，反过来才麻烦。
+
 - **通话页固定深色、不随宿主主题**（对齐草图 §01；FaceTime / Telegram 同做法）。
   颜色集中在 `KitTheme`，禁止在组件里硬编码色值。
 - 控制按钮统一 56dp 圆形；**开启态白底黑字**；挂断恒红、接听恒绿。
@@ -155,6 +160,8 @@ libwebrtc 是几十 MB 的预编译包，一旦被 Engine 直接依赖，「跑�
 
 - **每加一个功能就配单测**。状态机与信令编解码是**必须**有测试的部分。
 - 状态机跑 `im-rtc-server/docs/conformance/*.json` 的**一致性向量**，与另外四端同一份。
+- **能力状态写进 `../im-rtc-server/docs/CLIENT_PARITY.md`**，那是逐端逐特性的单一真相源；
+  本仓 `current_task.md` 只写「当前在做什么、坑在哪」，不重复 ✅。
   **只读引用，不许在本仓复制一份**。
 - 纯逻辑（状态机、帧编解码、格子布局计算）用 JUnit 直接跑在 JVM 上，
   **不需要模拟器、不需要 Robolectric**。做不到就说明 §1 那条分层被破坏了。

@@ -24,13 +24,16 @@ Android 用 Kotlin **独立实现**（2026-09-05 拍板），不共享桌面端�
 ## 技术栈
 - 语言：**Kotlin**，JDK 17，**minSdk 24 / compileSdk 35**（开工时按当时最新核定）
 - 构建：**Gradle KTS + 版本目录 `gradle/libs.versions.toml`**（依赖版本集中一处锁定）
-- 媒体：**libwebrtc 预编译包**（`io.github.webrtc-sdk:android`），`PeerConnectionFactory` /
-  `SurfaceViewRenderer` / `JavaAudioDeviceModule`。**版本锁定，且开工前要核对能否与 iOS 同一个
-  Chromium 里程碑**（iOS 现在是 M152）
+- 媒体：**libwebrtc 预编译包 `io.github.webrtc-sdk:android`，锁 `150.7871.01`（M150）**，
+  兜底 `144.7559.15`（M144，补丁最多的成熟线）。`PeerConnectionFactory` / `SurfaceViewRenderer` /
+  `JavaAudioDeviceModule`。**与 iOS 的 M152 对不齐是已知且可接受的**——理由与防线见
+  `../im-rtc-server/docs/CLIENT_PARITY.md` §3
 - 信令：**OkHttp `WebSocket`**，JSON
 - JSON：**自研严格值模型**（对齐 iOS 的 `IMJSON`：类型里压根没有 null 与 double 两个 case）。
   **禁止 `org.json`**——它在 JVM 单测里是空壳桩，方法一律返回默认值，测试会假绿
-- UI：原生 View + ViewBinding（或 Compose，开工时定），**不引第三方 UI 库**
+- UI：**原生 View + ViewBinding**（2026-09-05 定，不用 Compose：视频渲染的
+  `SurfaceViewRenderer` 本就是 View，Compose 里还得 `AndroidView` 包一层；
+  UIKit 是要塞进别人 App 的库，不该把 Compose 运行时强加给宿主），**不引第三方 UI 库**
 
 ## 工程结构（规划，落地时按此展开）
 ```
