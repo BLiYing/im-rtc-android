@@ -51,7 +51,7 @@ im-rtc-android/
 │   │   ├── media/                      # IMMediaAdapter 接口（只有接缝，没有实现）
 │   │   ├── device/                     # 麦克风/摄像头/扬声器、蓝牙路由、权限
 │   │   └── log/                        # IMRTCLog + 脱敏 + 可注入 sink
-│   └── src/test/kotlin/                # 纯 JVM 单测：向量、状态机、编解码（不需要设备）
+│   └── src/test/kotlin/                # 纯 JVM 单测：向量、状态机、编解码（不需要设备）✅ 已落地
 ├── call-engine-webrtc/                 # 媒体实现（org.webrtc）+ 前台服务 + 音频路由
 ├── call-uikit/                         # 来电横幅 / 1v1 / 九宫格 / 悬浮窗 / 控制条
 ├── demo/                               # **Demo App**：登录/拨号/通话记录/设置（本仓的一个模块，不是独立工程）
@@ -95,7 +95,8 @@ im-rtc-android/
 ./scripts/test.sh                # 唯一测试入口：体量门禁 + 编译 + 单测
 BUILD_ONLY=1 ./scripts/test.sh   # 只编译
 ```
-> 脚本与 Gradle 工程随第一刀落地补齐；**当前仓库只有文档与体量门禁**。
+> Gradle 工程与四道门禁已随第一刀落地（2026-09-05）。`test.sh` 六步：
+> 体量 → 分层 → 日志纪律 → 向量可达 → 编译（含 Demo APK）→ 纯 JVM 单测。
 
 ## 关联仓库
 | 仓库 | 内容 |

@@ -6,7 +6,20 @@
 
 ## 当前焦点
 
-**仓库刚建（2026-09-05），只有文档与体量门禁，零代码。**
+**第一刀已落地（2026-09-05）：Gradle 骨架 + 四道门禁 + 严格 JSON + 向量加载器，
+`./scripts/test.sh` 六步全绿（16 个用例，纯 JVM，不需要模拟器也不需要真机）。**
+
+| 落地物 | 内容 | 怎么验的 |
+|---|---|---|
+| Gradle 骨架 | 四模块 + 版本目录 + wrapper 8.13（AGP 8.12.1 / Kotlin 1.9.24 / JDK 17） | `assembleDebug` 出 791 KB 的 Demo APK |
+| `protocol/IMJson` | 严格值模型：**类型里没有 Null 与 Double 两个 case** | — |
+| `protocol/IMJsonParser` | 严格解析：拒 null / 拒浮点 / 整数**按值**判定 / 越界拒 / NUL 拒 / 重复键 last-wins | 11 个用例 |
+| `IMJsonError.Kind` | STRUCTURE → `bad_envelope`，VALUE → `bad_params`（`envelope.json` 分开断言的那两个） | 同上 |
+| 向量加载器 | 去 `../im-rtc-server/docs/conformance` 读五份，**找不到就失败，不静默跳过** | 5 个用例 |
+| 四道门禁 | 体量 / 分层 / 日志纪律 / 向量可达，**每道都带自检** | `test.sh` 第 1~4 步 |
+
+**加载器用的就是本仓自己的解析器**——五份向量文件本身就是第一批测试输入（实测：
+五份里没有 null、没有浮点、没有越界整数，严格解析器能原样吃下去）。
 
 两条已拍板的决定（五仓文档已同步，2026-09-05）：
 1. **Android 进入产品范围**，四仓变五仓。设计文档 §1 #6、§8、§10（新增 P6）、§11（新增第 10 项）已改。
@@ -28,11 +41,12 @@
 ## 下一步
 
 0. ~~五仓文档同步 + 建 `CLIENT_PARITY.md`~~ —— **已完成（2026-09-05）**。
-1. **第一刀**：Gradle 骨架（`call-engine` / `call-engine-webrtc` / `call-uikit` / `demo`
-   四模块 + 版本目录）+ `scripts/test.sh` + **JVM 单测跑通五份一致性向量的 runner**。
-   不需要 org.webrtc、不需要设备。
-2. **第二刀**：`protocol/` + `statemachine/`——对照 `../im-rtc-ios/Sources/IMCallEngine/`
-   的同名两层，向量全过。仍然不需要设备。
+1. ~~第一刀：Gradle 骨架 + 向量 runner~~ —— **已完成（2026-09-05）**。
+2. **第二刀（当前）**：`protocol/` 剩余部分 + `statemachine/`——对照
+   `../im-rtc-ios/Sources/IMCallEngine/` 的同名两层，**五份向量逐条跑过**。仍然不需要设备。
+   顺序：信封（`envelope.json` 26+9 条）→ 错误码与 reason 表（全表逐条）→
+   帧字段声明与注册表 → 通话机（16 条）→ 房间机（8 条）。
+   **JSON 写出器也在这一刀**（发送侧要「从填好默认值的实例起手」，见下面的默认值陷阱）。
 3. **第三刀**（**要等回调表冻结**）：`signaling/`（OkHttp WebSocket、握手、心跳、req_id 配对、退避重连、4401 三次上限）
    + 门面与回调表 + 日志回传。验收：真连本地服务端跑通进房离房（对齐 iOS 的 `LiveServerTests`）。
 4. **第四刀**：`call-engine-webrtc` 媒体 + 前台服务 + 音频焦点与路由。**真机验收**，
@@ -77,6 +91,20 @@
   Web 端漏了这条，症状是「其实重连成功了，界面一直停在重连中」。
 - **v1 不做主叫侧多设备扇出**：主叫的其他设备收不到「你的账号正在别处呼出」。写进 `CLIENT_PARITY`。
 - **MVP 不覆盖锁屏来电**：Android 侧需要 FCM 高优先级推送 + Telecom/`ConnectionService`，属后续期。
+
+**第一刀踩到 / 定下的**
+- **向量里 `input_data` 是原始 JSON 文本，`expect_data` 是对象**——两边形状不对称。
+  第一版把两个都断言成对象，被用例当场抓住。第二刀接「默认值填充」时别搞反：
+  输入要按**文本**原样喂进解析器，期望值才是解析后的对象。
+- **本机 Homebrew 装的 `gradle` 是坏的**：它的 `JAVA_HOME` 被写成占位符 `@@HOMEBREW_JAVA@@`，
+  直接敲 `gradle` 会报 "JAVA_HOME is set to an invalid directory"。
+  `scripts/test.sh` 里已兜底（`/usr/libexec/java_home -v 17`）——**用 `./gradlew` 或 `./scripts/test.sh`，别直接敲 `gradle`**。
+- **wrapper 锁 8.13，别随手升**：AGP 8.12.1 要求 Gradle ≥ 8.13，而 8.13 本机缓存里正好有，不用下载。
+- **`local.properties` 不入库**（里面是 `sdk.dir`，每台机器不一样）。新 clone 要自己建一份，
+  或者用 Android Studio 打开一次让它生成。
+- **`internal` 对同模块的单测是可见的**（Kotlin 的 internal 是模块级，AGP 给单测配了 friend path）。
+  所以 protocol 层整个是 `internal`、公开面保持干净的同时，测试照样能测——
+  **别为了「方便测试」把东西改成 public**。
 
 **Android 侧特有的（详见 [CONVENTIONS.md](CONVENTIONS.md) §8）**
 - 通话中必须起前台服务（Android 14 起还要 `FOREGROUND_SERVICE_MICROPHONE` / `_CAMERA`）。
