@@ -10,14 +10,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 第一刀的验收物：**五份一致性向量能被本仓读到、并且结构完整**。
+ * 任务一的验收物：**五份一致性向量能被本仓读到、并且结构完整**。
  *
  * 这里**不断言具体条数**（16 条 case、38 个错误码之类）——那种数字一加向量就得跟着改测试，
  * 而「向量增删」本来就是协议演进的正常动作。条数由服务端的 `check-protocol-consistency.py`
  * 与各端「逐条跑一遍」的测试去守；本文件守的是另一件事：
  * **文件在、能解析、头字段对、该有的清单不为空**。
  *
- * 逐条喂给协议层与状态机是第二刀的事（`envelope` → 信封解析，`call_fsm`/`room_fsm` → 状态机，
+ * 逐条喂给协议层与状态机是任务二的事（`envelope` → 信封解析，`call_fsm`/`room_fsm` → 状态机，
  * `error_codes`/`reasons` → 枚举表）。在那之前，这份测试保证的是「路是通的」。
  */
 class ConformanceVectorsTest {
@@ -46,7 +46,7 @@ class ConformanceVectorsTest {
             val name = case.optString("name") ?: error("default_case 缺 name")
             assertTrue("$name 缺 type", case.optString("type") != null)
             // 注意这里**两边形状不一样**：input_data 是原始 JSON 文本（发送侧要按文本原样喂），
-            // expect_data 是对象（填完默认值之后的期望结果）。第二刀接默认值填充时别搞反。
+            // expect_data 是对象（填完默认值之后的期望结果）。任务二接默认值填充时别搞反。
             assertTrue("$name 的 input_data 应是原始 JSON 文本", case.optString("input_data") != null)
             assertTrue("$name 的 expect_data 应是对象", case.fields["expect_data"] is IMJson.Obj)
         }

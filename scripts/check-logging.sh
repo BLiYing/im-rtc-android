@@ -7,7 +7,7 @@
 #   退出码 1 = 有违规；2 = 内部错误。
 #
 # 禁的两类：
-#   ① android.util.Log / Log.d(...) —— 日志必须走 Engine 的统一入口 IMRTCLog（第三刀落地），
+#   ① android.util.Log / Log.d(...) —— 日志必须走 Engine 的统一入口 IMRTCLog（任务三落地），
 #      否则脱敏、必带字段、热路径静默这几条规矩全都落空。
 #      顺带一提：**别指望 R8 帮你去掉 Log.d**——不显式配 assumenosideeffects，它会原样留在包里，
 #      参数字符串照样拼、照样有开销。
@@ -26,7 +26,9 @@ echo "== 日志纪律（CONVENTIONS §6）=="
 for m in $MODULES; do
   dir="$m/src/main"
   [ -d "$dir" ] || continue
-  hits=$(grep -rnE "$PATTERN" "$dir" --include="*.kt" --include="*.java" 2>/dev/null)
+  # IMRTCLog.kt 自己不算违规：它是唯一允许谈论平台日志的地方（注释里要写清楚禁的是什么），
+  # 也是将来真要接 android.util.Log 时唯一该改的文件。
+  hits=$(grep -rnE "$PATTERN" "$dir" --include="*.kt" --include="*.java" 2>/dev/null | grep -v "/IMRTCLog.kt:")
   if [ -n "$hits" ]; then
     echo "  ✗ FAIL  $m"
     echo "$hits" | sed 's/^/          /'

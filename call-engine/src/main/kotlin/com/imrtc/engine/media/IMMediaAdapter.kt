@@ -1,0 +1,79 @@
+package com.imrtc.engine.media
+
+/**
+ * 媒体层的**接缝**——`call-engine` 里只有这个接口，没有任何实现。
+ *
+ * 为什么这么切（与 iOS 同一条理由）：libwebrtc 是几十 MB 的预编译包，一旦被 Engine 直接
+ * 依赖，「跑一次单测」就变成「连真机 + 拉几十 MB」。真实现在 `call-engine-webrtc` 模块里，
+ * 宿主按需引入；**不引媒体也是正常用法**，不是降级——登录、振铃、成员进出、静音通知
+ * 一个都不少，只有推流与画面挂载会以 `2005 invalid_state` 失败。
+ *
+ * 线程约定：所有方法都可能被 Engine 的**单线程调度器**调用；实现里不要阻塞它，
+ * 更不要在里面回调回 Engine（会重入）。回调走 [Events]，实现方负责切回自己的线程。
+ */
+interface IMMediaAdapter {
+
+    /** 媒体层反过来通知 Engine 的那几件事。 */
+    interface Events {
+        /** 本端要发一条 SDP（pub 侧的 offer / sub 侧的 answer）。 */
+        fun onLocalSdp(pc: String, type: String, sdp: String)
+
+        /** 本端收集到一个 ICE 候选。`candidate` 为空串表示收集结束。 */
+        fun onLocalCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int)
+
+        /** sub 侧连通 = 媒体就绪，通话状态机据此从 connecting 走到 connected。 */
+        fun onMediaReady()
+
+        /** 某个远端第一帧画面到达，UI 用来撤掉 loading。 */
+        fun onFirstVideoFrame(uid: String)
+
+        /** 媒体层出错（协商失败、ICE failed、采集权限被拒）。 */
+        fun onMediaError(code: Int, message: String)
+    }
+
+    /** 装上回调出口。Engine 在创建时调一次。 */
+    fun attachEvents(events: Events)
+
+    /** 起 PeerConnection：pub 与 sub 各一条。`iceServers` 为空表示只用 SFU 的公网地址。 */
+    fun start(iceServers: List<String>)
+
+    /** 关掉全部媒体资源。**必须可重入**：挂断、被踢、宿主退出都会调它。 */
+    fun stop()
+
+    /** 采集并发布本端 Track。`cid` 是客户端生成的本地标识，要出现在 pub offer 的 msid 里。 */
+    fun publish(cid: String, kind: String, simulcast: Boolean)
+
+    /** 停止发布。 */
+    fun unpublish(cid: String)
+
+    /** 开关本端麦克风/摄像头。**这不是 unpublish**，Track 与协商都保留。 */
+    fun setMuted(kind: String, muted: Boolean)
+
+    /**
+     * 造一条本端 offer。
+     *
+     * 只有 pub 侧会用到：**每条 PeerConnection 的 offerer 是固定的**（§3.3）——
+     * pub 由客户端 offer、sub 由服务端 offer。固定 offerer 就没有 glare，
+     * 五端都不需要实现 perfect negotiation。
+     * 结果异步从 [Events.onLocalSdp] 回来。
+     */
+    fun createOffer(pc: String)
+
+    /** 收到对端 SDP。 */
+    fun applyRemoteSdp(pc: String, type: String, sdp: String)
+
+    /** 收到对端 ICE 候选。**远端描述还没设时要缓冲**，别丢——丢了媒体会间歇性不通。 */
+    fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int)
+
+    /** 把某个 uid 的画面挂到一个视图上；`view` 为 null 表示卸载。 */
+    fun attachView(uid: String, view: Any?)
+
+    /** 本端预览。 */
+    fun startLocalPreview(view: Any?)
+
+    /** 前后摄像头切换。 */
+    fun switchCamera()
+
+    /** 扬声器 / 听筒。 */
+    fun setSpeakerOn(on: Boolean)
+}

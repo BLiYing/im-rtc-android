@@ -13,7 +13,7 @@ package com.imrtc.engine.protocol
  * | `{"n":9007199254740992}` | [Kind.VALUE] | `bad_params` |
  *
  * 一句话：**「这段文本不是合法的协议 JSON」是 STRUCTURE，「是合法 JSON 但值不合协议」是 VALUE。**
- * 映射到错误码在信封层做（第二刀），本层只负责分类。
+ * 映射到错误码在信封层做（任务二），本层只负责分类。
  */
 internal class IMJsonError(
     val kind: Kind,

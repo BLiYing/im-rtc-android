@@ -95,7 +95,7 @@ im-rtc-android/
 ./scripts/test.sh                # 唯一测试入口：体量门禁 + 编译 + 单测
 BUILD_ONLY=1 ./scripts/test.sh   # 只编译
 ```
-> Gradle 工程与四道门禁已随第一刀落地（2026-09-05）。`test.sh` 六步：
+> Gradle 工程与四道门禁已随任务一落地（2026-09-05）。`test.sh` 六步：
 > 体量 → 分层 → 日志纪律 → 向量可达 → 编译（含 Demo APK）→ 纯 JVM 单测。
 
 ## 关联仓库

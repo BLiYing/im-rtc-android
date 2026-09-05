@@ -20,7 +20,7 @@ android {
 
 dependencies {
     implementation(project(":call-engine"))
-    // 第四刀才真正接入 libwebrtc（版本已锁在 libs.versions.toml）：
+    // 任务四才真正接入 libwebrtc（版本已锁在 libs.versions.toml）：
     //   implementation(libs.webrtc)
     // 现在不引，是为了让「跑一次单测」不必先拉几十 MB 的预编译包。
     testImplementation(libs.junit)

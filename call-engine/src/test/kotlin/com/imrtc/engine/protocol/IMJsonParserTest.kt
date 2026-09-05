@@ -10,7 +10,7 @@ import org.junit.Test
  *
  * 分类不是形式主义：[IMJsonError.Kind.STRUCTURE] 最终变成 `bad_envelope`，
  * [IMJsonError.Kind.VALUE] 变成 `bad_params`，而 `envelope.json` 里对这两个错误是分开断言的。
- * 分错了，第二刀接信封层时会直接挂在向量上。
+ * 分错了，任务二接信封层时会直接挂在向量上。
  */
 class IMJsonParserTest {
 

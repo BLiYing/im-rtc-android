@@ -3,17 +3,20 @@
 agp = "8.12.1"
 kotlin = "1.9.24"
 junit = "4.13.2"
+okhttp = "4.12.0"
 # ── Android SDK ──
 minSdk = "24"          # Android 7.0
 compileSdk = "36"
 targetSdk = "36"
-# ── libwebrtc（第四刀才真正引入；锁在这里免得开工时又要重新决策）──
+# ── libwebrtc（任务四才真正引入；锁在这里免得开工时又要重新决策）──
 # M150。与 iOS 的 M152 对不齐是已知且可接受的，理由见 im-rtc-server/docs/CLIENT_PARITY.md §3。
 # 兜底：144.7559.15（M144，补丁最多的成熟线）。
 webrtc = "150.7871.01"
 
 [libraries]
 junit = { module = "junit:junit", version.ref = "junit" }
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "okhttp" }
 webrtc = { module = "io.github.webrtc-sdk:android", version.ref = "webrtc" }
 
 [plugins]

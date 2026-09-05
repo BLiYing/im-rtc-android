@@ -1,0 +1,247 @@
+package com.imrtc.engine
+
+import com.imrtc.engine.media.IMMediaAdapter
+import com.imrtc.engine.protocol.IMFrameType
+import com.imrtc.engine.protocol.IMJson
+import com.imrtc.engine.signaling.FakeScheduler
+import com.imrtc.engine.signaling.FakeTransport
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * 门面这条核心循环：**宿主调方法 → 状态机 → 发帧 → 应答回喂 → 回调抛给宿主**。
+ *
+ * 用假传输 + 假时钟 + 假媒体跑完整通电话，纯 JVM。这里验的是**接线**——
+ * 状态机本身由一致性向量守着，这份测试守的是「线有没有接错」：
+ * 应答回没回喂给状态机、被拒了有没有退回 idle、媒体有没有在该起的时候起。
+ */
+class EngineLoopTest {
+
+    private val scheduler = FakeScheduler()
+    private val transport = FakeTransport()
+    private val listener = RecordingListener()
+    private val media = FakeMedia()
+
+    private val engine = IMCallEngine.forTest(
+        IMCallEngine.Config(url = "ws://test/rtc", deviceId = "d-1"),
+        listener,
+        media,
+        scheduler,
+        transport,
+    )
+
+    private fun loginAndConnect() {
+        engine.login("tk-1")
+        transport.open()
+        transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+    }
+
+    @Test
+    fun `主叫全程：拨出到接通再挂断`() {
+        loginAndConnect()
+        assertEquals(listOf("s-1"), listener.connected)
+
+        engine.call(listOf("bob"), "video")
+        val invite = transport.lastOf(IMFrameType.CALL_INVITE) ?: error("没发 call.invite")
+        assertEquals("video", (invite.data["media_type"] as IMJson.Str).value)
+
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("call-1"), "room_id" to IMJson.Str("r-1")),
+        )
+        transport.deliver(IMFrameType.CALL_RINGING, "", mapOf("uid" to IMJson.Str("bob")))
+        transport.deliver(IMFrameType.CALL_ACCEPTED, "", mapOf("uid" to IMJson.Str("bob")))
+        assertEquals(listOf("bob"), listener.userAccepts)
+
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "room_token" to IMJson.Str("tk-room"),
+                "media_type" to IMJson.Str("video"),
+                "connected_at_ms" to IMJson.Num(1_000),
+                "accepted_by" to IMJson.Str("bob"),
+            ),
+        )
+        // onCallBegin 抛在进入 connecting 那一刻，同时房间机被驱动去发 room.join
+        assertEquals(listOf("call-1"), listener.callBegins)
+        assertTrue("拿到 room_token 就该把媒体拉起来", media.started)
+        val join = transport.lastOf(IMFrameType.ROOM_JOIN) ?: error("没发 room.join")
+        assertEquals("r-1", (join.data["room_id"] as IMJson.Str).value)
+        // 发送侧的默认值陷阱：auto_subscribe 必须是 true，不能因为「没写」变成 false
+        assertEquals(IMJson.Bool(true), join.data["auto_subscribe"])
+
+        transport.replyOk(
+            IMFrameType.ROOM_JOIN,
+            mapOf("room_id" to IMJson.Str("r-1"), "participant_id" to IMJson.Str("p-1")),
+        )
+        assertEquals(listOf("r-1"), listener.roomJoins)
+        // 进房就自动发布：宿主什么都不做也该能通话，「进了房没人推流」不是合理默认
+        assertEquals(listOf("audio", "video"), media.published)
+        assertEquals(2, transport.countOf(IMFrameType.ROOM_PUBLISH))
+
+        engine.hangup()
+        assertTrue(transport.lastOf(IMFrameType.CALL_HANGUP) != null)
+        transport.deliver(
+            IMFrameType.CALL_ENDED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-1"),
+                "reason" to IMJson.Str("hangup"),
+                "duration_sec" to IMJson.Num(42),
+                "ended_by" to IMJson.Str("alice"),
+            ),
+        )
+        assertEquals(listOf("hangup:42"), listener.callEnds)
+        assertTrue("通话结束要停媒体", media.stopped)
+    }
+
+    @Test
+    fun `被叫：来电、接听、结束`() {
+        loginAndConnect()
+        transport.deliver(
+            IMFrameType.CALL_INCOMING,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-9"),
+                "room_id" to IMJson.Str("r-9"),
+                "caller" to IMJson.Str("alice"),
+                "media_type" to IMJson.Str("audio"),
+            ),
+        )
+        assertEquals(listOf("call-9 from alice"), listener.incoming)
+
+        engine.accept()
+        assertTrue(transport.lastOf(IMFrameType.CALL_ACCEPT) != null)
+        // 第二次 accept 必须**本地**拦下，不能发上去让服务端回 1405
+        val acceptsSoFar = transport.countOf(IMFrameType.CALL_ACCEPT)
+        engine.accept()
+        assertEquals(acceptsSoFar, transport.countOf(IMFrameType.CALL_ACCEPT))
+        assertTrue("本地拒绝要抛 2005", listener.errors.any { it == 2005 })
+    }
+
+    @Test
+    fun `呼叫被服务端拒了要退回 idle，而不是卡在 inviting`() {
+        loginAndConnect()
+        engine.call(listOf("self"), "audio")
+        transport.replyError(IMFrameType.CALL_INVITE, 1004, "bad_params", "callee 里有自己")
+
+        // 抛 onCallEnd 收场（界面需要一个明确的结束信号），并且状态回 idle：
+        // 不回 idle 的话之后每次挂断都发向一个不存在的 call，永远退不出去。
+        assertEquals(listOf("error:0"), listener.callEnds)
+        engine.call(listOf("bob"), "audio")
+        assertEquals("退回 idle 之后应该能再次拨出", 2, transport.countOf(IMFrameType.CALL_INVITE))
+    }
+
+    @Test
+    fun `进房被拒要退回 idle 并抛 onRoomLeft`() {
+        loginAndConnect()
+        engine.joinRoom("r-1", "tk-room")
+        transport.replyError(IMFrameType.ROOM_JOIN, 1201, "room_not_found", "房间没了")
+
+        assertEquals(listOf("r-1"), listener.roomLeaves)
+        engine.joinRoom("r-2", "tk-room")
+        assertEquals("退回 idle 之后应该能再进别的房间", 2, transport.countOf(IMFrameType.ROOM_JOIN))
+    }
+
+    @Test
+    fun `重连没恢复：房间归零并本地合成 onCallEnd`() {
+        loginAndConnect()
+        engine.call(listOf("bob"), "audio")
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("c-1"), "room_id" to IMJson.Str("r-1")),
+        )
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("c-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "room_token" to IMJson.Str("tk"),
+                "connected_at_ms" to IMJson.Num(scheduler.nowMs()),
+            ),
+        )
+        listener.callEnds.clear()
+
+        transport.closed(1006, "network")
+        scheduler.advance(5_000)
+        transport.open()
+        // resumed=false：服务端那边的会话已经过期，那条 call.ended 送不到我们手里了
+        transport.replyOk(
+            IMFrameType.HELLO,
+            mapOf("session_id" to IMJson.Str("s-2"), "resumed" to IMJson.Bool(false)),
+        )
+        assertTrue("必须本地合成一条 onCallEnd(network)", listener.callEnds.any { it.startsWith("network:") })
+    }
+
+    @Test
+    fun `没有媒体适配器时，推流失败但信令一切正常`() {
+        val bare = IMCallEngine.forTest(
+            IMCallEngine.Config("ws://test/rtc", "d-2"),
+            listener,
+            null,
+            scheduler,
+            transport,
+        )
+        bare.login("tk")
+        transport.open()
+        transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+        bare.attachView("bob", null)
+        assertTrue("没有媒体时挂画面应当报 2005", listener.errors.contains(2005))
+        // 但信令还是通的
+        bare.call(listOf("bob"), "audio")
+        assertTrue(transport.lastOf(IMFrameType.CALL_INVITE) != null)
+    }
+
+    // ── 记录用的假实现 ────────────────────────────────────────────────
+
+    private class RecordingListener : IMCallEngineListener {
+        val connected = mutableListOf<String>()
+        val incoming = mutableListOf<String>()
+        val callBegins = mutableListOf<String>()
+        val callEnds = mutableListOf<String>()
+        val userAccepts = mutableListOf<String>()
+        val roomJoins = mutableListOf<String>()
+        val roomLeaves = mutableListOf<String>()
+        val errors = mutableListOf<Int>()
+
+        override fun onConnected(sessionId: String, resumed: Boolean) { connected += sessionId }
+        override fun onCallReceived(callId: String, caller: String, mediaType: String, isGroup: Boolean) {
+            incoming += "$callId from $caller"
+        }
+        override fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {
+            callBegins += callId
+        }
+        override fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {
+            callEnds += "$reason:$durationSec"
+        }
+        override fun onUserAccept(uid: String) { userAccepts += uid }
+        override fun onRoomJoined(roomId: String) { roomJoins += roomId }
+        override fun onRoomLeft(roomId: String) { roomLeaves += roomId }
+        override fun onError(code: Int, message: String) { errors += code }
+    }
+
+    private class FakeMedia : IMMediaAdapter {
+        var started = false
+        var stopped = false
+        val published = mutableListOf<String>()
+
+        override fun attachEvents(events: IMMediaAdapter.Events) = Unit
+        override fun start(iceServers: List<String>) { started = true }
+        override fun stop() { stopped = true }
+        override fun publish(cid: String, kind: String, simulcast: Boolean) { published += kind }
+        override fun unpublish(cid: String) = Unit
+        override fun setMuted(kind: String, muted: Boolean) = Unit
+        override fun createOffer(pc: String) = Unit
+        override fun applyRemoteSdp(pc: String, type: String, sdp: String) = Unit
+        override fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) = Unit
+        override fun attachView(uid: String, view: Any?) = Unit
+        override fun startLocalPreview(view: Any?) = Unit
+        override fun switchCamera() = Unit
+        override fun setSpeakerOn(on: Boolean) = Unit
+    }
+}
