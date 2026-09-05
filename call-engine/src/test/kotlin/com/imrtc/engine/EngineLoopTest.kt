@@ -234,6 +234,66 @@ class EngineLoopTest {
         assertEquals("离房之后不该再有任何上行帧", framesAfterLeave, transport.sent.size)
     }
 
+    /**
+     * `room.leave` 被拒是真事：服务端在「会话已不在房间里」时回 1203
+     * （两人同时离房、或房间刚被「已空，已关闭」销毁，都撞得上）。
+     *
+     * 被拒的语义恰恰是**我们已经不在房里了**，所以本地必须照样收场。
+     * 不接这一条的话房间永久停在 leaving：媒体停不掉（摄像头与前台服务一直开着），
+     * 之后 join 还会因为「不在 idle」被本地拒——这台 Engine 再也进不了房。
+     */
+    @Test
+    fun `离房被服务端拒了也要退回 idle，而不是卡在 leaving`() {
+        loginAndConnect()
+        joinConferenceRoom()
+
+        engine.leaveRoom()
+        transport.replyError(IMFrameType.ROOM_LEAVE, 1203, "not_in_room", "会话不在任何房间里")
+
+        assertEquals("界面需要一个明确的收场信号", listOf("r-1"), listener.roomLeaves)
+        assertTrue("离房被拒同样要停媒体，否则摄像头一直开着", media.stopped)
+
+        // 退回 idle 之后才进得了下一个房间。
+        engine.joinRoom("r-2", "tk-room")
+        assertEquals("退回 idle 之后应该能再进别的房间", 2, transport.countOf(IMFrameType.ROOM_JOIN))
+
+        // 而且照样不许再冒候选上去。
+        val framesAfterLeave = transport.sent.size
+        media.fireLocalCandidate("pub")
+        assertEquals(framesAfterLeave, transport.sent.size)
+    }
+
+    /**
+     * **重连恢复不是新进房**。`resumed=true` 时房间机把 reconnecting 推回 joined，
+     * 若把它也当成刚进房，每恢复一次就重复发一整套 audio+video——
+     * 多两条 `room.publish`，真机上还会在旧 capturer 没停的情况下再开一个摄像头采集。
+     */
+    @Test
+    fun `重连恢复不该重复发布本端 Track`() {
+        loginAndConnect()
+        joinConferenceRoom()
+        assertEquals(listOf("audio", "video"), media.published)
+        val publishesAfterJoin = transport.countOf(IMFrameType.ROOM_PUBLISH)
+
+        transport.closed(1006, "network")
+        scheduler.advance(5_000)
+        transport.open()
+        transport.replyOk(
+            IMFrameType.HELLO,
+            mapOf("session_id" to IMJson.Str("s-1"), "resumed" to IMJson.Bool(true)),
+        )
+
+        assertEquals("恢复不是新进房，不该再发一套", listOf("audio", "video"), media.published)
+        assertEquals(
+            "恢复的前提就是服务端那边的发布关系还在，一条 room.publish 都不该补",
+            publishesAfterJoin,
+            transport.countOf(IMFrameType.ROOM_PUBLISH),
+        )
+        // 恢复之后房间还是 joined，候选照发——别把这一道守卫连带堵死了。
+        media.fireLocalCandidate("pub")
+        assertEquals(1, transport.countOf(IMFrameType.ROOM_ICE_CANDIDATE))
+    }
+
     @Test
     fun `没有媒体适配器时，推流失败但信令一切正常`() {
         val bare = IMCallEngine.forTest(

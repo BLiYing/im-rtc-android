@@ -7,7 +7,7 @@
 ## 当前焦点
 
 **任务一到任务五全部落地（2026-09-05）：骨架 → 协议层 → 状态机 → 信令与门面 →
-媒体 → UIKit 与 Demo。`./scripts/test.sh` 六步全绿（62 个用例，纯 JVM），
+媒体 → UIKit 与 Demo。`./scripts/test.sh` 六步全绿（64 个用例，纯 JVM），
 并且已经在真机 OPPO PKD130 上装起来跑通了「免密登录 → WS 握手 → 建会议房 → 进房 →
 媒体拉起 → 通话界面计时」。**
 
@@ -128,6 +128,19 @@
   发上去同样是 1203。
 - **两条都有单测钉着**（`EngineLoopTest`），逐条验过：只回退判据 → 停媒体那条挂；
   只回退出口守卫 → 候选那条挂。
+- **`/code-review` 顺着这条线又挖出两个**（同一次提交里一起修了）：
+  - **`room.leave` 被拒没人接**，房间永久停在 leaving。服务端在「会话已不在房间里」时
+    回 1203（两人同时离房、或房间刚被「已空，已关闭」销毁就撞得上），
+    而那恰恰说明我们已经不在房里了。卡住的代价：媒体停不掉（摄像头与前台服务一直开着）、
+    再 leave 被 R1 拒成 2005、再 join 因「不在 idle」也被拒——**除非 logout，这台 Engine
+    再也进不了房**。现在补了 `leave_failed`，与 `join_failed` 同形：归零 + `onRoomLeft`。
+    **`onRequestFailed` 的每一个请求帧都该问一句「被拒之后谁把状态退回去」**，
+    这已经是同一类洞的第三遍了（call / join / leave）。
+  - **重连恢复被当成了新进房**。起媒体的判据是「不是 joined → 是 joined」，
+    而 `resumed=true` 时房间机把 reconnecting 推回 joined，于是每恢复一次就重复发一整套
+    audio+video：多两条 `room.publish`、pub 上多挂一组 transceiver，真机上 `startCapture()`
+    还会在旧 capturer 没停的情况下再开一个摄像头采集（字段被覆盖，旧的再也停不掉）。
+    **恢复的前提就是服务端那边的发布关系还在**，本来什么都不用补。
 
 **从另外三端搬过来的坑（别再踩第二遍）**
 - **协议里三处与旧草案不同**：下行 `timeout` → `call.no_answer`；草图 §09 的 `room_ready` →

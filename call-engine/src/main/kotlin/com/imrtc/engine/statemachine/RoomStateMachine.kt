@@ -141,6 +141,27 @@ internal object IMRoomMachine {
                     )
                 }
 
+            /*
+             离房被拒。**照样退回 idle**——这是 join_failed 的镜像，漏掉它的代价更大。
+
+             `room.leave` 会被拒是真事：服务端在「会话已不在房间里」时回 1203
+             （两人同时离房、或房间刚被「已空，已关闭」销毁掉，都撞得上）。
+             而被拒的语义恰恰是**我们已经不在房里了**，本地却还停在 leaving：
+             媒体停不掉（摄像头、麦克风、前台服务一直开着），再 leave 被 R1 拒成 2005，
+             再 join 因为「不在 idle」也被拒——除非 logout，这台 Engine 永远进不了房。
+
+             所以「被拒」与「leave.ok」在本地是同一个收场：归零 + onRoomLeft。
+            */
+            "leave_failed" ->
+                if (ctx.state != IMRoomState.LEAVING) {
+                    out(ctx)
+                } else {
+                    out(
+                        cleared(IMRoomState.IDLE),
+                        emit = listOf(IMEmittedEvent("onRoomLeft", mapOf("room_id" to s(ctx.roomId)))),
+                    )
+                }
+
             else -> out(ctx)
         }
 

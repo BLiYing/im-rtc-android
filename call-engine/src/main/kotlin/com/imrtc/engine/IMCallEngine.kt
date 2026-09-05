@@ -258,6 +258,11 @@ class IMCallEngine private constructor(
             IMFrameType.CALL_INVITE, IMFrameType.CALL_ACCEPT, IMFrameType.CALL_JOIN ->
                 input(IMMachineInput.Internal("call_failed"))
             IMFrameType.ROOM_JOIN -> input(IMMachineInput.Internal("join_failed"))
+            // **离房被拒也要退回 idle**：服务端在「会话已不在房间里」时回 1203，
+            // 而那正说明我们已经不在房里了。不接这一条的话房间永久停在 leaving——
+            // 媒体停不掉（摄像头与前台服务一直开着），之后 join 也被本地拒，
+            // 这台 Engine 除非 logout 否则再也进不了房。
+            IMFrameType.ROOM_LEAVE -> input(IMMachineInput.Internal("leave_failed"))
         }
     }
 
@@ -275,7 +280,14 @@ class IMCallEngine private constructor(
         // 进房成功：先确保媒体起来了，再按 media_type 自动发布本端 Track。
         // **会议房是直接 joinRoom 的，压根不经过 call**——只按 room_token 判的话这里一次都不会起，
         // 真机上的症状是「还没 start 就 publish，忽略」，人进了房但谁也听不见谁。
-        if (before.room.state != IMRoomState.JOINED && after.room.state == IMRoomState.JOINED) {
+        //
+        // **「新进房」不包括「重连恢复」**：`resumed=true` 时房间机把 reconnecting 推回 joined
+        // （`IMRoomMachine.resume`），只看「不是 joined → 是 joined」会把它也当成刚进房，
+        // 于是每恢复一次就重复发一整套 audio+video：多两条 `room.publish`、pub 上多挂一组
+        // transceiver，`startCapture()` 还会在旧 capturer 没停的情况下再开一个摄像头采集
+        // （`capturer` 字段被覆盖，旧的那个再也停不掉）。**恢复的前提就是服务端那边的发布关系还在**，
+        // 本来什么都不用补。
+        if (isFreshJoin(before, after)) {
             adapter.start(emptyList())
             publishDefaults(after)
         }
@@ -297,6 +309,16 @@ class IMCallEngine private constructor(
     /** 媒体该不该活着：房间与通话只要还有一个不在 idle，就还有人要它。 */
     private fun mediaWanted(ctx: IMEngineContext) =
         ctx.room.state != IMRoomState.IDLE || ctx.call.state != IMCallState.IDLE
+
+    /**
+     * 这一步是不是**真的新进了一个房间**——要发布本端 Track 的那种。
+     *
+     * 从 reconnecting 回到 joined 是**恢复**，不是新进房：那边的发布关系一直都在。
+     */
+    private fun isFreshJoin(before: IMEngineContext, after: IMEngineContext) =
+        after.room.state == IMRoomState.JOINED &&
+            before.room.state != IMRoomState.JOINED &&
+            before.room.state != IMRoomState.RECONNECTING
 
     private fun publishDefaults(state: IMEngineContext) {
         val adapter = media ?: return

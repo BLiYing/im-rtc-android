@@ -94,7 +94,7 @@ internal object IMEngineMachine {
                 emit = listOf(IMEmittedEvent("onKickedOut"), IMEmittedEvent("onDisconnected")),
             )
         }
-        if (name == "join_failed") {
+        if (name == "join_failed" || name == "leave_failed") {
             val room = IMRoomMachine.reduce(ctx.room, IMMachineInput.Internal(name))
             return IMMachineOutput(ctx.copy(room = room.state), send = room.send, emit = room.emit)
         }
