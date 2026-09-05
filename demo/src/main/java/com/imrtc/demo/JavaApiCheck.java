@@ -6,6 +6,7 @@ import com.imrtc.engine.IMCallEngine;
 import com.imrtc.engine.IMCallEngineListener;
 import com.imrtc.engine.IMNetworkQuality;
 import com.imrtc.engine.IMSpeaker;
+import com.imrtc.engine.media.IMVideoProfile;
 import com.imrtc.engine.webrtc.IMWebRTCAdapter;
 import com.imrtc.uikit.IMCallKit;
 
@@ -56,7 +57,17 @@ final class JavaApiCheck {
             }
         };
 
+        // 画质档位是宿主策略：Java 宿主既要能用预设，也要能自己造一档。
+        IMVideoProfile preset = IMVideoProfile.P720;
+        IMVideoProfile custom = new IMVideoProfile("540p", 960, 540, 24, 900_000);
+        int bitrate = preset.getMaxBitrateBps();
+        for (IMVideoProfile.Layer layer : custom.getSimulcastLayers()) {
+            String rid = layer.getRid();
+        }
+
         IMCallEngine engine = new IMCallEngine(config, listener, new IMWebRTCAdapter(context));
+        IMCallEngine withProfile =
+                new IMCallEngine(config, listener, new IMWebRTCAdapter(context, preset));
         IMCallEngine bare = new IMCallEngine(config, listener);
 
         // 连接

@@ -3,6 +3,7 @@ package com.imrtc.engine.webrtc
 import android.content.Context
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMMediaAdapter
+import com.imrtc.engine.media.IMVideoProfile
 import org.webrtc.AudioTrack
 import org.webrtc.Camera1Enumerator
 import org.webrtc.Camera2Enumerator
@@ -33,7 +34,16 @@ import org.webrtc.VideoTrack
  * `SurfaceViewRenderer` 的 `init` / `release` **必须成对**，且释放顺序有讲究：
  * 先把轨道从渲染器上摘掉再 release，反了会崩在 native 层。
  */
-class IMWebRTCAdapter(context: Context) : IMMediaAdapter {
+class IMWebRTCAdapter @JvmOverloads constructor(
+    context: Context,
+    /**
+     * 采集画质档位。见 [IMVideoProfile]：**策略归宿主**，不是服务端下发的。
+     *
+     * 换档位要**换一个适配器实例**（等于重登），不能中途改：采集已经按旧尺寸起来了，
+     * 悄悄改字段只会让日志里的数字和实际推的流对不上。
+     */
+    private val videoProfile: IMVideoProfile = IMVideoProfile.DEFAULT,
+) : IMMediaAdapter {
 
     private val appContext = context.applicationContext
     private var events: IMMediaAdapter.Events? = null
@@ -110,13 +120,9 @@ class IMWebRTCAdapter(context: Context) : IMMediaAdapter {
         // simulcast：三层同时发上去，SFU 按每个订阅者的网速替他挑一层。
         // rid 必须是 l/m/h——与服务端的层选择、max_layer 枚举同名。
         val encodings = if (simulcast) {
-            listOf(
-                encoding("l", scale = 4.0, maxBitrateBps = 150_000),
-                encoding("m", scale = 2.0, maxBitrateBps = 500_000),
-                encoding("h", scale = 1.0, maxBitrateBps = 1_500_000),
-            )
+            videoProfile.simulcastLayers.map { encoding(it.rid, it.scaleDownBy, it.bitrateBps) }
         } else {
-            listOf(encoding("h", scale = 1.0, maxBitrateBps = 1_500_000))
+            listOf(encoding("h", scale = 1.0, maxBitrateBps = videoProfile.maxBitrateBps))
         }
         connection.addTransceiver(
             track,
@@ -206,7 +212,7 @@ class IMWebRTCAdapter(context: Context) : IMMediaAdapter {
         val helper = SurfaceTextureHelper.create("capture", peers.eglBase.eglBaseContext)
         val source = peers.factory().createVideoSource(false)
         videoCapturer.initialize(helper, appContext, source.capturerObserver)
-        videoCapturer.startCapture(CAPTURE_WIDTH, CAPTURE_HEIGHT, CAPTURE_FPS)
+        videoCapturer.startCapture(videoProfile.width, videoProfile.height, videoProfile.frameRate)
 
         capturer = videoCapturer as? CameraVideoCapturer
         captureHelper = helper
@@ -264,8 +270,5 @@ class IMWebRTCAdapter(context: Context) : IMMediaAdapter {
 
     private companion object {
         const val LOCAL = "__local__"
-        const val CAPTURE_WIDTH = 640
-        const val CAPTURE_HEIGHT = 360
-        const val CAPTURE_FPS = 24
     }
 }

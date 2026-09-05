@@ -34,6 +34,31 @@ class CallViewStateTest {
     }
 
     @Test
+    fun `群通话与会议的标题走人数，不走某个人的名字`() {
+        // 真机上把八个人叫起来，标题写着「alice」——那只是名单里排第一的那个人。
+        // 人数要 +1：members 里不含自己。
+        val group = IMCallViewReducer.outgoing(
+            IMCallViewState(),
+            listOf("alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi"),
+            "video",
+            isGroup = true,
+        )
+        assertEquals("群通话（9 人）", group.titleText)
+
+        val meeting = IMCallViewReducer.userEnter(
+            IMCallViewReducer.meeting(IMCallViewState(), "r-1"),
+            "bob",
+        )
+        assertEquals("会议（2 人）", meeting.titleText)
+
+        // 1v1 还是显示对方是谁。
+        val single = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
+        assertEquals("bob", single.titleText)
+        // 没有对方信息时给一个中性词，**不能把 room_id 甩到用户脸上**。
+        assertEquals("通话", IMCallViewState().titleText)
+    }
+
+    @Test
     fun `时长只在接通后走，且格式化正确`() {
         var state = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
         state = IMCallViewReducer.tick(state)

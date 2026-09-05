@@ -60,7 +60,7 @@ internal class IMCallView(context: Context) : LinearLayout(context) {
     }
 
     fun render(state: IMCallViewState, videoViewFor: (String) -> View?) {
-        statusTitle.text = state.peer.ifEmpty { state.roomId }
+        statusTitle.text = state.titleText
         statusSubtitle.text = state.statusText
 
         answerButton.visibility = if (state.showAnswerButton) VISIBLE else GONE

@@ -46,6 +46,21 @@ internal data class IMCallViewState(
 
     val showAnswerButton: Boolean get() = phase == Phase.INCOMING
 
+    /**
+     * 标题栏那一行。
+     *
+     * **群通话与会议不能显示某一个人的名字。** 真机上把八个人叫起来，标题写着「alice」——
+     * 那是名单里恰好排第一的那个人，跟这通电话是谁发起的、都有谁在，一点关系都没有。
+     * 人数要 `+1`：[members] 里**不含自己**。
+     */
+    val titleText: String
+        get() = when {
+            isMeeting -> "会议（${members.size + 1} 人）"
+            isGroup -> "群通话（${members.size + 1} 人）"
+            peer.isNotEmpty() -> peer
+            else -> "通话"
+        }
+
     val tiles: List<Member> get() = members.values.take(IMGrid.MAX_TILES)
 
     val statusText: String
@@ -83,7 +98,8 @@ internal object IMCallViewReducer {
         state.copy(
             phase = IMCallViewState.Phase.INCOMING,
             callId = callId,
-            peer = caller,
+            // 群呼的标题走人数，不走名字——见 [IMCallViewState.titleText]。
+            peer = if (isGroup) "" else caller,
             mediaType = mediaType,
             isGroup = isGroup,
             isMeeting = false,
@@ -95,7 +111,7 @@ internal object IMCallViewReducer {
     fun outgoing(state: IMCallViewState, peers: List<String>, mediaType: String, isGroup: Boolean) =
         state.copy(
             phase = IMCallViewState.Phase.OUTGOING,
-            peer = peers.firstOrNull().orEmpty(),
+            peer = if (isGroup) "" else peers.firstOrNull().orEmpty(),
             mediaType = mediaType,
             isGroup = isGroup,
             isMeeting = false,
