@@ -1,0 +1,36 @@
+# ── Gradle / 构建产物 ──
+.gradle/
+build/
+captures/
+out/
+*.apk
+*.aab
+*.aar
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.hprof
+local.properties
+
+# ── Android Studio / IntelliJ ──
+.idea/
+*.iml
+.cxx/
+.navigation/
+
+# ── NDK / 原生（本仓不用，留着防误入库）──
+obj/
+libs/*.so
+
+# ── 签名与本地配置（绝不入库）──
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+
+# ── 编辑器 / 系统 ──
+.DS_Store
+.vscode/
+*.swp
