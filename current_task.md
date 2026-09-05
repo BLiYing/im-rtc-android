@@ -6,8 +6,9 @@
 
 ## 当前焦点
 
-**第一刀已落地（2026-09-05）：Gradle 骨架 + 四道门禁 + 严格 JSON + 向量加载器，
-`./scripts/test.sh` 六步全绿（16 个用例，纯 JVM，不需要模拟器也不需要真机）。**
+**第一、二刀已落地（2026-09-05）：骨架 + 协议层 + 两个状态机，
+五份一致性向量**逐条**跑过，`./scripts/test.sh` 六步全绿——
+30 个用例、纯 JVM、不需要模拟器也不需要真机。**
 
 | 落地物 | 内容 | 怎么验的 |
 |---|---|---|
@@ -17,6 +18,11 @@
 | `IMJsonError.Kind` | STRUCTURE → `bad_envelope`，VALUE → `bad_params`（`envelope.json` 分开断言的那两个） | 同上 |
 | 向量加载器 | 去 `../im-rtc-server/docs/conformance` 读五份，**找不到就失败，不静默跳过** | 5 个用例 |
 | 四道门禁 | 体量 / 分层 / 日志纪律 / 向量可达，**每道都带自检** | `test.sh` 第 1~4 步 |
+| `protocol/` 信封与帧 | 信封、编码硬规则（同构数组 / 嵌套两层）、40 个帧的字段声明与注册表、默认值填充 | `envelope.json` 26+9 条 |
+| `protocol/` 枚举表 | 45 个错误码（含那句英文 msg）、6 个关闭码、12 个 reason、群主导优先级、时长算法 | `error_codes.json` + `reasons.json` 全表 |
+| `statemachine/` 通话机 | §5.1，含「没有 ended 状态」「便利回调只 1v1」「idle 下迟到帧静默丢弃」 | `call_fsm.json` 16 例 73 步 |
+| `statemachine/` 房间机 | §5.3 的 R1~R3：本地拒绝 / 中间态缓存重放 / 订阅换层幂等 | `room_fsm.json` 8 例 41 步 |
+| `statemachine/` 总状态 | 连接级事件、重连恢复失败合成 onCallEnd、通话结束把房间归零 | 同上 |
 
 **加载器用的就是本仓自己的解析器**——五份向量文件本身就是第一批测试输入（实测：
 五份里没有 null、没有浮点、没有越界整数，严格解析器能原样吃下去）。
@@ -32,7 +38,7 @@
 - **设计文档 §7.5 回调表冻结**——iOS 落地这一周里它还在加 `updateToken`、`setSpeakerOn`、
   `onConnected`，每一条都是「写第三个实现时才发现前两个漏了」。补表成本现在是 ×5。
   **但这条只挡第三刀（门面与回调表）往后**：第一刀（Gradle 骨架 + 向量 runner）与
-  第二刀（协议层 + 状态机）**吃的是协议与向量，不是回调表，随时可以开**。
+  第二刀（协议层 + 状态机）吃的是协议与向量、不是回调表，**已经做完了**。
 
 **开工前本仓只做一件事：接收契约。** 从 Kotlin / Java 视角评审
 `../im-rtc-server/docs/RTC_PROTOCOL.md` 与 `docs/conformance/*.json`，
@@ -42,12 +48,8 @@
 
 0. ~~五仓文档同步 + 建 `CLIENT_PARITY.md`~~ —— **已完成（2026-09-05）**。
 1. ~~第一刀：Gradle 骨架 + 向量 runner~~ —— **已完成（2026-09-05）**。
-2. **第二刀（当前）**：`protocol/` 剩余部分 + `statemachine/`——对照
-   `../im-rtc-ios/Sources/IMCallEngine/` 的同名两层，**五份向量逐条跑过**。仍然不需要设备。
-   顺序：信封（`envelope.json` 26+9 条）→ 错误码与 reason 表（全表逐条）→
-   帧字段声明与注册表 → 通话机（16 条）→ 房间机（8 条）。
-   **JSON 写出器也在这一刀**（发送侧要「从填好默认值的实例起手」，见下面的默认值陷阱）。
-3. **第三刀**（**要等回调表冻结**）：`signaling/`（OkHttp WebSocket、握手、心跳、req_id 配对、退避重连、4401 三次上限）
+2. ~~第二刀：协议层 + 两个状态机~~ —— **已完成（2026-09-05）**，五份向量逐条跑过。
+3. **第三刀（当前）**（**要等回调表冻结**）：`signaling/`（OkHttp WebSocket、握手、心跳、req_id 配对、退避重连、4401 三次上限）
    + 门面与回调表 + 日志回传。验收：真连本地服务端跑通进房离房（对齐 iOS 的 `LiveServerTests`）。
 4. **第四刀**：`call-engine-webrtc` 媒体 + 前台服务 + 音频焦点与路由。**真机验收**，
    且要与 Web、iOS 各互打一次。
@@ -91,6 +93,19 @@
   Web 端漏了这条，症状是「其实重连成功了，界面一直停在重连中」。
 - **v1 不做主叫侧多设备扇出**：主叫的其他设备收不到「你的账号正在别处呼出」。写进 `CLIENT_PARITY`。
 - **MVP 不覆盖锁屏来电**：Android 侧需要 FCM 高优先级推送 + Telecom/`ConnectionService`，属后续期。
+
+**第二刀踩到 / 定下的**
+- **向量的比对方式是「递归子集」，不是全等**：对象只比向量列出来的键，数组先比长度再逐个
+  递归，标量相等。这与服务端 Go runner 的 `matchSubset` 一比一对应，**五端必须一致**，
+  否则「五仓跑同一份」是句空话。用全等比会把「回调按 §7.5 裁剪」误判成错误——
+  `room.active_speakers` 帧里带 `participant_id`，而 `onActiveSpeakers` 只给宿主
+  `[{uid, volume}]`。**第一版就是用全等比的，当场被这条抓住。**
+- **`room_fsm.json` 要用 engine 总状态机驱动，不是房间机**：向量里有 `onDisconnected` /
+  `onConnected` / `onKickedOut` / `onCallEnd`，这些只有把通话机与房间机合起来才说得清。
+- **`call_fsm.json` 有的用例带 `context` 预置**（从半途开始，例如群通话中途加邀一上来就是
+  connected 且已有 call_id）。忽略它的话第一步就会发出 `call_id=""` 的帧。
+- **publish 的 `idle` 与 subscribe 的 `none` 用「不在表里」表达**，不是枚举值——
+  省掉「表里有个 idle 条目」与「表里没有」两种等价写法。
 
 **第一刀踩到 / 定下的**
 - **向量里 `input_data` 是原始 JSON 文本，`expect_data` 是对象**——两边形状不对称。

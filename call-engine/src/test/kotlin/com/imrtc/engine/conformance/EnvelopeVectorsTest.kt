@@ -76,9 +76,7 @@ class EnvelopeVectorsTest {
         // expect.data 是**子集断言**：只比对列出来的键。
         val expectedData = expect.optObj("data") ?: return
         val actual = outcome.data ?: error("$name：没有解码后的 data")
-        for ((key, expectedValue) in expectedData.fields) {
-            assertEquals("$name：data.$key 不对", expectedValue, actual[key])
-        }
+        VectorMatch.subsetFields("$name data", expectedData.fields, actual)
     }
 
     @Test
@@ -98,9 +96,7 @@ class EnvelopeVectorsTest {
             // expect_data 与 cases 里的 expect.data 一样是**子集断言**：向量只列它关心的字段
             // （例如 ice_candidate 那条就故意不重复那一长串 candidate）。服务端的 Go runner
             // 用的也是 assertDataSubset——比对方式必须五端一致，否则同一份向量各测各的。
-            for ((key, expectedValue) in expected.fields) {
-                assertEquals("$name：填完默认值后 $key 不对", expectedValue, filled[key])
-            }
+            VectorMatch.subsetFields("$name expect_data", expected.fields, filled)
             // 子集比对之外再加一条本端自己的要求：**声明过的字段一个都不能少**。
             // 「省略即取默认值」如果漏填，后果是发送侧把默认值写成零值。
             assertEquals("$name：填完默认值后字段集合不对", fields.keys, filled.keys)
