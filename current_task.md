@@ -142,6 +142,19 @@
     还会在旧 capturer 没停的情况下再开一个摄像头采集（字段被覆盖，旧的再也停不掉）。
     **恢复的前提就是服务端那边的发布关系还在**，本来什么都不用补。
 
+**竖排 LinearLayout 的默认 LayoutParams 是 `MATCH_PARENT`（2026-09-05 修，底部 tab 栏）**
+- **症状**：Demo 底部三个 tab 的图标与文字全靠在各自格子的左边，第一个（拨号）贴着屏幕左缘，
+  看起来像「按钮没均分」。**格子本身是均分的**（`weight = 1f`，实测各 240px），偏的是格子里的字。
+- **成因**：`LinearLayout.generateDefaultLayoutParams()` 在**竖排**时返回
+  `MATCH_PARENT × WRAP_CONTENT`（横排才是 `WRAP × WRAP`）。不带 LayoutParams 添进去的
+  TextView 于是**撑满整格**，父容器那句 `gravity = Gravity.CENTER` 没有可居中的余量，
+  字按 TextView 自己的默认 gravity 顶在左边。
+- **规矩**：**要文字居中就把 gravity 设在 TextView 自己身上**，别指望父容器的 gravity。
+  `DemoUI.titleBar` 与 Kit 里的 `IMFloatingBubble` / `IMCallView` 一直是这么写的，
+  只有 `MainActivity.tabItem` 漏了——这也是为什么通话页的按钮文字一直是正的。
+- **uiautomator 的 bounds 看不出这个 bug**：TextView 的边框本来就是满格，改前改后一模一样，
+  **只能靠截图看**。别拿 bounds 当「布局对了」的证据。
+
 **从另外三端搬过来的坑（别再踩第二遍）**
 - **协议里三处与旧草案不同**：下行 `timeout` → `call.no_answer`；草图 §09 的 `room_ready` →
   `call.connected`；**Engine 状态机没有 `ended` 状态**（ended 是事件，草图里停 1.5s 的方框是 Kit 的展示状态）。

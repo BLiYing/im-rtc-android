@@ -76,13 +76,29 @@ class MainActivity : Activity() {
             }
     }
 
+    /**
+     * 一个 tab。三格由 `buildTabBar` 用 `weight = 1f` 等分，**这里只管把字摆在格子中间**。
+     *
+     * **父容器的 `gravity = Gravity.CENTER` 单独用是不够的**：竖排 LinearLayout 的
+     * `generateDefaultLayoutParams()` 给的是 `MATCH_PARENT × WRAP_CONTENT`
+     * （横排才是 `WRAP × WRAP`），所以不带 LayoutParams 添进来的两个 TextView
+     * **本来就撑满整格**，父容器没有可居中的余量，字于是靠 TextView 自己的默认 gravity
+     * 顶在左边。三个 tab 都偏，只是第一个贴着屏幕左缘、看起来最明显。
+     * 修法与 `DemoUI.titleBar` 一致：**gravity 设在 TextView 自己身上**。
+     */
     private fun tabItem(icon: String, name: String, position: Int): View =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(0, DemoUI.dp(this@MainActivity, 8), 0, DemoUI.dp(this@MainActivity, 10))
-            addView(DemoUI.label(this@MainActivity, icon, 18f, DemoUI.SECONDARY))
-            addView(DemoUI.label(this@MainActivity, name, 11f, DemoUI.SECONDARY))
+            addView(
+                DemoUI.label(this@MainActivity, icon, 18f, DemoUI.SECONDARY)
+                    .apply { gravity = Gravity.CENTER },
+            )
+            addView(
+                DemoUI.label(this@MainActivity, name, 11f, DemoUI.SECONDARY)
+                    .apply { gravity = Gravity.CENTER },
+            )
             setOnClickListener { showTab(position) }
         }
 
