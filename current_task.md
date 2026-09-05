@@ -7,7 +7,7 @@
 ## 当前焦点
 
 **任务一到任务五全部落地（2026-09-05）：骨架 → 协议层 → 状态机 → 信令与门面 →
-媒体 → UIKit 与 Demo。`./scripts/test.sh` 六步全绿（60 个用例，纯 JVM），
+媒体 → UIKit 与 Demo。`./scripts/test.sh` 六步全绿（62 个用例，纯 JVM），
 并且已经在真机 OPPO PKD130 上装起来跑通了「免密登录 → WS 握手 → 建会议房 → 进房 →
 媒体拉起 → 通话界面计时」。**
 
@@ -86,12 +86,9 @@
    3. H.264 跨端实测（清单见 `../im-rtc-server/docs/CLIENT_PARITY.md` §3）。
 6. **UIKit 还欠的几件**（都不挡通话，属打磨）：双击放大某一格、本端预览挂进格子、
    「只引 Engine 自画 UI」的示范、客户端日志回传服务端。
-7. **一个复核时发现、还没修的真 bug**：**离房之后客户端仍在发 `room.ice_candidate`**，
-   服务端每 5 分钟回两条 `1203 not_in_room`（日志里 20:39:45 / 20:44:45 / 20:49:45… 一路到 21:24）。
-   `driveMedia` 在 room JOINED→IDLE 时确实调了 `adapter.stop()` → `peers.stop()` → `dispose()`，
-   所以要么没走到、要么 dispose 之后 native 侧仍在冒候选。**代码里没有 5 分钟的定时器**，
-   嫌疑在 libwebrtc 自己的候选重采集。下一步：在 `onLocalCandidate` 出口按房间状态挡一道
-   （治标），再查 PC 到底有没有真被释放（治本）。
+7. ~~离房之后客户端仍在发 `room.ice_candidate`，服务端每 5 分钟回两条 `1203 not_in_room`~~
+   —— **已修（2026-09-05）**，成因与结论见「已知坑」那条「离房要停媒体」。
+   原文归档在 [current_task.archive.md](current_task.archive.md)。
 
 **Demo 是本仓自己的一个 Gradle 模块（`demo/`），不是另建工程**——不需要你手动新建 Android 项目，
 `settings.gradle.kts` 与四个模块都由任务一一次生成。iOS 那边 Demo 是独立 Xcode 工程，
@@ -110,6 +107,27 @@
   公司目前没有 Android 宿主。**公开面的 Java 友好由 `demo/` 里的 `JavaApiCheck.java` 守**
   （纯 Java 调一遍全部公开 API，**编译即验证**）——这一招在 iOS 侧抓到过真问题。
   等真有 Android App 要接入时，再按 P5 的方式补一次接入示例。
+
+**离房要停媒体，而离房是两步（2026-09-05 修，真机复验过）**
+- **症状**：会议房离房之后，服务端每 5 分钟回**两条** `1203 not_in_room for_type=room.ice_candidate`，
+  一路刷到没人管为止（真机日志里从 20:39 刷到 21:24，50 分钟）。两条 = pub 与 sub 各一条。
+- **成因不在媒体层，在门面**：`driveMedia` 停媒体的判据原来是「before=joined 且 after=idle」，
+  而离房走的是 `joined →(leave)→ leaving →(leave.ok)→ idle` **两次 input**，
+  没有任何一次同时满足，于是 **`adapter.stop()` 一次都没调过**。
+  两条 PeerConnection 就那么活着，开着 `GATHER_CONTINUALLY` 每 5 分钟重采一轮候选。
+  「断线 → reconnecting →(被踢)→ idle」是同一个漏法。
+  **现在的判据是「媒体还有没有人要」**：房间与通话只要还有一个不在 idle 就留着，
+  两个都回 idle 才停——与「走了哪几步」无关。
+- **`dispose()` 之前没 `close()` 不是成因**：反编译 M150 的 `PeerConnection.dispose()`，
+  它第一条指令就是 `invokevirtual close()`。`IMPeerConnections.stop()` 里现在显式写了
+  `close()` 再 `dispose()`，那是为了不依赖某个版本 dispose 的实现细节，**不是修这个 bug 的那一刀**。
+  查这类问题**先确认那行代码到底有没有执行**，再去怀疑 native 层——这次直接跳到第二步，绕了远路。
+- **出口还挡了第二道**：`onLocalCandidate` 里房间不在 joined 就丢弃。候选是从 native 的
+  signaling 线程异步冒上来的，天生可能比 stop() 晚一拍；这一道也保证「哪天媒体层再漏一次」
+  不会又变成服务端 WARN 刷屏。**判据只认 joined**：joining 时服务端还没把我们放进房，
+  发上去同样是 1203。
+- **两条都有单测钉着**（`EngineLoopTest`），逐条验过：只回退判据 → 停媒体那条挂；
+  只回退出口守卫 → 候选那条挂。
 
 **从另外三端搬过来的坑（别再踩第二遍）**
 - **协议里三处与旧草案不同**：下行 `timeout` → `call.no_answer`；草图 §09 的 `room_ready` →

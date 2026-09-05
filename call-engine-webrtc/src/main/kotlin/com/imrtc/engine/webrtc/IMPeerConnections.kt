@@ -82,11 +82,28 @@ internal class IMPeerConnections(
         IMRTCLog.i("media", "PeerConnection 就绪：pub=${pub != null} sub=${sub != null}")
     }
 
+    /**
+     * 释放两条 PeerConnection。**可重入**：置空之后再调是空操作。
+     *
+     * **先 `close()` 再 `dispose()`**：`close()` 同步拆掉 transports 与 ICE agent，
+     * 之后不会再有候选冒出来。M150 的 `dispose()` 第一件事其实就是调 `close()`
+     * （反编译 `PeerConnection.dispose()` 确认过），所以这两行与原来那一行**等价**——
+     * 显式写出来是不想让释放顺序依赖某个版本 `dispose()` 的实现细节。
+     *
+     * **注意：离房后还在发候选那个 bug 不是这里造成的**，是门面根本没走到 `stop()`
+     * （见 `IMCallEngine.driveMedia`）。别把这段注释当成那个 bug 的成因。
+     */
     fun stop() {
         negotiating.clear()
         pendingOffer.clear()
-        pub?.dispose()
-        sub?.dispose()
+        pub?.apply {
+            close()
+            dispose()
+        }
+        sub?.apply {
+            close()
+            dispose()
+        }
         pub = null
         sub = null
         bufferedCandidates.clear()

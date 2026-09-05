@@ -281,11 +281,22 @@ class IMCallEngine private constructor(
         }
 
         // 通话结束 / 离房：停掉媒体。**必须可重入**，挂断与被踢会先后到达。
-        if (before.room.state == IMRoomState.JOINED && after.room.state == IMRoomState.IDLE) {
+        //
+        // **判据是「媒体还有没有人要」，不是某一步的 joined→idle**：会议房离房走的是
+        // `joined →(leave)→ leaving →(leave.ok)→ idle` **两次 input**，没有任何一次同时
+        // 满足 before=joined 且 after=idle，于是 stop() 一次都不会调。后果不是「多占点内存」——
+        // 两条 PeerConnection 开着 GATHER_CONTINUALLY 继续活着，每 5 分钟重采一轮候选，
+        // 一路发上去换回 `1203 not_in_room`（真机日志里从 20:39 一直刷到 21:24）。
+        // 「断线 → reconnecting → 被踢 → idle」也是同一个漏法，一并被这条判据盖住。
+        if (mediaWanted(before) && !mediaWanted(after)) {
             adapter.stop()
             localTracks.clear()
         }
     }
+
+    /** 媒体该不该活着：房间与通话只要还有一个不在 idle，就还有人要它。 */
+    private fun mediaWanted(ctx: IMEngineContext) =
+        ctx.room.state != IMRoomState.IDLE || ctx.call.state != IMCallState.IDLE
 
     private fun publishDefaults(state: IMEngineContext) {
         val adapter = media ?: return
@@ -372,6 +383,17 @@ class IMCallEngine private constructor(
 
         override fun onLocalCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) =
             scheduler.post {
+                // **不在房里就不往上发**。候选只对「我们此刻正待在里面的那个房间」有意义，
+                // 发上去只会换回一条 `1203 not_in_room`，对谁都没用。
+                //
+                // 这是第二道防线：媒体层理应在离房时就被停掉（见 [driveMedia]），但候选是
+                // **从 native 的 signaling 线程冒上来的异步事件**，天生可能比 stop() 晚一拍；
+                // libwebrtc 又开着 GATHER_CONTINUALLY，网络一变就重采一轮。出口这一道挡住的
+                // 正是这段时间差，也顺带保证「媒体层哪天再漏一次」不会又变成服务端的 WARN 刷屏。
+                if (ctx.room.state != IMRoomState.JOINED) {
+                    IMRTCLog.d("engine", "房间在 ${ctx.room.state.wire}，丢弃 $pc 的本端候选")
+                    return@post
+                }
                 connection.send(
                     IMFrameType.ROOM_ICE_CANDIDATE,
                     mapOf(

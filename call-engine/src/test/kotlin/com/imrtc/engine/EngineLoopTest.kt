@@ -6,6 +6,7 @@ import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.signaling.FakeScheduler
 import com.imrtc.engine.signaling.FakeTransport
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -35,6 +36,15 @@ class EngineLoopTest {
         engine.login("tk-1")
         transport.open()
         transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+    }
+
+    /** 会议房：**直接 joinRoom，压根不经过 call**。真机上出问题的就是这条路。 */
+    private fun joinConferenceRoom() {
+        engine.joinRoom("r-1", "tk-room")
+        transport.replyOk(
+            IMFrameType.ROOM_JOIN,
+            mapOf("room_id" to IMJson.Str("r-1"), "participant_id" to IMJson.Str("p-1")),
+        )
     }
 
     @Test
@@ -178,6 +188,52 @@ class EngineLoopTest {
         assertTrue("必须本地合成一条 onCallEnd(network)", listener.callEnds.any { it.startsWith("network:") })
     }
 
+    /**
+     * 会议房离房**走的是两步**：`joined →(leave)→ leaving →(leave.ok)→ idle`。
+     *
+     * 第一版的判据是「before=joined 且 after=idle」，这条两步路一步都不满足，
+     * 于是 `stop()` 一次都没调过——PeerConnection 活着继续重采候选，
+     * 服务端每 5 分钟回两条 `1203 not_in_room`（真机日志刷了 50 分钟）。
+     */
+    @Test
+    fun `会议房离房要停媒体，哪怕它是分两步走完的`() {
+        loginAndConnect()
+        joinConferenceRoom()
+        assertTrue("进房要把媒体拉起来", media.started)
+
+        engine.leaveRoom()
+        assertFalse("leave.ok 还没回来，媒体不该停", media.stopped)
+
+        transport.replyOk(IMFrameType.ROOM_LEAVE)
+        assertEquals(listOf("r-1"), listener.roomLeaves)
+        assertTrue("离房走完必须停媒体", media.stopped)
+    }
+
+    @Test
+    fun `离房之后再来的本端候选不产生任何上行帧`() {
+        loginAndConnect()
+        joinConferenceRoom()
+
+        // 在房里：候选照发，不然媒体根本连不上。
+        media.fireLocalCandidate("pub")
+        assertEquals(1, transport.countOf(IMFrameType.ROOM_ICE_CANDIDATE))
+
+        engine.leaveRoom()
+        transport.replyOk(IMFrameType.ROOM_LEAVE)
+        val framesAfterLeave = transport.sent.size
+
+        // 离房之后 native 侧还会冒（GATHER_CONTINUALLY，每 5 分钟一轮）：一条都不许上行。
+        media.fireLocalCandidate("pub")
+        media.fireLocalCandidate("sub")
+        assertEquals(
+            "离房之后的候选必须在出口被丢掉，发上去只会换回 1203 not_in_room",
+            1,
+            transport.countOf(IMFrameType.ROOM_ICE_CANDIDATE),
+        )
+        // 更强的一条：这两次候选**一帧上行都不该产生**，不只是「不产生候选帧」。
+        assertEquals("离房之后不该再有任何上行帧", framesAfterLeave, transport.sent.size)
+    }
+
     @Test
     fun `没有媒体适配器时，推流失败但信令一切正常`() {
         val bare = IMCallEngine.forTest(
@@ -230,7 +286,22 @@ class EngineLoopTest {
         var stopped = false
         val published = mutableListOf<String>()
 
-        override fun attachEvents(events: IMMediaAdapter.Events) = Unit
+        /** 门面挂上来的媒体事件出口。测试拿它模拟 native 侧冒上来的候选。 */
+        private var events: IMMediaAdapter.Events? = null
+
+        /**
+         * 模拟 libwebrtc 冒一个本端候选。
+         *
+         * 真机上这是 `PeerConnection.Observer.onIceCandidate`，跑在 native 的 signaling
+         * 线程上、什么时候来不归我们管——**离房之后照样会来**（GATHER_CONTINUALLY）。
+         */
+        fun fireLocalCandidate(pc: String) =
+            events?.onLocalCandidate(pc, "candidate:1 1 udp 2130706431 10.0.0.2 5000 typ host", "0", 0)
+
+        override fun attachEvents(events: IMMediaAdapter.Events) {
+            this.events = events
+        }
+
         override fun start(iceServers: List<String>) { started = true }
         override fun stop() { stopped = true }
         override fun publish(cid: String, kind: String, simulcast: Boolean) { published += kind }
