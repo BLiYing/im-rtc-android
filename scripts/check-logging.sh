@@ -26,9 +26,10 @@ echo "== 日志纪律（CONVENTIONS §6）=="
 for m in $MODULES; do
   dir="$m/src/main"
   [ -d "$dir" ] || continue
-  # IMRTCLog.kt 自己不算违规：它是唯一允许谈论平台日志的地方（注释里要写清楚禁的是什么），
-  # 也是将来真要接 android.util.Log 时唯一该改的文件。
-  hits=$(grep -rnE "$PATTERN" "$dir" --include="*.kt" --include="*.java" 2>/dev/null | grep -v "/IMRTCLog.kt:")
+  # 两个文件豁免：IMRTCLog.kt 是日志入口本身（注释里要写清楚禁的是什么），
+  # DemoLogSink.kt 是 Demo 把日志转到 logcat 的**唯一出口**——
+  # 「装一个 sink」正是这套设计要求宿主做的事，不是绕过门禁。
+  hits=$(grep -rnE "$PATTERN" "$dir" --include="*.kt" --include="*.java" 2>/dev/null | grep -vE "/(IMRTCLog|DemoLogSink)\.kt:")
   if [ -n "$hits" ]; then
     echo "  ✗ FAIL  $m"
     echo "$hits" | sed 's/^/          /'

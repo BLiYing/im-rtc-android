@@ -173,7 +173,11 @@ class IMCallEngine private constructor(
 
     fun setSpeakerOn(on: Boolean) = scheduler.post { media?.setSpeakerOn(on) }
 
-    /** 把某个 uid 的画面挂到视图上。`view` 传 `SurfaceViewRenderer`；null 表示卸载。 */
+    /** 造一个视频视图。没有媒体适配器时返回 null——UIKit 会退回头像占位。 */
+    fun createVideoView(context: android.content.Context): android.view.View? =
+        media?.createVideoView(context)
+
+    /** 把某个 uid 的画面挂到视图上。`view` 传 [createVideoView] 的产物；null 表示卸载。 */
     fun attachView(uid: String, view: Any?) = scheduler.post {
         requireMedia()?.attachView(uid, view)
     }
@@ -268,9 +272,11 @@ class IMCallEngine private constructor(
             adapter.start(emptyList())
         }
 
-        // 进房成功：按这通电话的 media_type 自动发布本端 Track。
-        // 宿主什么都不做也应该能通话——「进了房但没人推流」不是一个合理的默认。
+        // 进房成功：先确保媒体起来了，再按 media_type 自动发布本端 Track。
+        // **会议房是直接 joinRoom 的，压根不经过 call**——只按 room_token 判的话这里一次都不会起，
+        // 真机上的症状是「还没 start 就 publish，忽略」，人进了房但谁也听不见谁。
         if (before.room.state != IMRoomState.JOINED && after.room.state == IMRoomState.JOINED) {
+            adapter.start(emptyList())
             publishDefaults(after)
         }
 
@@ -283,7 +289,9 @@ class IMCallEngine private constructor(
 
     private fun publishDefaults(state: IMEngineContext) {
         val adapter = media ?: return
-        val kinds = if (state.call.mediaType == "video") listOf("audio", "video") else listOf("audio")
+        // 会议房没有 call，媒体类型无从谈起——按视频会议处理（草图 §08）。
+        val mediaType = if (state.call.state != IMCallState.IDLE) state.call.mediaType else "video"
+        val kinds = if (mediaType == "video") listOf("audio", "video") else listOf("audio")
         for (kind in kinds) {
             val cid = "local-$kind-${scheduler.nowMs()}"
             localTracks[cid] = kind

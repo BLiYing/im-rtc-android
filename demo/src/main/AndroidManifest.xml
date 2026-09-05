@@ -4,10 +4,24 @@
     <application
         android:allowBackup="false"
         android:label="im-rtc Demo"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:usesCleartextTraffic="true">
+        <!--
+          usesCleartextTraffic：**Android 9 起默认禁止明文 HTTP/WS**，而本地联调的
+          `http://192.168.1.12:8787` / `ws://…` 正是明文。不开这一项的症状是
+          「点登录没反应」——请求在系统层就被掐了，**服务端日志里一条记录都没有**，
+          很容易误判成服务端没起。这与 iOS 端的 NSAppTransportSecurity 是同一个坑。
+          **只该开在 Demo/调试构建里**，生产应当走 wss:// 并去掉这一行。
+        -->
 
+        <!--
+          NoActionBar：真机上跑第一次就发现，系统默认主题的 ActionBar 是**盖在内容上**的，
+          把顶部的状态行与三个 tab 按钮整块遮住了——截图上看像是「那几个控件没画出来」，
+          实际布局里一直都在（uiautomator dump 能看到）。这类问题编译期一点征兆都没有。
+        -->
         <activity
             android:name=".MainActivity"
+            android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

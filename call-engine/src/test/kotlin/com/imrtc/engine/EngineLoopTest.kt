@@ -239,6 +239,7 @@ class EngineLoopTest {
         override fun createOffer(pc: String) = Unit
         override fun applyRemoteSdp(pc: String, type: String, sdp: String) = Unit
         override fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) = Unit
+        override fun createVideoView(context: android.content.Context): android.view.View? = null
         override fun attachView(uid: String, view: Any?) = Unit
         override fun startLocalPreview(view: Any?) = Unit
         override fun switchCamera() = Unit

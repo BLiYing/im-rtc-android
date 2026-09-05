@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!--
+          通话页是**独立 Activity，不入宿主导航栈**——任何界面都能被来电覆盖。
+          singleTask + excludeFromRecents：通话只该有一个实例，也不该在最近任务里留残影。
+          锁屏来电（showWhenLocked / turnScreenOn）属推送阶段，MVP 不做。
+        -->
+        <activity
+            android:name=".IMCallActivity"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|keyboardHidden" />
+    </application>
+</manifest>

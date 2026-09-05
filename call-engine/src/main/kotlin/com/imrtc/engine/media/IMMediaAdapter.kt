@@ -1,5 +1,8 @@
 package com.imrtc.engine.media
 
+import android.content.Context
+import android.view.View
+
 /**
  * 媒体层的**接缝**——`call-engine` 里只有这个接口，没有任何实现。
  *
@@ -64,6 +67,15 @@ interface IMMediaAdapter {
 
     /** 收到对端 ICE 候选。**远端描述还没设时要缓冲**，别丢——丢了媒体会间歇性不通。 */
     fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int)
+
+    /**
+     * 造一个能显示视频的 View（`SurfaceViewRenderer`）。
+     *
+     * 这个口子存在的唯一理由是**分层**：`call-uikit` 不许 import `org.webrtc`（CONVENTIONS §1），
+     * 但总得有人把渲染器 new 出来。由媒体层造、UIKit 只管挂到视图树上，
+     * 换媒体实现时 UIKit 一行不用改。
+     */
+    fun createVideoView(context: Context): View?
 
     /** 把某个 uid 的画面挂到一个视图上；`view` 为 null 表示卸载。 */
     fun attachView(uid: String, view: Any?)
