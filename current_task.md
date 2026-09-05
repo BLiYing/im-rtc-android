@@ -8,39 +8,41 @@
 
 **仓库刚建（2026-09-05），只有文档与体量门禁，零代码。**
 
-两条已拍板的决定：
-1. **Android 进入产品范围**，四仓变五仓。设计文档 §1 #6 原文「Android 暂不考虑」与
-   §8「若进来再评估共享 C++ 核心」**尚未同步修改**，改动待办见「下一步」第 0 项。
+两条已拍板的决定（五仓文档已同步，2026-09-05）：
+1. **Android 进入产品范围**，四仓变五仓。设计文档 §1 #6、§8、§10（新增 P6）、§11（新增第 10 项）已改。
 2. **Kotlin 独立实现，不共享桌面端的 C++ 核心。** 理由：Android 的 libwebrtc 绑定本就是 Java，
    走 C++ 核心仍要写一整层 Java 媒体适配器，能共享的只有协议 + 状态机 + 信令约 3k 行，
    代价却是 NDK + 四个 ABI + JNI 生命周期。与设计文档否掉 Rust/KMP 是同一条理由。
 
-**开工闸门（两条都满足才动第一刀）**：
-- **iOS 媒体真机验收通过**——现在 iOS 的媒体只证明了「编得过」，一行都没在真机上跑过。
-  未验证的媒体设计不该同时复制到第五个实现里。
+**开工闸门只剩一条，且只挡后半程**：
+- ~~iOS 媒体真机验收~~ —— **iOS 已在真机测试中（2026-09-05）**，不再是阻塞项。
 - **设计文档 §7.5 回调表冻结**——iOS 落地这一周里它还在加 `updateToken`、`setSpeakerOn`、
-  `onConnected`，每一条都是「写第三个实现时才发现前两个漏了」。现在开工，补表成本从 ×4 变 ×6。
+  `onConnected`，每一条都是「写第三个实现时才发现前两个漏了」。补表成本现在是 ×5。
+  **但这条只挡第三刀（门面与回调表）往后**：第一刀（Gradle 骨架 + 向量 runner）与
+  第二刀（协议层 + 状态机）**吃的是协议与向量，不是回调表，随时可以开**。
 
-**在此之前本仓只做一件事：接收契约。** 从 Kotlin / Java 视角评审
+**开工前本仓只做一件事：接收契约。** 从 Kotlin / Java 视角评审
 `../im-rtc-server/docs/RTC_PROTOCOL.md` 与 `docs/conformance/*.json`，
-发现「Kotlin 侧别扭 / Java 宿主调不了」的地方**现在就回 server 仓提**，别等开工。
+发现「Kotlin 侧别扭 / Java 宿主调不了」的地方**现在就回 server 仓提**。
 
 ## 下一步
 
-0. **五仓文档同步**（在 server 仓做）：设计文档 §0 仓库表、§1 #6、§7 标题「三端同构」、
-   §8、§10 分期，四个老仓的「关联仓库/关联工程」段落，以及被引用了三次却一个都不存在的
-   `CLIENT_PARITY.md`——五端起它必须是逐端逐特性状态的唯一真相源。
-1. **等闸门**（见上）。期间只评审协议。
-2. **第一刀**：Gradle 骨架（`call-engine` / `call-engine-webrtc` / `call-uikit` / `demo`
+0. ~~五仓文档同步 + 建 `CLIENT_PARITY.md`~~ —— **已完成（2026-09-05）**。
+1. **第一刀**：Gradle 骨架（`call-engine` / `call-engine-webrtc` / `call-uikit` / `demo`
    四模块 + 版本目录）+ `scripts/test.sh` + **JVM 单测跑通五份一致性向量的 runner**。
    不需要 org.webrtc、不需要设备。
-3. **第二刀**：`protocol/` + `statemachine/`——对照 `../im-rtc-ios/Sources/IMCallEngine/`
+2. **第二刀**：`protocol/` + `statemachine/`——对照 `../im-rtc-ios/Sources/IMCallEngine/`
    的同名两层，向量全过。仍然不需要设备。
-4. **第三刀**：`signaling/`（OkHttp WebSocket、握手、心跳、req_id 配对、退避重连、4401 三次上限）
+3. **第三刀**（**要等回调表冻结**）：`signaling/`（OkHttp WebSocket、握手、心跳、req_id 配对、退避重连、4401 三次上限）
    + 门面与回调表 + 日志回传。验收：真连本地服务端跑通进房离房（对齐 iOS 的 `LiveServerTests`）。
-5. **第四刀**：`call-engine-webrtc` 媒体 + 前台服务 + 音频焦点与路由。**真机验收**，
+4. **第四刀**：`call-engine-webrtc` 媒体 + 前台服务 + 音频焦点与路由。**真机验收**，
    且要与 Web、iOS 各互打一次。
-6. **第五刀**：`call-uikit`（来电横幅 / 1v1 四态 / 九宫格 / 悬浮球）+ Demo 三屏。
+5. **第五刀**：`call-uikit`（来电横幅 / 1v1 四态 / 九宫格 / 悬浮球）+ **Demo App 三屏**
+   （拨号 / 通话记录 / 设置，对齐草图 §02 与 iOS Demo）。
+
+**Demo 是本仓自己的一个 Gradle 模块（`demo/`），不是另建工程**——不需要你手动新建 Android 项目，
+`settings.gradle.kts` 与四个模块都由第一刀一次生成。iOS 那边 Demo 是独立 Xcode 工程，
+是因为 SPM 包和 App 工程在 Xcode 里天生两张皮；Gradle 没这个问题，一个构建里挂四个模块就行。
 
 ## 已知坑 / 限制
 
@@ -51,9 +53,10 @@
   协议 + 向量 + 跨端互打，见 `../im-rtc-server/docs/CLIENT_PARITY.md` §3。**H.264 要专门跨端实测。**
 - **UI 用原生 View，不用 Compose**：`SurfaceViewRenderer` 本就是 View；UIKit 是要塞进别人 App 的库，
   不该把 Compose 运行时强加给宿主。宿主自己是 Compose 应用不受影响（`AndroidView` 能嵌）。
-- **不新建 Android 宿主空项目**：空壳证明不了任何东西。真实校验场是
-  `demo/` 里的 **`JavaApiCheck.java`**（纯 Java 调一遍全部公开 API，**编译即验证**）——
-  这一招在 iOS 侧抓到过真问题。等公司真有 Android App 要接入时，再按 P5 的方式做一次接入示例。
+- **Demo App 归本仓，不用你另建工程**；「宿主」是另一件事（别人的 App 来接我们的 SDK），
+  公司目前没有 Android 宿主。**公开面的 Java 友好由 `demo/` 里的 `JavaApiCheck.java` 守**
+  （纯 Java 调一遍全部公开 API，**编译即验证**）——这一招在 iOS 侧抓到过真问题。
+  等真有 Android App 要接入时，再按 P5 的方式补一次接入示例。
 
 **从另外三端搬过来的坑（别再踩第二遍）**
 - **协议里三处与旧草案不同**：下行 `timeout` → `call.no_answer`；草图 §09 的 `room_ready` →
@@ -83,6 +86,20 @@
 - `PeerConnection.Observer` 跑在 signaling 线程上，禁止阻塞、禁止直接碰 UI。
 - **禁止 `org.json`**：它在 JVM 单测里是空壳桩，一律返回默认值，测试会假绿。
 - 厂商 ROM 的后台限制差异很大，**「我这台过了」不等于「Android 过了」**。
+
+## 本机环境（2026-09-05 实测，开工不缺东西）
+
+| 项 | 状态 |
+|---|---|
+| JDK | 17.0.16（Homebrew），`/usr/libexec/java_home -v 17` |
+| Android Studio | 已装（正式版 + Preview 各一份） |
+| SDK | `~/Library/Android/sdk`，platforms 到 **android-36**、build-tools 到 36.0.0 |
+| `adb` | `~/Library/Android/sdk/platform-tools/adb`（**不在 PATH，要么加 PATH 要么写全路径**） |
+| **真机** | **OPPO PKD130 / Android 15（API 35）/ arm64-v8a，已连着** |
+| 本机 CPU | x86_64（Intel Mac）——模拟器用 x86_64 镜像；**真机是 arm64-v8a**，两个 ABI 都要能出包 |
+
+**首台验收机正好是 OPPO（ColorOS）**：厂商后台限制最严的那一类，前台服务与保活要在它上面过一遍
+才算数——这比在 Pixel 上过更有说服力。但**别只测它**，交付说明里要写清楚测的是哪台。
 
 ## 关联工程 / 常用命令
 

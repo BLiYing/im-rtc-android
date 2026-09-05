@@ -22,7 +22,8 @@ Android 用 Kotlin **独立实现**（2026-09-05 拍板），不共享桌面端�
 理由见 [README](README.md)：能共享的只有约三千行纯逻辑，代价是 NDK + 四个 ABI + JNI 生命周期。
 
 ## 技术栈
-- 语言：**Kotlin**，JDK 17，**minSdk 24 / compileSdk 35**（开工时按当时最新核定）
+- 语言：**Kotlin**，JDK 17，**minSdk 24 / compileSdk 36 / targetSdk 36**
+  （本机 SDK 已装到 android-36、build-tools 36.0.0；见 `current_task.md` 的「本机环境」）
 - 构建：**Gradle KTS + 版本目录 `gradle/libs.versions.toml`**（依赖版本集中一处锁定）
 - 媒体：**libwebrtc 预编译包 `io.github.webrtc-sdk:android`，锁 `150.7871.01`（M150）**，
   兜底 `144.7559.15`（M144，补丁最多的成熟线）。`PeerConnectionFactory` / `SurfaceViewRenderer` /
@@ -53,7 +54,8 @@ im-rtc-android/
 │   └── src/test/kotlin/                # 纯 JVM 单测：向量、状态机、编解码（不需要设备）
 ├── call-engine-webrtc/                 # 媒体实现（org.webrtc）+ 前台服务 + 音频路由
 ├── call-uikit/                         # 来电横幅 / 1v1 / 九宫格 / 悬浮窗 / 控制条
-├── demo/                               # Demo App，含 JavaApiCheck.java（Java 互操作编译即验证）
+├── demo/                               # **Demo App**：登录/拨号/通话记录/设置（本仓的一个模块，不是独立工程）
+│                                       含 JavaApiCheck.java（Java 互操作编译即验证）
 └── scripts/                            # 门禁与测试入口
 ```
 
