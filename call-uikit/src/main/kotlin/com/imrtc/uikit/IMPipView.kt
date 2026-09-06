@@ -32,9 +32,13 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
     var corner: IMPipLayout.Corner = IMPipLayout.Corner.DEFAULT
         private set
 
-    /** 控制条此刻是否显示——显示时下面两个角要上移。 */
+    /** 控制条此刻是否显示——显示时下面两个角要上移。**写同一个值不重摆**（见 [snap]）。 */
     var liftsForControls = false
-        set(value) { field = value; if (!dragging) snap(animated = true) }
+        set(value) {
+            if (field == value) return
+            field = value
+            if (!dragging) snap(animated = true)
+        }
 
     private val density = resources.displayMetrics.density
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
@@ -130,10 +134,23 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
         }
         val size = sizeDp()
         val wanted = LayoutParams((size.width * density).toInt(), (size.height * density).toInt())
-        if (layoutParams?.width != wanted.width || layoutParams?.height != wanted.height) layoutParams = wanted
+        val resized = layoutParams?.width != wanted.width || layoutParams?.height != wanted.height
+        if (resized) layoutParams = wanted
         val origin = restOrigin(corner)
         val tx = (origin.x * density).toFloat()
         val ty = (origin.y * density).toFloat()
+
+        /*
+         **本来就在那儿就什么都不做**——这一句既是省事也是保住日志。
+
+         `snap()` 每秒被叫好几次（`onLayout` 那条路），而参数一模一样：同一个角、同一个容器、
+         同一个坐标。不拦的话每次都重启一遍属性动画，还每秒往 logcat 里灌一行 DEBUG——
+         2026-09-06 排查「锁屏解锁后某个格子黑屏」时，logcat 里**109 行 imrtc 日志全是这一条**，
+         整个 app 的历史被它冲干净了，只好靠 SurfaceFlinger 的图层表反推。
+         **刷屏的日志比没有日志更糟**：它把别人的证据一起冲走。
+        */
+        if (!resized && x == tx && y == ty) return
+
         IMRTCLog.d("kit", "小窗吸角 corner=$corner container=${c.width}x${c.height} -> ($tx,$ty)")
         if (!animated) { x = tx; y = ty; return }
         animate().x(tx).y(ty).scaleX(1f).scaleY(1f).setDuration(IMKitTheme.SNAP_MS).start()

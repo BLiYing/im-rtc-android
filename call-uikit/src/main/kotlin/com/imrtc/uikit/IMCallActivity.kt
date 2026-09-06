@@ -34,6 +34,7 @@ class IMCallActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         goFullScreen()
+        keepScreenOn()
         view = IMCallView(this)
         view.actions = object : IMCallView.Actions {
             override fun onAnswer() = IMCallKit.answer()
@@ -58,6 +59,24 @@ class IMCallActivity : Activity() {
     override fun onDestroy() {
         IMCallKit.forget(observer)
         super.onDestroy()
+    }
+
+    /**
+     * 通话中不许自动息屏。
+     *
+     * 少这一句的后果不是「省了点电」：**Android 的 `SurfaceView` 一息屏就把 Surface 销毁掉**，
+     * 而 libwebrtc 的 `EglRenderer` 只在**下一帧到达时**才画——解锁回来时它是一块空的黑面。
+     * 对端还在发帧的格子会在 33ms 内重新画上，看不出异样；**对端已经不发帧的格子就永远是纯黑**，
+     * 而息屏之前那一格显示的是「冻住的最后一帧」，看起来一切正常。
+     * 于是「锁屏解锁后某个人黑屏」看起来像解锁引起的，其实解锁只是**擦掉了那张遮丑的旧画面**。
+     * iOS 那边 `RTCMTLVideoView` 背后是 `CAMetalLayer`，图层内容在后台不会被丢，所以看不到这一幕。
+     *
+     * 打着电话让屏幕自己睡过去本来就不对（所有通话 App 都不这么干），顺手把这条堵上，
+     * 至少「没人碰手机、屏幕自己黑掉」这条最常见的路径不会再触发上面那一幕。
+     * **它不解决「用户主动锁屏」**——那条要靠「没帧了就露头像」，见 current_task 的下一步。
+     */
+    private fun keepScreenOn() {
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     /**
