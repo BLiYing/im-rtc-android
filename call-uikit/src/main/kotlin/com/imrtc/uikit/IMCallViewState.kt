@@ -124,7 +124,14 @@ internal data class IMCallViewState(
             else -> "通话"
         }
 
-    val tiles: List<Member> get() = members.values.take(IMGrid.MAX_TILES)
+    /**
+     * 九宫格里要摆的远端成员。
+     *
+     * 截到 [IMGrid.MAX_REMOTE_TILES]（8）而不是 9：**本端恒占一格**，
+     * 9 个远端加上自己就是 10 格，而行列只有 9 个坑——GridLayout 会越过 `rowCount`
+     * 往下多排一行、跑出居中块。群通话有服务端的 9 人硬上限碰不到，**会议房不设上限**。
+     */
+    val tiles: List<Member> get() = members.values.take(IMGrid.MAX_REMOTE_TILES)
 
     val statusText: String
         get() = when {

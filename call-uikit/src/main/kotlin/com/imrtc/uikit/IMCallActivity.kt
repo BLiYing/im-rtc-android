@@ -46,6 +46,8 @@ class IMCallActivity : Activity() {
             override fun onSwap() = IMCallKit.swap()
             override fun onInvite() = IMCallKit.showInvitePicker(this@IMCallActivity)
             override fun videoViewFor(uid: String): View? = IMCallKit.videoViewFor(this@IMCallActivity, uid)
+            override fun releaseVideoView(uid: String) = IMCallKit.releaseRemoteView(uid)
+            override fun reportLayer(uid: String, layer: String) = IMCallKit.reportLayer(uid, layer)
             override fun localPreviewView(): View? = IMCallKit.localPreviewView(this@IMCallActivity)
             override fun hasLocalVideo(): Boolean = IMCallKit.hasLocalVideo()
         }
@@ -95,10 +97,27 @@ class IMCallActivity : Activity() {
         IMCallKit.minimize()
     }
 
+    @Suppress("DEPRECATION")
     private fun render(state: IMCallViewState) {
-        view.render(state)
         // 收进悬浮球 = 关掉全屏页（通话照常）。**不能只是隐藏**：留着它，宿主的界面还是被盖着的。
         val shouldClose = state.phase == IMCallViewState.Phase.IDLE || state.isMinimized
-        if (shouldClose && !isFinishing) finish()
+        /*
+         **要关页面就别再画一遍。**
+
+         `finish()` 不是立刻消失——退出动画那两三百毫秒里这一屏还在，而复位后的状态是
+         一个全默认的 `IMCallViewState`（语音、非群、IDLE），照常渲染出来的是一屏
+         「语音通话中」：大头像 + 标题「通话」+ 静音/扬声器/挂断。九宫格结束时版式还会从
+         GRID 跳成 AUDIO，就是用户报的「多了一个画面，闪一下看不清」。
+         `IMCallView.render` 里也有同一道闸（两处都留着：那边挡住悬浮球形态下的重画）。
+        */
+        if (shouldClose) {
+            if (!isFinishing) {
+                finish()
+                // 通话页是盖在宿主上的一层，收起时不该再演一段滑出动画。
+                overridePendingTransition(0, 0)
+            }
+            return
+        }
+        view.render(state)
     }
 }

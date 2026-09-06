@@ -127,6 +127,8 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     }
 
     override fun onUserVideoAvailable(uid: String, available: Boolean) {
+        // 轨道来了才轮得到报层：人进来那一刻报的那次是空转（见 invalidateReportedLayer）。
+        if (available) IMCallKit.invalidateReportedLayer(uid)
         IMCallKit.update(IMCallViewReducer.availability(state, uid, "video", available))
         host.onUserVideoAvailable(uid, available)
     }
@@ -144,7 +146,9 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     override fun onCallMediaTypeChanged(callId: String, from: String, to: String) = host.onCallMediaTypeChanged(callId, from, to)
 
     override fun onFirstVideoFrame(uid: String) {
-        // 第一帧到了，界面撤 loading：让格子重画一次就够。
+        // 第一帧到了，界面撤 loading：让格子重画一次就够。**顺带重报一次层上界**——
+        // 到这一步轨道一定在了，而人进来那一刻报的那次多半是空转。
+        IMCallKit.invalidateReportedLayer(uid)
         IMCallKit.update(state)
         host.onFirstVideoFrame(uid)
     }

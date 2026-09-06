@@ -10,33 +10,28 @@
 
 ## 当前焦点
 
-**Android 的视频通路已在真机（OPPO PKD130）上跑通并逐条验过**（2026-09-06）：
-远端画面、本端预览、全屏铺满、小窗吸右上角、拨出中就看得见自己。
-`./scripts/test.sh` 六步全绿。
+**九宫格拉齐 + 三个只在 Android 上有的坑（2026-09-06 下午）**，`./scripts/test.sh` 六步全绿。
+起因是用户三端并排看九宫格，报了五条——**其中三条是本仓独有的**：
 
-「Android 一格画面都不出」前后一共**四个独立根因**，前两个是上一轮修的媒体通路，
-后两个是这一轮真机才炸出来的渲染层：
-
-| # | 症状 | 根因 |
+| 症状（用户报的） | 根因 | 落点 |
 |---|---|---|
-| 1 | 别人看不见我、也听不见我 | 本端 Track 的 id 是 `"audio-$cid"`，而服务端按 msid 第二段（= track id）认领 m-line（协议 §3.2） |
-| 2 | 协商全通却一格不出 | `onAddTrack` 拿 **stream id** 当 uid，而服务端给所有下行轨道用同一个常量 stream（`im-rtc`）。补了 `claimRemoteTracks` |
-| 3 | **自己和别人的画面都不出** | `SurfaceViewRenderer.init` 头一行是 `ThreadUtils.checkIsOnMainThread()`，而 Engine 的方法跑在自己那条单线程上，`IMExecutorScheduler` 又把异常吞掉记一行日志——**渲染器一次都没初始化成功** |
-| 4 | 只有本端预览不出 | `onLocalMediaStarted` 要拿前台 Activity，而通话页一起来宿主那个就 pause 了，`IMActivityTracker.foreground()` 刻意不认自己家的通话页 → 返回 null → `startLocalPreview` **一次都没被调用过** |
+| 九宫格没跟 iOS 拉齐：格子被按钮压住，三个人排成一竖条 | **`stage` 的下边界就是屏幕下边界**。控制条为了浮在全屏画面上是直接挂在根布局上的（不在 `column` 里），于是「在 stage 里居中」= 在整屏里居中；`IMGrid.dimensions` 拿到的 aspect 也从 0.68 掉到 **0.48**，连行列都算错。iOS 钉的是 `controlsStack.topAnchor`、Web 是 flex 的兄弟节点 | `IMCallView.applyStageInsets()`：给 stage 加一条下 padding（= 控制条上沿到屏幕底边），**只在语音页与九宫格加**，视频版式照旧铺满 |
+| **视频一直在闪** | `layoutGrid` 无条件 `removeAllViews()` 再逐个 `addView`，而 `render` 是**每秒好几次**（计时器 1s 一跳、网络质量与主讲人都是周期帧）。格子里装的是 `SurfaceViewRenderer`——**一从 window 上摘下来 Surface 就销毁**，重挂要重建再等关键帧 | 新文件 `IMCallGridView`（与 iOS / Web 同名同职责）：没变就返回、只有尺寸变就地改 LayoutParams、只有集合变才重挂 |
+| 对方拒接 / 未接听时闪过一个看不清的画面 | 复位后的状态是**全默认值**（语音 / 非群 / IDLE），而 `render` 的 `isEnded` 只认 ENDED——照常画出来就是一屏「语音通话中」（大头像 + 标题「通话」+ 静音/扬声器/挂断）。而 `IMCallActivity` 是**先 render 再 finish**，退出动画那两三百毫秒完整可见；九宫格结束时版式还会从 GRID 整个跳成 AUDIO | 两道闸：`IMCallView.render` 在 IDLE 直接返回；`IMCallActivity.render` 要关页面就不再画，并 `overridePendingTransition(0, 0)`。Web 的 `CallOverlay`、iOS 的 `IMCallWindow` 在 idle 时本来就不画 |
 
-这一轮还做了：
+顺带补的（都是「查根因时发现的一直缺」）：
 
-| 项 | 落点 |
+| 项 | 说明 |
 |---|---|
-| **只采集不发布**（拨出中就看得见自己） | 预览与推流共用一个 source、两条 track（推流那条 id 必须是 cid，而 cid 要进房才生成）。接采集前先查 CAMERA 权限，不然会抢在权限门前面开摄像头 |
-| **切后台自动暂停本端视频** | `IMActivityTracker` 数 started 的 Activity；进系统画中画不算切后台。回前台恢复到用户原来的选择（与 iOS 同一条规则） |
-| **全屏画面真的铺满整屏** | 画面挂在根布局最底下一层（`videoFull`），头部与控制条浮在上面；inset 只让开壳、不让开画面 |
-| **1v1 不做发言高亮** | 绿描边 + 绿名牌只留给九宫格 |
-| 小窗吸角 | **容器没量出来时不吸**——算出来的「右上角」会退化成 x=0，正好压住左上角那颗「小窗」按钮 |
-| 悬浮球红键 | 挪到**底部居中**（球吸到边上时右上角那颗有一半在屏幕外） |
-| 系统画中画 | **整个撤掉**（v3.2）：那颗叉是系统画的、删不掉，按下去「小窗没了电话还在」。收起统一走应用内悬浮球 |
+| **`IMCallEngine.setRemoteLayer`** | 门面上**压根没有这个方法**，`IMGrid.layerFor` 只有单测在调，一帧 `room.update_layer` 都没发过——服务端于是按默认的 `m` 给每一路下发，九宫格里八个小格子每格都收半高清，带宽与解码器一起翻几倍，而症状只是「卡、掉帧」。Kit 侧 `IMCallKit.reportLayer` 带去重（`render` 每秒好几次，同一个值不重复发） |
+| **`retireTiles` 在 Engine 侧解绑** | 原先只把 View 从格子上摘掉，`engine.attachView(uid, null)` 没调，解码器一直占到整通结束。ENDED 停留的 1.5~3s 里也顺手收掉 |
+| **格子里的渲染器不再随「有没有画面」摘挂** | 对端一关摄像头就 `setVideoView(null)`，再开时要重建 Surface 等关键帧。改成一直挂着，靠 `visibility` 切（与 iOS 一致） |
+| **撤掉网格里的加号格** + **3~4 格竖屏恒两列** + **远端截到 8** | 三端同一份改动，理由见 `CLIENT_PARITY` v1.5 那段 |
 
-**这一轮（2026-09-06 下午）**：真机复现并修掉**控制条整块跑到屏幕最上面**——
+**没做**：真机复验。以上全部只有纯 JVM 单测 + `assembleDebug` 编过，
+**「不闪了」「格子在按钮上方了」都还没在 OPPO PKD130 上看过一眼**。
+
+**同日稍早（也是这一轮的前提）**：真机复现并修掉**控制条整块跑到屏幕最上面**——
 两排按钮压在标题栏与状态栏上（用户报「按钮都在上方，iOS 是对的」）。
 根因不在重力也不在 inset：下排那个**占位格是裸 `View` 且高度写的是 `wrap_content`**，
 而 `View.getDefaultSize` 对 `AT_MOST` 返回的是 specSize，它一个人就吃满了整块可用高度
@@ -51,12 +46,22 @@
 | **接听视频来电当场闪退**（走全屏来电页时） | 摄像头开关来电时在下排、接通后在上排，而 `addView` 遇到「已经有父容器」的 View 直接抛 `IllegalStateException`。`fillRow` 现在先把 View 从原来那一排摘下来 |
 | 名字牌的深色底板横贯整格 | 它在下排里带着 `weight=1`，一个「我」字拖着一条通栏。改成 `wrap_content` + `onSizeChanged` 里算出来的 `maxWidth` |
 
+> **控制条那两条是本轮「让开控制条」的前提**：`applyStageInsets` 量的是 `controls.top`，
+> 而占位格没修之前 `controls` 被撑到近乎整屏、`top ≈ 0`——按它让位会把整个舞台区吃掉，
+> 九宫格直接缩成零。两条必须一起在。
+
+**上一轮（2026-09-06 上午）：Android 的视频通路在真机 OPPO PKD130 上跑通并逐条验过**——
+四个独立根因（本端 track id 必须是 cid / 远端按 track_id 认领 / `SurfaceViewRenderer.init` 撞渲染线程 /
+`startLocalPreview` 拿不到前台 Activity）连同「只采集不发布」「切后台暂停视频」「全屏铺满」的落地，
+**已挪到 [current_task.archive.md](current_task.archive.md)**。
+
 ## 下一步
 
 - **真机验收剩下的那些**（清单见交互稿 **v3.1 §09 的 25 条**，Android 还要加 §08 的六条）：
-  视频通路 / 全屏 / 小窗吸角 / 拨出中预览**已验**；还没验的是权限说明卡与「再劝一次」
+  视频通路 / 全屏 / 小窗吸角 / 拨出中预览**已验**；**本轮这批一条都没验**（九宫格在按钮上方、
+  三人两列、视频不再闪、拒接后不闪那一屏、层上界真的发出去了）；还没验的是权限说明卡与「再劝一次」
   （本机权限早就授过，要 `adb shell pm revoke com.imrtc.demo android.permission.CAMERA` 再走一遍）、
-  返回键收小窗、小窗长按拖动 / 互换、加号格与选人、占位格终局、
+  返回键收小窗、小窗长按拖动 / 互换、标题栏加人与选人、占位格终局、
   切后台暂停视频、九宫格三人以上。
   首台验收机是 OPPO PKD130（ColorOS，后台限制最严的那一类）。
 - 悬浮球拖到底部 = 挂断（交互稿 M2）**拍板不做**；全屏来电 `fullScreenIntent`（差异 5）属推送阶段，MVP 不做。

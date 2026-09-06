@@ -61,6 +61,9 @@ object IMCallKit {
 
     /** 本通电话里每个 uid 的渲染器。**同一个 uid 反复要拿到的是同一个 View**，否则每次刷新都重建、画面闪。 */
     private val remoteViews = HashMap<String, View>()
+
+    /** 已经报给服务端的层上界。uid → layer。**同一个值不重复发**（见 [reportLayer]）。 */
+    private val reportedLayers = HashMap<String, String>()
     private var localPreview: View? = null
     private var localPreviewStarted = false
 
@@ -92,6 +95,7 @@ object IMCallKit {
         mode = Mode.HIDDEN
         bannerExpanded = false
         remoteViews.clear()
+        reportedLayers.clear()
         localPreview = null
         localPreviewStarted = false
     }
@@ -188,6 +192,41 @@ object IMCallKit {
      * `IMActivityTracker.foreground()` 返回 null（它刻意不认自己家的通话页），
      * 于是 `startLocalPreview` **一次都没被调用过**：真机上「别人看得见我，我自己看不见我」。
      */
+    /** 这个人的画面不要了：把渲染器从 Engine 上摘掉，别让解码器一直占着。 */
+    internal fun releaseRemoteView(uid: String) {
+        if (remoteViews.remove(uid) == null) return
+        engine?.attachView(uid, null)
+        reportedLayers.remove(uid)
+    }
+
+    /**
+     * 报某个远端画面的层上界（协议 §3.5）。**同一个值不重复发**——
+     * `render` 每秒好几次，每次都发一遍 `room.update_layer` 是纯粹的噪声。
+     *
+     * 这一条以前**整个不存在**：`IMGrid.layerFor` 只有单测在调，Engine 门面上连
+     * `setRemoteLayer` 都没有。服务端于是按默认的 `m` 给每一路下发，九宫格里八个小格子
+     * 每格都收半高清——带宽与解码器一起翻几倍，症状是「画面卡、掉帧」而不是任何一条报错。
+     */
+    internal fun reportLayer(uid: String, layer: String) {
+        if (reportedLayers[uid] == layer) return
+        reportedLayers[uid] = layer
+        engine?.setRemoteLayer(uid, layer)
+    }
+
+    /**
+     * 这个人的层上界要**重报一次**。
+     *
+     * `setRemoteLayer` 是按 uid 找当前的远端视频轨道再发帧的——**人先进来、轨道后到**是常态
+     * （`onUserEnter` 一到界面就摆格子并报层，那时 `remoteTracks` 里还没有他）。
+     * 那一次什么都没发出去，可去重表已经记下了「报过 l」，之后除非格子数变了就再也不会重发，
+     * 轨道自动订阅时用的还是默认的 `m`——**这条上报等于白写**。
+     * 所以轨道真的出现时（`onUserVideoAvailable` / `onFirstVideoFrame`）把记账划掉，
+     * 紧接着那一轮 render 会照常再报一次。
+     */
+    internal fun invalidateReportedLayer(uid: String) {
+        reportedLayers.remove(uid)
+    }
+
     internal fun localPreviewView(context: Context): View? {
         val instance = engine ?: return null
         val view = localPreview
@@ -462,6 +501,7 @@ object IMCallKit {
     private fun clearCallViews() {
         remoteViews.keys.forEach { engine?.attachView(it, null) }
         remoteViews.clear()
+        reportedLayers.clear()
         localPreview = null
         localPreviewStarted = false
         clearSettleTimers()

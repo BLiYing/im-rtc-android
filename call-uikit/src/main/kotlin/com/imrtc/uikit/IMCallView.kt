@@ -6,8 +6,6 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.GridLayout
-import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -15,7 +13,7 @@ import android.widget.TextView
  * 通话界面本体，三种版式（规范 §03 / §04）：
  * · **AUDIO**：语音通话、拨出中 —— 96 头像 + 名字 + 状态（拨出视频时右上叠本端预览）；
  * · **VIDEO**：1v1 视频通话中 —— 远端全屏 + 本端小窗，单击小窗互换，控制条 3s 自动隐藏；
- * · **GRID**：群通话 / 会议 —— 九宫格 + 加号格（只有主叫可见）。
+ * · **GRID**：群通话 / 会议 —— 九宫格（加人入口只在标题栏右上角那一颗）。
  *
  * **三段式**：头部与控制条钉死高度（64 / 96），中间那段 `weight=1` 吃掉剩下的全部——一个未知高度，不会欠定。
  * 用代码搭而不是 XML：Kit 是要塞进别人 App 的库，少一批 layout 资源就少一批与宿主重名的风险。
@@ -35,9 +33,26 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         fun onInvite()
         /** 要一个远端渲染器。同一个 uid 反复要拿到的是同一个 View。 */
         fun videoViewFor(uid: String): View?
+
+        /**
+         * 这个人的格子不要了：**在 Engine 那一侧也解绑**。
+         *
+         * 只把 View 从格子上摘掉是不够的——渲染器还挂在 `engine.attachView(uid, …)` 上，
+         * 解码器跟着一直占着，直到整通电话结束才随 `clearCallViews` 一起清。
+         * iOS 的 `retireTiles` 是调 `controller.attachView(uid, to: nil)` 的，这里补齐。
+         */
+        fun releaseVideoView(uid: String)
         /** 要本端预览的渲染器。 */
         fun localPreviewView(): View?
         fun hasLocalVideo(): Boolean
+
+        /**
+         * 报某个远端画面的**层上界**（协议 §3.5）。格子越小报得越低，直接省带宽。
+         *
+         * **漏报的代价是隐形的**：服务端按默认的 `m` 给每一路下发，九宫格里八个小格子
+         * 每格都收半高清，带宽与解码器一起翻几倍，症状是「画面卡、掉帧」而不是任何一条报错。
+         */
+        fun reportLayer(uid: String, layer: String)
     }
 
     var actions: Actions? = null
@@ -47,7 +62,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val banner = IMTopBanner(context)
     private val stage = FrameLayout(context)
     private val audioStage = IMAudioStage(context)
-    private val grid = GridLayout(context)
+    private val grid = IMCallGridView(context)
     private val pip = IMPipView(context)
     private val endedLabel = TextView(context)
     private val controlsScrim = View(context)
@@ -57,7 +72,6 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     /** 控制条下排：挂断居中 + 翻转摄像头。 */
     private val controlsBottom = LinearLayout(context)
     private val selfTile = IMVideoTile(context)
-    private val addTile = ImageButton(context)
     /** uid → 这个人的格子。**不每次重建**：重建会让媒体层挂着的渲染器重来，画面会闪。 */
     private val tiles = LinkedHashMap<String, IMVideoTile>()
     private var fullTile: IMVideoTile? = null
@@ -138,16 +152,6 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM)
                 .apply { bottomMargin = dp(CONTROLS_BOTTOM_DP) },
         )
-        grid.alignmentMode = GridLayout.ALIGN_BOUNDS
-
-        addTile.setImageResource(IMKitIcon.PLUS.resId)
-        addTile.setColorFilter(IMKitTheme.primaryText)
-        addTile.alpha = 0.8f
-        addTile.background = IMKitTheme.roundedDrawable(android.graphics.Color.TRANSPARENT, dp(IMKitTheme.TILE_RADIUS_DP)).apply {
-            setStroke((1.5f * resources.displayMetrics.density).toInt(), 0x4DFFFFFF)
-        }
-        addTile.contentDescription = "添加成员"
-        addTile.setOnClickListener { actions?.onInvite() }
 
         header.minimizeButton.setOnClickListener { actions?.onMinimize() }
         header.inviteButton.setOnClickListener { actions?.onInvite() }
@@ -160,9 +164,6 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         rejectButton.setOnClickListener { actions?.onHangup() }
         pip.onTap = { if (layout == IMCallViewState.Layout.VIDEO) actions?.onSwap() }
     }
-
-    /** 当前摆在九宫格里的那批格子。容器尺寸变了要按真尺寸重摆一次（见 layoutGrid）。 */
-    private var gridOrdered: List<View> = emptyList()
 
     /**
      * 让开状态栏与导航栏。
@@ -197,16 +198,57 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
+        // 控制条的高度会随按钮组变（来电两颗 / 通话中两排），所以每轮都要对一次，不只是 changed。
+        applyStageInsets()
         if (!changed) return
         pip.layoutInContainer()
         // 第一轮 render 时 stage 还没量出来，格子边长只能按默认形状估。这里补摆一次。
-        if (layout == IMCallViewState.Layout.GRID && gridOrdered.isNotEmpty()) {
-            post { layoutGrid(gridOrdered) }
+        if (layout == IMCallViewState.Layout.GRID && grid.tiles.isNotEmpty()) {
+            post { layoutGrid(grid.tiles) }
         }
+    }
+
+    /**
+     * 把控制条占的那一条从舞台区里让出来。
+     *
+     * **`stage` 的下边界就是屏幕下边界**：控制条为了浮在全屏画面上，是直接挂在根布局上的
+     * （见 init 里那段注释），不在 `column` 里。于是九宫格「在 stage 里居中」= 在整块屏幕里居中，
+     * 最后一行正好被按钮压住——而 iOS 的 stage 钉的是 `controlsStack.topAnchor`、
+     * Web 的 ControlBar 是 flex 的兄弟节点，两端的格子都在按钮上方。
+     * 舞台区形状差这一条，`IMGrid.dimensions` 拿到的 aspect 就从 0.68 掉到 0.48，
+     * 连行列都跟着算错（三个人排成一竖条）。
+     *
+     * 只有语音页与九宫格要让：视频版式的画面挂在 `videoFull` 上、本来就该铺满，
+     * 控制条浮在它上面还会 3s 自动隐藏。
+     */
+    private fun applyStageInsets() {
+        val reserved = if (layout == IMCallViewState.Layout.VIDEO || controls.visibility != VISIBLE) {
+            0
+        } else {
+            // stage 的底边与根布局的底边重合（column 是 MATCH_PARENT、stage 是最后一个 weight=1 的孩子），
+            // 所以「控制条上沿到屏幕底边」就是要让开的高度，已含它自己的下边距与手势条 inset。
+            (height - controls.top).coerceAtLeast(0)
+        }
+        if (stage.paddingBottom == reserved) return
+        // **改 padding 会再触发一轮布局**，而这里正在布局里。挪到下一帧做，
+        // 顺带避开「requestLayout() improperly called during layout」那条告警。
+        post { if (stage.paddingBottom != reserved) stage.setPadding(0, 0, 0, reserved) }
     }
 
     fun render(state: IMCallViewState) {
         this.state = state
+        /*
+         **通话已经收场了就不要再画一遍。**
+
+         复位后的状态是一个全默认的 `IMCallViewState`（`isGroup=false`、`mediaType="audio"`、
+         `phase=IDLE`），而 `isEnded` 只认 ENDED——照常走下去就会按**语音通话中**渲染一屏：
+         大头像 + 标题「通话」+ 静音/扬声器/挂断三颗按钮。而 `IMCallActivity` 是先 render
+         再 finish，退出动画那两三百毫秒里这一屏是完整可见的：九宫格通话结束时版式还会从
+         GRID 整个跳成 AUDIO，就是用户报的「多了一个画面，闪一下看不清」。
+         Web 的 `CallOverlay` 第一句就是 `if (phase === 'idle') return null`，
+         iOS 的 `IMCallWindow` 在 idle 时同步把整个 window 置 nil——两端都不给这一帧机会。
+        */
+        if (state.phase == IMCallViewState.Phase.IDLE) return
         val hasLocalVideo = actions?.hasLocalVideo() ?: false
         layout = state.layout
         val isEnded = state.phase == IMCallViewState.Phase.ENDED
@@ -232,7 +274,13 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         controlsScrim.visibility = if (layout == IMCallViewState.Layout.VIDEO && !isEnded) VISIBLE else GONE
         renderBanner(state)
         renderControls(state, isEnded)
-        if (isEnded) { pip.visibility = GONE; unpinFull(); return }
+        if (isEnded) {
+            pip.visibility = GONE
+            unpinFull()
+            // 结束画面要停 1.5~3s，**这期间远端渲染器没有任何用处**，占着解码器不放。
+            retireTiles(emptySet())
+            return
+        }
         when (layout) {
             IMCallViewState.Layout.AUDIO -> renderAudio(state, hasLocalVideo)
             IMCallViewState.Layout.VIDEO -> renderVideo(state)
@@ -367,6 +415,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         pip.visibility = VISIBLE
         pip.liftsForControls = chromeVisible
         pip.contentDescription = if (state.isSwapped) "对方画面。轻点互换，长按可移动" else "本端画面。轻点互换，长按可移动"
+        // 进小窗的报 l、上全屏的报 h（协议 §3.5）。
+        actions?.reportLayer(peer.uid, if (state.isSwapped) "l" else "h")
     }
 
     private fun renderGrid(state: IMCallViewState) {
@@ -378,63 +428,42 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         val ordered = ArrayList<View>()
         ordered += selfTile
         selfTile.setRounded(true)
+        // 层上界按格子数算：**加号格已经没有了**，格数就是真人数（本端 + 远端）。
+        val layer = IMGrid.layerFor(members.size + 1, focused = false)
         for (m in members) {
             val tile = tiles.getOrPut(m.uid) { IMVideoTile(context) }
             tile.setRounded(true)
-            tile.setVideoView(if (m.video) actions?.videoViewFor(m.uid) else null)
+            /*
+             **渲染器一直挂着，有没有画面交给 `apply` 用 visibility 切**（与 iOS 一致）。
+             原先「没画面就 setVideoView(null)」会把 SurfaceView 摘下来，Surface 当场销毁；
+             对端一开摄像头就得重建 Surface 再等一个关键帧——白等半秒还闪一下。
+            */
+            tile.setVideoView(actions?.videoViewFor(m.uid))
             tile.apply(m.uid, m.uid, m.video, m.audio, state.speakingUid == m.uid,
                 isRinging = !m.accepted, settled = m.settled, networkLevel = m.networkLevel)
+            actions?.reportLayer(m.uid, layer)
             ordered += tile
         }
-        // 加人入口放在网格里（交互稿 §05）：它天然占着「下一个人的位置」。只有主叫、没满员时才有。
-        if (state.canShowInvite) ordered += addTile
+        /*
+         **九宫格里没有加号格**（v3.3 撤掉）。加人入口只有标题栏右上角那一颗
+         （`canShowInvite` 同一条判据）：网格里再放一个是同一个动作的第二个入口，
+         而它还会占掉一个格位——三个人的通话看起来像四个人，行列也跟着多排一格。
+        */
         layoutGrid(ordered)
     }
 
     /**
-     * 格子恒为正方形、整块居中，行列跟着容器形状走（与 iOS / Web 同一个算法）。
+     * 把可用区算出来交给 [IMCallGridView]——**摆放本身在那边**（含「没变就不重挂」那条闸）。
      *
-     * **不给 spec 带权重**：带权重的话 GridLayout 会把剩余空间摊到每一格上，
-     * 算出来的正方形边长当场被撑没——竖屏两个人就变成两条又高又窄的长条，
-     * 与 iOS 完全不是一个样子。整块的居中交给 grid 自己的 `Gravity.CENTER`。
+     * 可用区要连**给控制条让出来的那条 padding** 一起扣掉（见 [applyStageInsets]），
+     * 否则九宫格是在整块屏幕里居中，最后一行被按钮压着。
      */
     private fun layoutGrid(ordered: List<View>) {
-        gridOrdered = ordered
         val gap = dp(IMKitTheme.TILE_GAP_DP)
         // 每格四周各留 gap/2 的外边距，所以可用区要先扣掉一整个 gap，算出来的边长才放得下。
-        val width = stage.width - dp(24) - gap
-        val height = stage.height - dp(8) - gap
-        val measured = width > 0 && height > 0
-        // 容器还没量出来（第一轮 render 早于 layout）：先按竖屏手机的形状排一版，
-        // onLayout 量到真尺寸会再摆一次。
-        val aspect = if (measured) width.toDouble() / height else 0.7
-        val (columns, rows) = IMGrid.dimensions(ordered.size, aspect)
-        val cellWidth: Int
-        val cellHeight: Int
-        when {
-            !measured -> { cellWidth = dp(120); cellHeight = dp(120) }
-            // 只有一格时铺满：正方形是为了「多格之间不互相拉伸」，一格时没有别人可比。
-            ordered.size <= 1 -> { cellWidth = width; cellHeight = height }
-            else -> {
-                val side = IMGrid.cellSide(columns, rows, width, height, gap)
-                cellWidth = side
-                cellHeight = side
-            }
-        }
-        grid.removeAllViews()
-        grid.columnCount = columns
-        grid.rowCount = rows
-        for (view in ordered) {
-            (view.parent as? android.view.ViewGroup)?.removeView(view)
-            val params = GridLayout.LayoutParams().apply {
-                this.width = cellWidth
-                this.height = cellHeight
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED)
-                rowSpec = GridLayout.spec(GridLayout.UNDEFINED)
-                setMargins(gap / 2, gap / 2, gap / 2, gap / 2)
-            }
-            grid.addView(view, params)
-        }
+        val width = stage.width - stage.paddingLeft - stage.paddingRight - dp(24) - gap
+        val height = stage.height - stage.paddingTop - stage.paddingBottom - dp(8) - gap
+        grid.apply(ordered, width, height, gap, fallbackCell = dp(120))
     }
 
     private fun applySelf(state: IMCallViewState, hasLocalVideo: Boolean, avatarDp: Int) {
@@ -473,6 +502,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             tile.setVideoView(null)
             (tile.parent as? android.view.ViewGroup)?.removeView(tile)
             if (fullTile === tile) fullTile = null
+            // 视图摘了还不算完，Engine 那一侧也要解绑（见 Actions.releaseVideoView）。
+            actions?.releaseVideoView(uid)
         }
     }
 

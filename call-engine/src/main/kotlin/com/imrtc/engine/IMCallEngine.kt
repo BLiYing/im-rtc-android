@@ -191,6 +191,29 @@ class IMCallEngine private constructor(
 
     fun startLocalPreview(view: Any?) = scheduler.post { requireMedia()?.startLocalPreview(view) }
 
+    /**
+     * 报某人画面的**层上界**（协议 §3.5：上界不是命令）。
+     *
+     * 九宫格缩略图报 `l`、全屏报 `h`。**不触发重协商**，也不保证立刻切——
+     * 服务端要等目标层的关键帧，还会再按带宽估计压一次。
+     *
+     * **漏调这一条的代价是隐形的**：服务端按默认的 `m` 给每一路下发，
+     * 九宫格里八个小格子每格都收半高清，带宽与解码器一起翻几倍，
+     * 症状是「画面卡、掉帧」而不是任何一条报错。iOS 的 `setRemoteLayer(_:layer:)`、
+     * Web 的 `setRemoteLayer` 是同一条；本端从缺到有是 2026-09-06 补的。
+     */
+    fun setRemoteLayer(uid: String, layer: String) = scheduler.post {
+        for ((trackId, info) in ctx.room.remoteTracks) {
+            if (info.uid != uid || info.kind != "video") continue
+            input(
+                IMMachineInput.Act(
+                    "update_layer",
+                    mapOf("track_id" to IMJson.Str(trackId), "max_layer" to IMJson.Str(layer)),
+                ),
+            )
+        }
+    }
+
     private fun setMuted(kind: String, muted: Boolean) = scheduler.post {
         val cid = localTracks.entries.firstOrNull { it.value == kind }?.key
         val trackId = cid?.let { ctx.room.publishTrackIds[it] }

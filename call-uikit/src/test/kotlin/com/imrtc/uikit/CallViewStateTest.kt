@@ -117,6 +117,25 @@ class CallViewStateTest {
         assertEquals("被放大的那一格永远要大图", "h", IMGrid.layerFor(9, focused = true))
     }
 
+    /**
+     * 竖屏上 3~4 格恒为两列——**不管容器多窄**，与 iOS / Web 同一条规则。
+     *
+     * 按「格子最大」挑的话，翻转压在手机的常见比例上（3 格 0.662、4 格 0.495）：
+     * 0.48 是这块舞台区**多算了一整条控制条**时的比例（修 stage 下边界之前），
+     * 0.68 是修完之后的；两个都必须排成「第一行两个」，否则同一通电话两种样子。
+     */
+    @Test
+    fun `竖屏三格与四格恒为两列`() {
+        for (aspect in listOf(0.4, 0.48, 0.6, 0.648, 0.68, 0.9)) {
+            assertEquals("aspect=$aspect", 2 to 2, IMGrid.dimensions(3, aspect))
+            assertEquals("aspect=$aspect", 2 to 2, IMGrid.dimensions(4, aspect))
+        }
+        // 两个人仍然上下摞（那一条是尺寸判据，没被这条规则盖掉）。
+        assertEquals(1 to 2, IMGrid.dimensions(2, aspect = 0.7))
+        // 横屏不受这条约束：宽容器上三个人一行排开。
+        assertEquals(3 to 1, IMGrid.dimensions(3, aspect = 2.0))
+    }
+
     @Test
     fun `接通之前不许收进悬浮球`() {
         // 拨出中收起来，剩一个不会动的小球挂在那儿：既不知道对方接没接，
@@ -149,9 +168,11 @@ class CallViewStateTest {
     }
 
     @Test
-    fun `格子最多九个`() {
+    fun `格子最多九个——含本端`() {
         var state = IMCallViewState()
         repeat(12) { state = IMCallViewReducer.userEnter(state, "u$it") }
-        assertEquals(9, state.tiles.size)
+        // 远端 8 + 本端 1 = 9。**本端那一格不能被挤出去**。
+        assertEquals(IMGrid.MAX_REMOTE_TILES, state.tiles.size)
+        assertEquals(IMGrid.MAX_TILES, state.tiles.size + 1)
     }
 }
