@@ -43,13 +43,13 @@ class CallViewStateTest {
             "video",
             isGroup = true,
         )
-        assertEquals("群通话（9 人）", group.titleText)
+        assertEquals("群通话 · 9 人", group.titleText)
 
         val meeting = IMCallViewReducer.userEnter(
             IMCallViewReducer.meeting(IMCallViewState(), "r-1"),
             "bob",
         )
-        assertEquals("会议（2 人）", meeting.titleText)
+        assertEquals("会议 · 2 人", meeting.titleText)
 
         // 1v1 还是显示对方是谁。
         val single = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
@@ -76,10 +76,11 @@ class CallViewStateTest {
 
     @Test
     fun `结束原因翻译成人话，且表外的值不会漏出去`() {
-        val ended = IMCallViewReducer.ended(IMCallViewState(), "no_answer")
-        assertEquals("无人接听", ended.statusText)
+        val caller = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
+        assertEquals("对方无人接听", IMCallViewReducer.ended(caller, "no_answer").statusText)
+        assertEquals("未接来电", IMCallViewReducer.ended(IMCallViewState(), "no_answer").statusText)
         // 协议 §2.4 规则 6：表外的值 Engine 已经折成 error 了；即便漏进来也不能把生值显给用户。
-        assertEquals("通话结束", IMCallViewReducer.ended(IMCallViewState(), "supernova").statusText)
+        assertEquals("已结束", IMCallViewReducer.ended(IMCallViewState(), "supernova").statusText)
     }
 
     @Test
@@ -105,9 +106,12 @@ class CallViewStateTest {
         assertEquals(3 to 3, IMGrid.dimensions(9))
         // 上限 9：群通话就是 3×3，不做分页轮换
         assertEquals(3 to 3, IMGrid.dimensions(12))
+        // **决定列数的不是人数，是容器形状**：同样 2 个人，横屏是左右排。
+        assertEquals(2 to 1, IMGrid.dimensions(2, aspect = 1.8))
 
         // **格子越小越该要小图**：漏发这个上界的话服务端记 m、实际发 h。
-        assertEquals("h", IMGrid.layerFor(2, focused = false))
+        assertEquals("h", IMGrid.layerFor(1, focused = false))
+        assertEquals("m", IMGrid.layerFor(2, focused = false))
         assertEquals("m", IMGrid.layerFor(4, focused = false))
         assertEquals("l", IMGrid.layerFor(9, focused = false))
         assertEquals("被放大的那一格永远要大图", "h", IMGrid.layerFor(9, focused = true))
@@ -141,7 +145,7 @@ class CallViewStateTest {
         // 「对方拒绝」「对方忙线」藏在一个 60dp 的球里等于没提示。
         val ended = IMCallViewReducer.ended(minimized, "busy")
         assertFalse("结束时必须退出小窗", ended.isMinimized)
-        assertEquals("对方忙线", ended.statusText)
+        assertEquals("对方忙线中", ended.statusText)
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.imrtc.engine.media.IMVideoProfile;
 import com.imrtc.engine.webrtc.IMWebRTCAdapter;
 import com.imrtc.uikit.IMCallKit;
 import com.imrtc.uikit.IMCallKitConfig;
+import com.imrtc.uikit.IMInviteCandidate;
 
 import java.util.Arrays;
 import java.util.List;
@@ -106,12 +107,19 @@ final class JavaApiCheck {
         kitConfig.setBannerFirst(false);
         kitConfig.setFloatingWindow(true);
         boolean banner = kitConfig.getBannerFirst();
+        // 「添加成员」的候选名单：一参数与两参数两种构造 Java 都要能写。
+        kitConfig.setInviteCandidates(Arrays.asList(new IMInviteCandidate("bob"), new IMInviteCandidate("carol", "卡罗尔")));
+        String candidateName = kitConfig.getInviteCandidates().get(0).getName();
 
         IMCallKit.start(context, engine);
         IMCallKit.start(context, engine, kitConfig);
         IMCallEngineListener wrapped = IMCallKit.wrap(listener);
         IMCallKit.notifyOutgoing(Arrays.asList("bob"), "video", false);
         IMCallKit.notifyMeeting("room-1");
+        // 经 Kit 拨出 / 进会议：先过权限门再发帧。两参数与三参数两种形态。
+        IMCallKit.placeCall(Arrays.asList("bob"), "audio");
+        IMCallKit.placeCall(Arrays.asList("bob", "carol"), "video", true);
+        IMCallKit.joinMeeting("room-1", "room-token");
         IMCallKit.stop();
     }
 }

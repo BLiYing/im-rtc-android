@@ -19,6 +19,9 @@ internal object ContactPicker {
 
     const val LIMIT = 8
 
+    /** 整份名单（含自己），给 Kit 的「添加成员」候选用。 */
+    fun all(): List<String> = ALL
+
     /**
      * 弹多选。
      *

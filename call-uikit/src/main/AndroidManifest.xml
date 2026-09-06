@@ -4,6 +4,7 @@
         <!--
           通话页是**独立 Activity，不入宿主导航栈**——任何界面都能被来电覆盖。
           singleTask + excludeFromRecents：通话只该有一个实例，也不该在最近任务里留残影。
+          supportsPictureInPicture：视频通话收起默认走系统画中画（交互稿 §08 差异 2）。
           锁屏来电（showWhenLocked / turnScreenOn）属推送阶段，MVP 不做。
         -->
         <activity
@@ -12,6 +13,18 @@
             android:exported="false"
             android:launchMode="singleTask"
             android:excludeFromRecents="true"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+
+        <!--
+          弹系统权限框的透明 Activity（交互稿 §02）：运行时权限只能从 Activity 请求，
+          而拨出前 Kit 未必有自己的界面在前台。不入最近任务、无动画。
+        -->
+        <activity
+            android:name=".IMPermissionActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
     </application>
 </manifest>

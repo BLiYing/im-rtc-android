@@ -12,6 +12,7 @@ import com.imrtc.engine.media.IMVideoProfile
 import com.imrtc.engine.webrtc.IMWebRTCAdapter
 import com.imrtc.uikit.IMCallKit
 import com.imrtc.uikit.IMCallKitConfig
+import com.imrtc.uikit.IMInviteCandidate
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.concurrent.thread
@@ -230,6 +231,8 @@ internal object DemoSession {
             IMWebRTCAdapter(applicationContext, videoProfile),
         )
         engine = instance
+        // 「添加成员」的候选名单是宿主给的：Demo 用与选人页同一份写死的联系人，自己不放进去。
+        kitConfig.inviteCandidates = ContactPicker.all().filter { it != user }.map { IMInviteCandidate(it) }
         IMCallKit.start(applicationContext, instance, kitConfig)
         instance.login(newToken)
         connectionText = "连接中…"
@@ -259,24 +262,23 @@ internal object DemoSession {
     )
 
     fun placeCall(peers: List<String>, mediaType: String, isGroup: Boolean) {
-        val instance = engine ?: return
+        if (engine == null) return
         pending = Meta(
             peer = if (isGroup) "群通话 · ${peers.size + 1} 人" else peers.joinToString("、"),
             mediaType = mediaType,
             isGroup = isGroup,
             role = "caller",
         )
-        instance.call(peers, mediaType, isGroup)
-        // 拨出侧的界面靠这一条拉起来：回调里只有被叫侧的信息（主叫自己知道拨给了谁）。
-        IMCallKit.notifyOutgoing(peers, mediaType, isGroup)
+        // 经 Kit 拨出：它先过权限门（说明卡 → 系统框 → 被拒分支）再发 invite，
+        // 拿不到麦克风就不去响别人的铃（交互稿 §01）。拨出侧的界面也由它拉起来。
+        IMCallKit.placeCall(peers, mediaType, isGroup)
     }
 
     fun joinMeeting(roomId: String, roomToken: String) {
-        val instance = engine ?: return
+        if (engine == null) return
         // 会议房不产生 call，也就不会有 onCallEnd——记录页看不到它是对的。
         pending = null
-        instance.joinRoom(roomId, roomToken)
-        IMCallKit.notifyMeeting(roomId)
+        IMCallKit.joinMeeting(roomId, roomToken)
     }
 
     fun clearRecords() {

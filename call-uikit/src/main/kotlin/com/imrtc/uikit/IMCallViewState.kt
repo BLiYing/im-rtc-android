@@ -3,10 +3,11 @@ package com.imrtc.uikit
 /**
  * 通话界面的视图模型：**纯值 + 纯函数 reducer**，不碰 View、不碰 Engine。
  *
- * 这样界面逻辑（红按钮该干什么、什么时候显示接听键、九宫格里谁在说话）能在纯 JVM 单测里验完。
+ * 这样界面逻辑（红按钮该干什么、什么时候显示接听键、九宫格里谁在说话、用哪种版式）能在纯 JVM 单测里验完。
  * Web 端在这一层抓到过一个典型 bug：**会议房里点挂断毫无反应**——红按钮无条件走 hangup，
- * 而会议房里根本没有 call，通话机把它本地拒成 2005，宿主只看到一条没头没尾的 error。
- * 会议的结束动作是 leaveRoom，所以这里必须有 [isMeeting] 这个区分。
+ * 而会议房里根本没有 call，通话机把它本地拒成 2005。会议的结束动作是 leaveRoom，所以这里必须有 [isMeeting]。
+ *
+ * 与 iOS 的 `IMCallViewState` / Web 的 `callView.ts` 同构：同样的 phase、同样的动作、同样的坑。
  */
 internal data class IMCallViewState(
     val phase: Phase = Phase.IDLE,
@@ -22,20 +23,48 @@ internal data class IMCallViewState(
     val micOn: Boolean = true,
     val cameraOn: Boolean = false,
     val speakerOn: Boolean = false,
-    /** uid → 这个人的音视频可用状态。 */
+    /** 摄像头权限被拒（或没有设备）。**通话继续，只是没有画面**（交互稿 §02 P3）：按钮变禁用态写「无权限」。 */
+    val cameraBlocked: Boolean = false,
+    /** uid → 这个人的状态。**不含自己**。 */
     val members: Map<String, Member> = emptyMap(),
     val speakingUid: String = "",
     val endReason: String = "",
-    /**
-     * 通话已被收进悬浮球（草图 §04）。**通话本身照常进行**——这只是呈现形态。
-     * 所以它不在通话状态机里，只在视图模型里。
-     */
+    /** 通话已被收进悬浮球 / 画中画。**通话本身照常进行**——这只是呈现形态。 */
     val isMinimized: Boolean = false,
+    /** 1v1 视频里两块画面是否互换了（交互稿 §04）：false = 远端全屏、本端小窗。纯本端行为，但层上界要跟着换。 */
+    val isSwapped: Boolean = false,
+    /** 信令连接的状态，驱动顶部的橙条。 */
+    val connection: Connection = Connection.OK,
+    /** 还能不能加人。主叫默认能；收到 `1407 not_call_owner` 后关掉（兜底，正常情况下非主叫看不到入口）。 */
+    val canInvite: Boolean = true,
+    /** 一句给用户看的提示（「通话已满员」这类）。 */
+    val hint: String = "",
 ) {
 
     enum class Phase { IDLE, INCOMING, OUTGOING, CONNECTING, CONNECTED, ENDED }
 
-    data class Member(val uid: String, val audio: Boolean = true, val video: Boolean = false)
+    enum class Connection { OK, RECONNECTING, LOST }
+
+    /** 邀请中的成员给出的终局：拒了 / 没接。有终局的格子停 2s 再移除（交互稿 §05 G3）。 */
+    enum class Settled { NONE, REJECTED, NO_ANSWER, OFFLINE }
+
+    /**
+     * 一个远端成员。`audio` 默认 true：`onUserAudioAvailable` 只在**变化**时抛，
+     * 一开始就正常的人不会有事件——默认 false 会让所有人一进来都显示成静音。
+     */
+    data class Member(
+        val uid: String,
+        val audio: Boolean = true,
+        val video: Boolean = false,
+        /** 群通话里是否已接听。false = 还在响铃（占位格）。 */
+        val accepted: Boolean = true,
+        val settled: Settled = Settled.NONE,
+        /** 网络质量 0~6，0 = 未知。 */
+        val networkLevel: Int = 0,
+    )
+
+    /** 三种版式（规范 §03 / §04）。 */
+    enum class Layout { AUDIO, VIDEO, GRID }
 
     /** 红按钮该干什么——**四向分派**，这是那个 Web bug 的落点。 */
     val hangupAction: Action
@@ -51,23 +80,37 @@ internal data class IMCallViewState(
 
     val showAnswerButton: Boolean get() = phase == Phase.INCOMING
 
-    /**
-     * 能不能收进悬浮球。**只有已经接通了才行**：拨出中 / 来电中收起来，
-     * 剩一个不会动的小球挂在那儿，用户既不知道对方接没接，也想不起来怎么挂断。
-     */
+    /** 能不能收进小窗。**只有已经接通了才行**：拨出中收起来，剩一个不会动的小球，用户不知道对方接没接。 */
     val canMinimize: Boolean get() = phase == Phase.CONNECTING || phase == Phase.CONNECTED
 
+    /** 通话中该不该显示「摄像头」按钮。**只看 media_type**：语音通话里不给（拍板 §11-10）。 */
+    val showsCameraButton: Boolean get() = mediaType == "video"
+
     /**
-     * 标题栏那一行。
-     *
-     * **群通话与会议不能显示某一个人的名字。** 真机上把八个人叫起来，标题写着「alice」——
-     * 那是名单里恰好排第一的那个人，跟这通电话是谁发起的、都有谁在，一点关系都没有。
-     * 人数要 `+1`：[members] 里**不含自己**。
+     * 要不要给「添加成员」入口（交互稿 §05）。三个条件缺一不可：是群通话（会议房没有 call）、
+     * 本端是主叫（协议 1407：非主叫发 `invite_more` 会被拒）、房间没满（含本端 9 人）。
      */
+    val canShowInvite: Boolean
+        get() = isGroup && !isMeeting && role == "caller" && canInvite &&
+            members.size + 1 < IMGrid.MAX_TILES &&
+            (phase == Phase.CONNECTED || phase == Phase.CONNECTING)
+
+    /** 还能加几个人（选人页顶部「还能加 N 人」）。 */
+    val inviteSlotsLeft: Int get() = maxOf(IMGrid.MAX_TILES - 1 - members.size, 0)
+
+    /** 用哪种版式。**两端都关摄像头 → 整页退回语音版式**（交互稿 §04）。`hasLocalVideo` 由 Kit 给。 */
+    fun layout(hasLocalVideo: Boolean): Layout = when {
+        isGroup || isMeeting -> Layout.GRID
+        mediaType != "video" || phase == Phase.OUTGOING -> Layout.AUDIO
+        (members.values.firstOrNull()?.video == true) || (cameraOn && hasLocalVideo) -> Layout.VIDEO
+        else -> Layout.AUDIO
+    }
+
+    /** 标题栏那一行。**群通话与会议不能显示某一个人的名字**；人数要 `+1`：[members] 里不含自己。 */
     val titleText: String
         get() = when {
-            isMeeting -> "会议（${members.size + 1} 人）"
-            isGroup -> "群通话（${members.size + 1} 人）"
+            isMeeting -> "会议 · ${members.size + 1} 人"
+            isGroup -> "群通话 · ${members.size + 1} 人"
             peer.isNotEmpty() -> peer
             else -> "通话"
         }
@@ -75,30 +118,65 @@ internal data class IMCallViewState(
     val tiles: List<Member> get() = members.values.take(IMGrid.MAX_TILES)
 
     val statusText: String
-        get() = when (phase) {
-            IMCallViewState.Phase.IDLE -> ""
-            IMCallViewState.Phase.INCOMING -> if (mediaType == "video") "邀请你视频通话" else "邀请你语音通话"
-            IMCallViewState.Phase.OUTGOING -> "正在呼叫…"
-            IMCallViewState.Phase.CONNECTING -> "接通中…"
-            IMCallViewState.Phase.CONNECTED -> IMGrid.formatDuration(durationSec)
-            // **ENDED 是界面的展示状态，不是通话状态机的状态**——状态机里没有 ended，
-            // 那是个事件。停留 1.5 秒再收场由界面自己控制。
-            IMCallViewState.Phase.ENDED -> endedText(endReason)
+        get() = when {
+            hint.isNotEmpty() -> hint
+            phase == Phase.IDLE -> ""
+            phase == Phase.INCOMING -> when {
+                isGroup -> "邀请你加入群通话"
+                mediaType == "video" -> "邀请你视频通话"
+                else -> "邀请你语音通话"
+            }
+            phase == Phase.OUTGOING -> "正在呼叫…"
+            phase == Phase.CONNECTING -> if (isMeeting) "正在进入会议…" else "接通中…"
+            phase == Phase.CONNECTED -> IMGrid.formatDuration(durationSec)
+            // **ENDED 是界面的展示状态，不是通话状态机的状态**——状态机里没有 ended，那是个事件。
+            else -> if (isMeeting) "已离开会议" else endReasonText(endReason, role, durationSec)
         }
 
-    private fun endedText(reason: String): String = when (reason) {
-        "hangup" -> "通话结束"
-        "cancel" -> "已取消"
-        "reject" -> "对方拒绝"
-        "busy" -> "对方忙线"
-        "no_answer" -> "无人接听"
-        "offline" -> "对方不在线"
-        "answered_elsewhere" -> "已在其他设备接听"
-        "rejected_elsewhere" -> "已在其他设备拒绝"
-        "network" -> "网络断开"
-        "room_closed" -> "房间已解散"
-        "kicked" -> "已被移出"
-        else -> "通话结束"
+    companion object {
+        /** 结束原因的人话（规范 §08），与 iOS 的 `imEndReasonText` / Web 的 `endReasonText` 逐字对齐。 */
+        fun endReasonText(reason: String, role: String, durationSec: Long): String = when (reason) {
+            "hangup" -> if (durationSec > 0) "通话结束 · ${IMGrid.formatDuration(durationSec)}" else "通话结束"
+            "cancel" -> if (role == "caller") "已取消" else "对方已取消"
+            "reject" -> if (role == "caller") "对方已拒接" else "已拒接"
+            "busy" -> "对方忙线中"
+            "no_answer" -> if (role == "caller") "对方无人接听" else "未接来电"
+            "offline" -> "对方当前不在线"
+            "answered_elsewhere" -> "已在其他设备接听"
+            "rejected_elsewhere" -> "已在其他设备拒绝"
+            "network" -> "网络中断"
+            "room_closed" -> "房间已解散"
+            "kicked" -> "已被移出"
+            else -> "已结束"
+        }
+
+        /** 占位格上终局的人话。 */
+        fun settledText(settled: Settled): String = when (settled) {
+            Settled.NONE -> ""
+            Settled.REJECTED -> "已拒绝"
+            Settled.NO_ANSWER -> "未接听"
+            Settled.OFFLINE -> "对方不在线"
+        }
+
+        /** 网络质量的人话（协议 §3.5 的表）。 */
+        fun networkText(level: Int): String = when {
+            level <= 0 -> ""
+            level <= 2 -> "网络良好"
+            level <= 4 -> "网络一般"
+            level == 5 -> "网络很差"
+            else -> "正在重连…"
+        }
+
+        /** 三根柱子亮几根：1~2 三根、3~4 两根、5~6 一根；0 不画。 */
+        fun networkBarsLit(level: Int): Int = when {
+            level <= 0 -> 0
+            level <= 2 -> 3
+            level <= 4 -> 2
+            else -> 1
+        }
+
+        /** 要不要出「对方网络不佳」的提示（3 以上）。 */
+        fun isNetworkPoor(level: Int): Boolean = level >= 3
     }
 }
 
@@ -106,32 +184,33 @@ internal data class IMCallViewState(
 internal object IMCallViewReducer {
 
     fun incoming(state: IMCallViewState, callId: String, caller: String, mediaType: String, isGroup: Boolean) =
-        state.copy(
+        IMCallViewState(
             phase = IMCallViewState.Phase.INCOMING,
             callId = callId,
-            // 群呼的标题走人数，不走名字——见 [IMCallViewState.titleText]。
             peer = if (isGroup) "" else caller,
             mediaType = mediaType,
             isGroup = isGroup,
-            isMeeting = false,
             cameraOn = mediaType == "video",
             speakerOn = mediaType == "video",
             members = mapOf(caller to IMCallViewState.Member(caller)),
+            connection = state.connection,
         )
 
     fun outgoing(state: IMCallViewState, peers: List<String>, mediaType: String, isGroup: Boolean) =
-        state.copy(
+        IMCallViewState(
             phase = IMCallViewState.Phase.OUTGOING,
             peer = if (isGroup) "" else peers.firstOrNull().orEmpty(),
             mediaType = mediaType,
             isGroup = isGroup,
-            isMeeting = false,
+            role = "caller",
             cameraOn = mediaType == "video",
             speakerOn = mediaType == "video",
-            members = peers.associateWith { IMCallViewState.Member(it) },
+            // 呼出时对方还没接——**先摆上去且标成未接听**，界面才有「呼叫中…」的占位格。
+            members = peers.associateWith { IMCallViewState.Member(it, accepted = false) },
+            connection = state.connection,
         )
 
-    fun meeting(state: IMCallViewState, roomId: String) = state.copy(
+    fun meeting(state: IMCallViewState, roomId: String) = IMCallViewState(
         phase = IMCallViewState.Phase.CONNECTING,
         roomId = roomId,
         isMeeting = true,
@@ -139,6 +218,7 @@ internal object IMCallViewReducer {
         mediaType = "video",
         cameraOn = true,
         speakerOn = true,
+        connection = state.connection,
     )
 
     fun begin(state: IMCallViewState, callId: String, roomId: String, mediaType: String, role: String) =
@@ -148,53 +228,87 @@ internal object IMCallViewReducer {
             roomId = roomId,
             mediaType = mediaType,
             role = role,
+            hint = "",
         )
 
     fun connected(state: IMCallViewState) = state.copy(phase = IMCallViewState.Phase.CONNECTED)
 
     fun tick(state: IMCallViewState) =
-        if (state.phase == IMCallViewState.Phase.CONNECTED) {
-            state.copy(durationSec = state.durationSec + 1)
-        } else {
-            state
-        }
+        if (state.phase == IMCallViewState.Phase.CONNECTED) state.copy(durationSec = state.durationSec + 1) else state
 
-    /**
-     * 结束。**顺手把小窗展开**：结束原因（对方拒绝 / 忙线 / 无人接听）要让用户看见，
-     * 藏在一个 60dp 的球里等于没提示。
-     */
+    /** 结束。**顺手把小窗展开**：结束原因要让用户看见，藏在一个小球里等于没提示。 */
     fun ended(state: IMCallViewState, reason: String) = state.copy(
         phase = IMCallViewState.Phase.ENDED,
         endReason = reason,
         speakingUid = "",
         isMinimized = false,
+        hint = "",
     )
 
-    fun userEnter(state: IMCallViewState, uid: String) =
-        state.copy(members = state.members + (uid to (state.members[uid] ?: IMCallViewState.Member(uid))))
+    fun userEnter(state: IMCallViewState, uid: String) = withMember(state, uid) { it.copy(accepted = true, settled = IMCallViewState.Settled.NONE) }
 
     fun userLeave(state: IMCallViewState, uid: String) = state.copy(members = state.members - uid)
 
-    fun availability(state: IMCallViewState, uid: String, kind: String, available: Boolean): IMCallViewState {
-        val member = state.members[uid] ?: IMCallViewState.Member(uid)
-        val updated = if (kind == "video") member.copy(video = available) else member.copy(audio = available)
-        return state.copy(members = state.members + (uid to updated))
+    /** 主叫往群通话里又拉了一批人，先摆上占位格；已在名单里的不重复加。 */
+    fun invited(state: IMCallViewState, uids: List<String>): IMCallViewState {
+        val fresh = uids.filter { it !in state.members }.associateWith { IMCallViewState.Member(it, accepted = false) }
+        return if (fresh.isEmpty()) state else state.copy(members = state.members + fresh)
     }
+
+    /**
+     * 邀请中的人给出了终局（拒接 / 无应答）：**先在格子上写明终局，停一会再收**（交互稿 §05 G3）。
+     * 直接收掉的话，从主叫的角度看拒接就跟没发生过一样。已接听的人收到终局（理论上不会）直接忽略。
+     */
+    fun userSettled(state: IMCallViewState, uid: String, settled: IMCallViewState.Settled): IMCallViewState {
+        val member = state.members[uid] ?: return state
+        if (member.accepted) return state
+        return state.copy(members = state.members + (uid to member.copy(settled = settled)))
+    }
+
+    /** 终局停够了，把格子收掉。 */
+    fun userRemove(state: IMCallViewState, uid: String) = state.copy(members = state.members - uid)
+
+    /** 服务端说不是主叫（1407）：藏掉加人入口。 */
+    fun inviteDenied(state: IMCallViewState) = state.copy(canInvite = false, hint = "只有发起人可以添加成员")
+
+    fun availability(state: IMCallViewState, uid: String, kind: String, available: Boolean) =
+        withMember(state, uid) { if (kind == "video") it.copy(video = available) else it.copy(audio = available) }
+
+    fun networkQuality(state: IMCallViewState, levels: Map<String, Int>) = state.copy(
+        members = state.members.mapValues { (uid, m) -> levels[uid]?.let { m.copy(networkLevel = it) } ?: m },
+    )
 
     fun speaking(state: IMCallViewState, uid: String) = state.copy(speakingUid = uid)
 
-    /** 收进悬浮球。**接通之前不许收**，见 [IMCallViewState.canMinimize]。 */
-    fun minimize(state: IMCallViewState) =
-        if (state.canMinimize) state.copy(isMinimized = true) else state
+    fun connection(state: IMCallViewState, connection: IMCallViewState.Connection) = state.copy(connection = connection)
 
-    /** 从悬浮球 / 横幅展开回全屏。 */
+    fun hint(state: IMCallViewState, text: String) = state.copy(hint = text)
+
+    /** 摄像头拿不到（权限被拒 / 没设备）：通话继续，按钮禁用。 */
+    fun cameraBlocked(state: IMCallViewState) = state.copy(cameraOn = false, cameraBlocked = true)
+
+    /** 收进小窗。**接通之前不许收**，见 [IMCallViewState.canMinimize]。 */
+    fun minimize(state: IMCallViewState) = if (state.canMinimize) state.copy(isMinimized = true) else state
+
+    /** 从小窗 / 横幅展开回全屏。 */
     fun expand(state: IMCallViewState) = state.copy(isMinimized = false)
+
+    fun setSwapped(state: IMCallViewState, swapped: Boolean) = state.copy(isSwapped = swapped)
 
     fun toggleMic(state: IMCallViewState) = state.copy(micOn = !state.micOn)
 
-    fun toggleCamera(state: IMCallViewState) = state.copy(cameraOn = !state.cameraOn)
+    /** 权限被拒时开不了：按钮本来就是禁用态，这里再挡一道免得状态漂移。 */
+    fun toggleCamera(state: IMCallViewState) =
+        if (state.cameraBlocked) state else state.copy(cameraOn = !state.cameraOn)
 
     fun toggleSpeaker(state: IMCallViewState) = state.copy(speakerOn = !state.speakerOn)
 
     fun reset() = IMCallViewState()
+
+    /** 更新一个成员；**不存在时先补进来**——事件比进房通知先到是常态。 */
+    private fun withMember(
+        state: IMCallViewState,
+        uid: String,
+        update: (IMCallViewState.Member) -> IMCallViewState.Member,
+    ) = state.copy(members = state.members + (uid to update(state.members[uid] ?: IMCallViewState.Member(uid))))
 }

@@ -7,12 +7,9 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.view.View
-import android.widget.FrameLayout
-import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.IMCallEngine
 import com.imrtc.engine.IMCallEngineListener
-import com.imrtc.engine.IMNetworkQuality
-import com.imrtc.engine.IMSpeaker
+import com.imrtc.engine.log.IMRTCLog
 
 /**
  * **整套通话 UI 的入口。宿主一行接管：`IMCallKit.start(context, engine)`。**
@@ -20,17 +17,18 @@ import com.imrtc.engine.IMSpeaker
  * Kit 只消费公开回调表（[IMCallEngineListener]），**没有任何私有通道**——
  * 宿主自画 UI 能拿到的信息与它完全一致。这是「两种集成方式能力对等」的唯一保证。
  *
- * 它做三件事：
- * 1. 把 Engine 的回调折成 [IMCallViewState]（纯值，可单测）；
- * 2. 按当前状态**决定用哪种呈现形态**——全屏页 / 来电横幅 / 悬浮球，见 [desiredMode]；
- * 3. 把界面上的点击翻译回 Engine 的方法调用。
+ * 它做四件事：
+ * 1. 把 Engine 的回调折成 [IMCallViewState]（纯值，可单测；接线在 [IMKitListener]）；
+ * 2. 按当前状态**决定用哪种呈现形态**——全屏页 / 来电横幅 / 悬浮球 / 系统画中画，见 [desiredMode]；
+ * 3. 把界面上的点击翻译回 Engine 的方法调用；
+ * 4. 拨出 / 接听之前先过权限门（交互稿 §01–§02）：拿不到麦克风就不该去响别人的铃。
  */
 object IMCallKit {
 
-    private val main = Handler(Looper.getMainLooper())
+    internal val main = Handler(Looper.getMainLooper())
 
     @Volatile
-    private var engine: IMCallEngine? = null
+    internal var engine: IMCallEngine? = null
     private var appContext: Context? = null
 
     /** Kit 的可配项。宿主可以随时改，下一次形态切换就读到新值。 */
@@ -41,15 +39,13 @@ object IMCallKit {
     /** 横幅 / 悬浮球都挂在这上面（应用内浮层，不申请 SYSTEM_ALERT_WINDOW）。 */
     private val overlay = IMCallOverlay()
 
-    /**
-     * 横幅已经被用户点开过。
-     *
-     * **它必须独立于 [IMCallViewState]**：状态里没有「用户看过横幅了」这回事，
-     * 而少了它的话，展开成全屏之后下一次刷新又会被判回横幅——界面来回跳。
-     */
+    /** 横幅已经被用户点开过（或 5s 到点自动升级）。**它必须独立于 [IMCallViewState]**，否则界面来回跳。 */
     private var bannerExpanded = false
-
     private var mode = Mode.HIDDEN
+
+    /** 全屏页此刻是不是在系统画中画里。是的话形态保持 FULLSCREEN，别再往宿主界面上挂悬浮球。 */
+    @Volatile
+    internal var inSystemPip = false
 
     private enum class Mode { HIDDEN, BANNER, BUBBLE, FULLSCREEN }
 
@@ -58,13 +54,24 @@ object IMCallKit {
         private set
 
     private var timer: Runnable? = null
+    private var bannerEscalate: Runnable? = null
+    private var hintExpiry: Runnable? = null
+    /** 最后一批邀请出去的 uid。加人被服务端拒时用它把占位格收回来。 */
+    private var lastInvited: List<String> = emptyList()
+    private val settleTimers = HashMap<String, Runnable>()
     private val observers = mutableListOf<(IMCallViewState) -> Unit>()
+
+    /** 权限门的系统探针。默认拉透明 Activity 去问；测试可换。 */
+    internal var asker: IMPermissionGate.Asker? = null
+
+    /** 本通电话里每个 uid 的渲染器。**同一个 uid 反复要拿到的是同一个 View**，否则每次刷新都重建、画面闪。 */
+    private val remoteViews = HashMap<String, View>()
+    private var localPreview: View? = null
+    private var localPreviewStarted = false
 
     /**
      * 接管通话 UI。**在 login 之前调**——来电随时可能到。
-     *
-     * 传进来的 `engine` 的 listener 会被 Kit 包一层：宿主自己的 listener 照常收到全部回调，
-     * Kit 只是搭个便车。
+     * 传进来的 `engine` 的 listener 要先经 [wrap] 包一层：宿主自己的 listener 照常收到全部回调，Kit 只是搭个便车。
      */
     @JvmOverloads
     @JvmStatic
@@ -72,7 +79,7 @@ object IMCallKit {
         this.appContext = context.applicationContext
         this.engine = engine
         this.config = config
-        // 横幅与悬浮球要知道挂到哪个 Activity 上；宿主传进来的可能是 Application，也可能是 Activity。
+        if (asker == null) asker = IMPermissionActivity.asker(context.applicationContext)
         (context.applicationContext as? Application)?.let { IMActivityTracker.install(it) }
     }
 
@@ -80,20 +87,74 @@ object IMCallKit {
     fun stop() {
         engine = null
         stopTimer()
+        clearSettleTimers()
+        hintExpiry?.let { main.removeCallbacks(it) }
+        hintExpiry = null
+        lastInvited = emptyList()
         state = IMCallViewReducer.reset()
         main.post { overlay.detach() }
         mode = Mode.HIDDEN
         bannerExpanded = false
+        remoteViews.clear()
+        localPreview = null
+        localPreviewStarted = false
     }
 
-    /**
-     * 宿主把自己的 listener 交给它包一层，Kit 借此拿到全部事件。
-     *
-     * 为什么不让 Kit 自己注册一个 listener：Engine 只有一个 listener 位——
-     * **给 Kit 开第二个口子就等于开了私有通道**，那正是我们不做的事。包一层最诚实。
-     */
+    /** 宿主把自己的 listener 交给它包一层，Kit 借此拿到全部事件。**不给 Kit 开第二个 listener 口子**——那等于私有通道。 */
     @JvmStatic
-    fun wrap(host: IMCallEngineListener): IMCallEngineListener = KitListener(host)
+    fun wrap(host: IMCallEngineListener): IMCallEngineListener = IMKitListener(host)
+
+    // ── 宿主能调的三个动作 ────────────────────────────────────────────
+
+    /**
+     * 拨出。**先过权限门再发 invite**（交互稿 §01）：拿不到麦克风就不该去响别人的铃；
+     * 摄像头拿不到就降级为语音继续（`cameraBlocked`）。界面先切到「正在呼叫…」，权限卡叠在它上面。
+     */
+    @JvmOverloads
+    @JvmStatic
+    fun placeCall(peers: List<String>, mediaType: String, isGroup: Boolean = false) {
+        val instance = engine ?: return
+        update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup))
+        ensurePermissions(IMPermissionGate.devicesFor(mediaType, withCamera = true)) { outcome ->
+            when (outcome) {
+                IMPermissionGate.Outcome.OK -> instance.call(peers, mediaType, isGroup)
+                IMPermissionGate.Outcome.CAMERA_BLOCKED -> {
+                    update(IMCallViewReducer.cameraBlocked(state))
+                    instance.call(peers, mediaType, isGroup)
+                }
+                IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED -> update(IMCallViewReducer.reset())
+            }
+        }
+    }
+
+    /** 进会议房（不走振铃）。同样先过权限门。 */
+    @JvmStatic
+    fun joinMeeting(roomId: String, roomToken: String) {
+        val instance = engine ?: return
+        ensurePermissions(IMPermissionGate.devicesFor("video", withCamera = true)) { outcome ->
+            if (outcome == IMPermissionGate.Outcome.MIC_BLOCKED || outcome == IMPermissionGate.Outcome.CANCELLED) return@ensurePermissions
+            update(IMCallViewReducer.meeting(state, roomId))
+            if (outcome == IMPermissionGate.Outcome.CAMERA_BLOCKED) update(IMCallViewReducer.cameraBlocked(state))
+            instance.joinRoom(roomId, roomToken)
+        }
+    }
+
+    /** 宿主自己调了 `engine.call` 的话，用这一条把拨出界面拉起来（回调里只有被叫侧的信息）。 */
+    @JvmStatic
+    fun notifyOutgoing(peers: List<String>, mediaType: String, isGroup: Boolean) {
+        update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup))
+    }
+
+    /** 宿主自己调了 `engine.joinRoom` 时同理。 */
+    @JvmStatic
+    fun notifyMeeting(roomId: String) {
+        update(IMCallViewReducer.meeting(state, roomId))
+    }
+
+    private fun ensurePermissions(devices: List<IMPermissionGate.Device>, done: (IMPermissionGate.Outcome) -> Unit) {
+        val asker = asker ?: IMPermissionGate.Asker { _, cb -> cb(IMPermissionGate.Result.GRANTED) }
+        IMPermissionGate.ensure(devices, asker) { outcome -> main.post { done(outcome) } }
+    }
 
     internal fun observe(observer: (IMCallViewState) -> Unit) {
         observers += observer
@@ -104,18 +165,45 @@ object IMCallKit {
         observers -= observer
     }
 
+    // ── 界面上的动作 ──────────────────────────────────────────────────
+
+    /** 远端渲染器：一个 uid 一个，整通复用。 */
     internal fun videoViewFor(context: Context, uid: String): View? {
-        val view = engine?.createVideoView(context) ?: return null
+        remoteViews[uid]?.let { return it }
+        val view = engine?.createVideoView(context.applicationContext) ?: return null
         engine?.attachView(uid, view)
+        remoteViews[uid] = view
         return view
     }
 
-    internal fun answer() = engine?.accept()
+    /** 本端预览的渲染器。**采集要等发布之后才有**（Engine 在进房时发布），拨出中先给一个空视图占着。 */
+    internal fun localPreviewView(context: Context): View? {
+        localPreview?.let { return it }
+        val view = engine?.createVideoView(context.applicationContext) ?: return null
+        localPreview = view
+        return view
+    }
+
+    internal fun hasLocalVideo(): Boolean = localPreviewStarted && state.cameraOn
+
+    /**
+     * 接听。**先过权限门再发 accept**——先 accept 再发现没权限，对方那边已经接通了却听不到人。
+     * 来电页上关掉了摄像头就只问麦克风（= 以语音接听）。接不了就拒掉，别让对方一直等。
+     */
+    internal fun answer() {
+        val instance = engine ?: return
+        ensurePermissions(IMPermissionGate.devicesFor(state.mediaType, withCamera = state.cameraOn)) { outcome ->
+            when (outcome) {
+                IMPermissionGate.Outcome.OK -> instance.accept()
+                IMPermissionGate.Outcome.CAMERA_BLOCKED -> { update(IMCallViewReducer.cameraBlocked(state)); instance.accept() }
+                IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED -> instance.reject()
+            }
+        }
+    }
 
     internal fun hangup() {
         when (state.hangupAction) {
-            // **会议房里没有 call，结束动作是 leaveRoom**。红按钮无条件走 hangup 的话，
-            // 通话机会把它本地拒成 2005，用户看到的是「点了没反应」。
+            // **会议房里没有 call，结束动作是 leaveRoom**。红按钮无条件走 hangup 的话，通话机会把它本地拒成 2005。
             IMCallViewState.Action.LEAVE_ROOM -> engine?.leaveRoom()
             IMCallViewState.Action.REJECT -> engine?.reject()
             IMCallViewState.Action.CANCEL -> engine?.cancel()
@@ -130,7 +218,9 @@ object IMCallKit {
         update(IMCallViewReducer.toggleMic(state))
     }
 
+    /** 禁用态点了要出提示，不能静默（规范 §06）。 */
     internal fun toggleCamera() {
+        if (state.cameraBlocked) { hint("没有摄像头权限"); return }
         val next = !state.cameraOn
         if (next) engine?.openCamera() else engine?.closeCamera()
         update(IMCallViewReducer.toggleCamera(state))
@@ -142,113 +232,181 @@ object IMCallKit {
         update(IMCallViewReducer.toggleSpeaker(state))
     }
 
-    internal fun switchCamera() = engine?.switchCamera()
+    /** 互换 1v1 的两块画面（交互稿 §04）。纯本端行为，不发帧。 */
+    internal fun swap() = update(IMCallViewReducer.setSwapped(state, !state.isSwapped))
 
-    /** 收进悬浮球。接通之前不许收，见 [IMCallViewState.canMinimize]。 */
+    /**
+     * 往群通话里加人：占位格**立刻**出现，帧随后才发（交互稿 §05 G3）。
+     *
+     * 记下这一批是谁：服务端拒掉（1407 非主叫 / 1202 满员）时不会有 `onUserReject`——
+     * 那条是给「真的响了铃的人」的。不收回占位格的话它们会一直挂着「呼叫中…」，还占着人数，
+     * 让「还能加 N 人」和九宫格的行列都算错。
+     */
+    internal fun inviteMore(uids: List<String>) {
+        if (uids.isEmpty()) return
+        lastInvited = uids
+        update(IMCallViewReducer.invited(state, uids))
+        engine?.inviteMore(uids)
+    }
+
+    /** 把最后一批邀请的占位格收回来（加人被服务端拒时）。 */
+    internal fun revokeLastInvite() {
+        val uids = lastInvited
+        lastInvited = emptyList()
+        var next = state
+        for (uid in uids) {
+            if (next.members[uid]?.accepted == true) continue
+            next = IMCallViewReducer.userRemove(next, uid)
+        }
+        if (next !== state) update(next)
+    }
+
+    /**
+     * 提示（「通话已满员」「对方已拒接」）**停几秒就撤**。
+     *
+     * `statusText` 里 hint 优先于时长，不撤的话「通话已满员」会顶着标题栏直到通话结束，
+     * 计时器再也不出现（规范 §08：这些是 toast，不是常驻状态）。
+     */
+    internal fun hint(text: String) {
+        update(IMCallViewReducer.hint(state, text))
+        hintExpiry?.let { main.removeCallbacks(it) }
+        hintExpiry = null
+        if (text.isEmpty()) return
+        val expire = Runnable {
+            // 只清掉自己那条：中途又来一条新提示时，不该被上一条的计时器抹掉。
+            if (state.hint == text) update(IMCallViewReducer.hint(state, ""))
+        }
+        hintExpiry = expire
+        main.postDelayed(expire, IMKitTheme.HINT_HOLD_MS)
+    }
+
+    internal fun showInvitePicker(activity: Activity) {
+        IMInvitePicker(activity, config.inviteCandidates, state.members.keys, state.inviteSlotsLeft) { inviteMore(it) }.show()
+    }
+
+    /** 收进小窗。接通之前不许收，见 [IMCallViewState.canMinimize]。 */
     internal fun minimize() = update(IMCallViewReducer.minimize(state))
 
-    /** 从悬浮球 / 横幅展开回全屏。 */
+    /** 从小窗 / 横幅展开回全屏。 */
     internal fun expand() {
         bannerExpanded = true
         update(IMCallViewReducer.expand(state))
     }
 
-    /** 宿主主动拨出时告诉 Kit 一声，好把界面拉起来（回调里只有被叫侧的信息）。 */
-    @JvmStatic
-    fun notifyOutgoing(peers: List<String>, mediaType: String, isGroup: Boolean) {
-        update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup))
+    /** 本端采集起来了（进房发布之后）。**必须无条件通知界面**：cid 不在 state 里，状态相等时不会自己刷。 */
+    internal fun onLocalMediaStarted(context: Context) {
+        val view = localPreviewView(context) ?: return
+        engine?.startLocalPreview(view)
+        localPreviewStarted = true
+        update(state)
     }
 
-    /** 宿主进会议房时同理。 */
-    @JvmStatic
-    fun notifyMeeting(roomId: String) {
-        update(IMCallViewReducer.meeting(state, roomId))
-    }
-
-    private fun update(next: IMCallViewState) {
+    internal fun update(next: IMCallViewState) {
         state = next
         main.post {
             observers.toList().forEach { it(next) }
             applyPresentation(next)
+            scheduleSettledRemovals(next)
         }
     }
 
     // ── 呈现形态：全屏 / 横幅 / 悬浮球 ────────────────────────────────
 
-    /**
-     * 按当前状态决定用哪种形态，并把上一种收掉。**每次状态更新都会走一遍**，
-     * 所以它必须便宜且幂等——一秒一次的计时也会走到这里。
-     */
+    /** 按当前状态决定用哪种形态，并把上一种收掉。**每次状态更新都会走一遍**，所以它必须便宜且幂等。 */
     private fun applyPresentation(current: IMCallViewState) {
-        if (current.phase == IMCallViewState.Phase.IDLE) bannerExpanded = false
+        if (current.phase == IMCallViewState.Phase.IDLE) { bannerExpanded = false; inSystemPip = false; clearCallViews() }
         val host = IMActivityTracker.foreground()
         val wanted = desiredMode(current, host)
         val changed = wanted != mode
         mode = wanted
         when (wanted) {
             Mode.HIDDEN -> if (changed) overlay.detach()
-            Mode.FULLSCREEN -> {
-                overlay.detach()
-                if (changed) present()
-            }
-            Mode.BANNER -> mountBanner(host, current)
+            Mode.FULLSCREEN -> { overlay.detach(); if (changed) present() }
+            Mode.BANNER -> mountBanner(host, current, changed)
             Mode.BUBBLE -> mountBubble(host, current)
         }
+        if (wanted != Mode.BANNER) cancelBannerEscalation()
         if (changed) IMRTCLog.i("kit", "通话界面形态：${wanted.name.lowercase()}")
     }
 
     /**
-     * 形态判定。顺序有讲究，**小窗优先于横幅**：来电时不可能是小窗（还没接通），
-     * 反过来接通后也不该再出横幅。
-     *
-     * 横幅与悬浮球都是**应用内浮层**，没有前台 Activity 就挂不上去：
-     * - 来电时退回全屏 Activity（App 在后台，这本来就是系统来电的做法）；
-     * - 已经收成小窗时**什么都不显示**（HIDDEN）——通话照常，前台服务的通知还在，
-     *   把用户硬拽回 App 才是错的。
+     * 形态判定。顺序有讲究，**小窗优先于横幅**：来电时不可能是小窗（还没接通），反过来接通后也不该再出横幅。
+     * 在系统画中画里就是 FULLSCREEN（那个 Activity 还活着），别往宿主界面上再挂一个悬浮球。
      */
     private fun desiredMode(current: IMCallViewState, host: Activity?): Mode = when {
         current.phase == IMCallViewState.Phase.IDLE -> Mode.HIDDEN
-        current.isMinimized && config.floatingWindow ->
-            if (host != null) Mode.BUBBLE else Mode.HIDDEN
-        current.phase == IMCallViewState.Phase.INCOMING && config.bannerFirst &&
-            !bannerExpanded && host != null -> Mode.BANNER
+        current.isMinimized && inSystemPip -> Mode.FULLSCREEN
+        current.isMinimized && config.floatingWindow -> if (host != null) Mode.BUBBLE else Mode.HIDDEN
+        current.phase == IMCallViewState.Phase.INCOMING && config.bannerFirst && !bannerExpanded && host != null -> Mode.BANNER
         else -> Mode.FULLSCREEN
     }
 
-    private fun mountBanner(host: Activity?, current: IMCallViewState) {
+    private fun mountBanner(host: Activity?, current: IMCallViewState, changed: Boolean) {
         val banner = overlay.mount(
-            host,
-            IMIncomingBanner::class.java,
-            { activity ->
-                IMIncomingBanner(activity).apply {
-                    onAccept = { answer() }
-                    onReject = { hangup() }
-                    onExpand = { expand() }
-                }
-            },
+            host, IMIncomingBanner::class.java,
+            { activity -> IMIncomingBanner(activity).apply { onAccept = { answer() }; onReject = { hangup() }; onExpand = { expand() } } },
             { activity -> IMCallOverlay.bannerParams(activity) },
         )
         banner?.render(current)
+        // 横幅 5s 不处理升级为全屏来电页（交互稿 §06）。
+        if (changed) {
+            cancelBannerEscalation()
+            val escalate = Runnable { if (state.phase == IMCallViewState.Phase.INCOMING) expand() }
+            bannerEscalate = escalate
+            main.postDelayed(escalate, IMKitTheme.BANNER_ESCALATE_MS)
+        }
+    }
+
+    private fun cancelBannerEscalation() {
+        bannerEscalate?.let { main.removeCallbacks(it) }
+        bannerEscalate = null
     }
 
     private fun mountBubble(host: Activity?, current: IMCallViewState) {
         val bubble = overlay.mount(
-            host,
-            IMFloatingBubble::class.java,
+            host, IMFloatingBubble::class.java,
             { activity -> IMFloatingBubble(activity).apply { onExpand = { expand() } } },
             { activity -> IMFloatingBubble.initialParams(activity) },
         )
         bubble?.render(current)
+        // 视频通话的悬浮球放主讲人的缩略画面（规范 §06）。
+        if (bubble != null && host != null && current.mediaType == "video") {
+            val speaker = current.speakingUid.ifEmpty { current.members.keys.firstOrNull().orEmpty() }
+            bubble.setVideoView(if (speaker.isEmpty()) null else videoViewFor(host, speaker))
+        }
     }
 
     private fun present() {
         val context = appContext ?: return
-        val intent = Intent(context, IMCallActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        context.startActivity(Intent(context, IMCallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    private fun startTimer() {
+    /** 邀请中的格子拿到终局（已拒绝 / 未接听）后停 2s 再收（交互稿 §05 G3）。 */
+    private fun scheduleSettledRemovals(current: IMCallViewState) {
+        current.members.values.filter { it.settled != IMCallViewState.Settled.NONE && it.uid !in settleTimers }.forEach { member ->
+            val remove = Runnable {
+                settleTimers.remove(member.uid)
+                update(IMCallViewReducer.userRemove(state, member.uid))
+            }
+            settleTimers[member.uid] = remove
+            main.postDelayed(remove, IMKitTheme.SETTLED_HOLD_MS)
+        }
+    }
+
+    private fun clearSettleTimers() {
+        settleTimers.values.forEach { main.removeCallbacks(it) }
+        settleTimers.clear()
+    }
+
+    private fun clearCallViews() {
+        remoteViews.keys.forEach { engine?.attachView(it, null) }
+        remoteViews.clear()
+        localPreview = null
+        localPreviewStarted = false
+        clearSettleTimers()
+    }
+
+    internal fun startTimer() {
         stopTimer()
         val tick = object : Runnable {
             override fun run() {
@@ -260,146 +418,8 @@ object IMCallKit {
         main.postDelayed(tick, 1_000)
     }
 
-    private fun stopTimer() {
+    internal fun stopTimer() {
         timer?.let { main.removeCallbacks(it) }
         timer = null
-    }
-
-    /** 包在宿主 listener 外面的一层：先喂 Kit，再原样转给宿主。 */
-    private class KitListener(private val host: IMCallEngineListener) : IMCallEngineListener {
-
-        override fun onConnected(sessionId: String, resumed: Boolean) = host.onConnected(sessionId, resumed)
-
-        override fun onDisconnected(code: Int, reason: String) = host.onDisconnected(code, reason)
-
-        override fun onKickedOut() = host.onKickedOut()
-
-        override fun onError(code: Int, message: String) = host.onError(code, message)
-
-        override fun onCallReceived(callId: String, caller: String, mediaType: String, isGroup: Boolean) {
-            update(IMCallViewReducer.incoming(state, callId, caller, mediaType, isGroup))
-            host.onCallReceived(callId, caller, mediaType, isGroup)
-        }
-
-        override fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {
-            update(IMCallViewReducer.begin(state, callId, roomId, mediaType, role))
-            host.onCallBegin(callId, roomId, mediaType, role)
-        }
-
-        override fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {
-            stopTimer()
-            update(IMCallViewReducer.ended(state, reason))
-            // 停 1.5 秒让用户看清结束原因再收场。**这是界面的展示状态**——
-            // 通话状态机里没有 ended，那是个事件。
-            main.postDelayed({ update(IMCallViewReducer.reset()) }, 1_500)
-            host.onCallEnd(callId, reason, durationSec, endedBy)
-        }
-
-        override fun onCallCancelled(uid: String) = host.onCallCancelled(uid)
-        override fun onCallRejected(uid: String) = host.onCallRejected(uid)
-        override fun onCallBusy(uid: String) = host.onCallBusy(uid)
-        override fun onCallNoAnswer(uid: String) = host.onCallNoAnswer(uid)
-        override fun onHandledOnOtherDevice(callId: String, action: String) =
-            host.onHandledOnOtherDevice(callId, action)
-
-        override fun onUserEnter(uid: String) {
-            update(IMCallViewReducer.userEnter(state, uid))
-            host.onUserEnter(uid)
-        }
-
-        override fun onUserLeave(uid: String) {
-            update(IMCallViewReducer.userLeave(state, uid))
-            host.onUserLeave(uid)
-        }
-
-        override fun onUserAccept(uid: String) = host.onUserAccept(uid)
-        override fun onUserReject(uid: String) = host.onUserReject(uid)
-        override fun onUserNoResponse(uid: String) = host.onUserNoResponse(uid)
-
-        override fun onUserAudioAvailable(uid: String, available: Boolean) {
-            update(IMCallViewReducer.availability(state, uid, "audio", available))
-            host.onUserAudioAvailable(uid, available)
-        }
-
-        override fun onUserVideoAvailable(uid: String, available: Boolean) {
-            update(IMCallViewReducer.availability(state, uid, "video", available))
-            host.onUserVideoAvailable(uid, available)
-        }
-
-        override fun onActiveSpeakers(speakers: List<IMSpeaker>) {
-            update(IMCallViewReducer.speaking(state, speakers.maxByOrNull { it.volume }?.uid.orEmpty()))
-            host.onActiveSpeakers(speakers)
-        }
-
-        override fun onNetworkQuality(entries: List<IMNetworkQuality>) = host.onNetworkQuality(entries)
-
-        override fun onCallMediaTypeChanged(callId: String, from: String, to: String) =
-            host.onCallMediaTypeChanged(callId, from, to)
-
-        override fun onFirstVideoFrame(uid: String) {
-            // 第一帧到了，界面撤 loading：让格子重画一次就够。
-            update(state)
-            host.onFirstVideoFrame(uid)
-        }
-
-        override fun onRoomJoined(roomId: String) {
-            update(IMCallViewReducer.connected(state))
-            startTimer()
-            host.onRoomJoined(roomId)
-        }
-
-        override fun onRoomLeft(roomId: String) {
-            stopTimer()
-            update(IMCallViewReducer.reset())
-            host.onRoomLeft(roomId)
-        }
-
-        override fun onRoomClosed(roomId: String, reason: String) {
-            stopTimer()
-            update(IMCallViewReducer.ended(state, reason))
-            main.postDelayed({ update(IMCallViewReducer.reset()) }, 1_500)
-            host.onRoomClosed(roomId, reason)
-        }
-    }
-}
-
-/** 通话全屏页。**独立 Activity，不入宿主导航栈**——任何界面都能被来电覆盖。 */
-class IMCallActivity : Activity() {
-
-    private lateinit var view: IMCallView
-    private val observer: (IMCallViewState) -> Unit = { render(it) }
-
-    override fun onCreate(savedInstanceState: android.os.Bundle?) {
-        super.onCreate(savedInstanceState)
-        view = IMCallView(this)
-        view.actions = object : IMCallView.Actions {
-            override fun onAnswer() { IMCallKit.answer() }
-            override fun onHangup() { IMCallKit.hangup() }
-            override fun onToggleMic() { IMCallKit.toggleMic() }
-            override fun onToggleCamera() { IMCallKit.toggleCamera() }
-            override fun onToggleSpeaker() { IMCallKit.toggleSpeaker() }
-            override fun onSwitchCamera() { IMCallKit.switchCamera() }
-            override fun onMinimize() { IMCallKit.minimize() }
-        }
-        setContentView(view)
-        IMCallKit.observe(observer)
-    }
-
-    override fun onDestroy() {
-        IMCallKit.forget(observer)
-        super.onDestroy()
-    }
-
-    /** 通话中禁用返回键：误触退出通话是最容易被骂的一件事。挂断请点红键。 */
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (IMCallKit.state.phase == IMCallViewState.Phase.IDLE) super.onBackPressed()
-    }
-
-    private fun render(state: IMCallViewState) {
-        view.render(state) { uid -> IMCallKit.videoViewFor(this, uid) }
-        // 收进小窗 = 关掉全屏页（通话照常）。**不能只是隐藏**：留着它，宿主的界面
-        // 还是被盖着的，悬浮球也就无从谈起。
-        if ((state.phase == IMCallViewState.Phase.IDLE || state.isMinimized) && !isFinishing) finish()
     }
 }
