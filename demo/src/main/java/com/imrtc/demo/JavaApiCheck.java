@@ -1,5 +1,7 @@
 package com.imrtc.demo;
 
+import com.imrtc.uikit.IMProfileResolver;
+import android.graphics.drawable.Drawable;
 import android.content.Context;
 
 import com.imrtc.engine.IMCallEngine;
@@ -131,6 +133,20 @@ final class JavaApiCheck {
 
         IMCallKit.start(context, engine);
         IMCallKit.start(context, engine, kitConfig);
+        // 身份解析：Java 侧要能实现这个接口并挂到 config 上。
+        kitConfig.setProfileResolver(new IMProfileResolver() {
+            @Override
+            public String displayName(String uid) {
+                return "小明";
+            }
+
+            @Override
+            public Drawable avatar(String uid) {
+                return null; // 宿主自己加载好再给；Kit 不下载
+            }
+        });
+        IMCallKit.reloadProfiles(Arrays.asList("u1", "u2"));
+
         IMCallEngineListener wrapped = IMCallKit.wrap(listener);
         IMCallKit.notifyOutgoing(Arrays.asList("bob"), "video", false);
         IMCallKit.notifyMeeting("room-1");

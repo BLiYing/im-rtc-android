@@ -74,9 +74,23 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
 
     fun render(state: IMCallViewState) {
         val caller = state.members.keys.firstOrNull() ?: state.peer
-        avatar.text = IMAvatar.initial(caller)
-        avatar.background = IMKitTheme.avatarDrawable(caller)
-        title.text = caller
+        /*
+          来电屏是**最不能显示成一串 uid** 的一屏，也是最可能解析不出来的一屏
+          （陌生人来电时宿主本机没有对方名片）。解析不到就退化成 uid，
+          宿主的解析器拉回来后调 IMCallKit.reloadProfiles 重画。
+        */
+        val resolver = IMCallKit.config.profileResolver
+        val callerName = resolvedName(resolver, caller, caller)
+        val photo = resolvedAvatar(resolver, caller)
+        if (photo == null) {
+            // 底色按 uid、首字母按显示名——同 IMVideoTile，理由见那边的注释。
+            avatar.text = IMAvatar.initial(callerName)
+            avatar.background = IMKitTheme.avatarDrawable(caller)
+        } else {
+            avatar.text = ""
+            avatar.background = photo
+        }
+        title.text = callerName
         subtitle.text = state.statusText
         acceptButton.setImageResource((if (state.mediaType == "video") IMKitIcon.VIDEO else IMKitIcon.PHONE).resId)
         // 语音来电没有摄像头可关。
