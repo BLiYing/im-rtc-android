@@ -58,6 +58,16 @@ internal class IMSignalConnection(
     private var token: String = ""
     private var sessionId: String = ""
 
+    /**
+     * 本端 uid，由 `sys.hello.ok` 带回来（协议 §1.3）。
+     *
+     * `@Volatile` 是因为它**在主线程上被读**（界面要拿它把自己从 callee_ids 里剔掉），
+     * 而写在 engine 线程上。
+     */
+    @Volatile
+    var uid: String = ""
+        private set
+
     private val pending = IMPendingRequests(scheduler)
     private val backoff = IMBackoff()
 
@@ -158,6 +168,7 @@ internal class IMSignalConnection(
         backoff.reset()
         authFailures = 0
         sessionId = (data["session_id"] as? IMJson.Str)?.value ?: ""
+        uid = (data["uid"] as? IMJson.Str)?.value ?: uid
         val resumed = (data["resumed"] as? IMJson.Bool)?.value ?: false
         val pingSec = (data["ping_interval_sec"] as? IMJson.Num)?.value ?: DEFAULT_PING_SEC
         IMRTCLog.i("signal", "已连接 session=$sessionId resumed=$resumed ping=${pingSec}s")

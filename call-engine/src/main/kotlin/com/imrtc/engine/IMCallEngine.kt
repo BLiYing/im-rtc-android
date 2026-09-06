@@ -91,6 +91,13 @@ class IMCallEngine private constructor(
     }
 
     /**
+     * 本端 uid，由 `sys.hello.ok` 带回（协议 §1.3）。登录之前是空串。
+     *
+     * 界面拿它把自己从 `callee_ids` 之类的名单里剔掉——「自己」不是远端成员。
+     */
+    val uid: String get() = connection.uid
+
+    /**
      * 换票，对应协议 §1.5 的「4401 → 换新票再来」。
      *
      * **push 不 pull**：Engine 不去宿主的账号体系要票。语义四端一致——
@@ -214,6 +221,11 @@ class IMCallEngine private constructor(
         val before = ctx
         val output = IMEngineMachine.reduce(ctx, machineInput, scheduler.nowMs())
         ctx = output.state
+
+        // 每推进一步就把「哪条轨道是谁的」同步给媒体层。**轨道与归属谁先到都可能**，
+        // 所以这一步不能只挂在 track_published 那一支上（iOS 的 IMFrameLoop、Web 的
+        // frameLoop.ts 都是同一处）。
+        media?.claimRemoteTracks(output.state.room.remoteTracks.mapValues { it.value.uid })
 
         for (frame in output.send) sendFrame(frame)
         dispatcher.dispatchAll(output.emit)

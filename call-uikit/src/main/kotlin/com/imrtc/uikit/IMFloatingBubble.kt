@@ -21,14 +21,20 @@ import android.widget.TextView
  * 视频通话优先走系统画中画（[IMCallActivity]），这里是画中画不可用时的兜底。
  *
  * 拖完吸附到最近的左右边缘；位移超过 `touchSlop` 才算拖，否则松手当点击。
+ *
+ * 右上角恒有一颗 **22 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
+ * 而「随手挂掉」正是小窗最常用的一件事。红色是危险动作的唯一颜色（规范 §01 danger）。
  */
 internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
 
     var onExpand: (() -> Unit)? = null
+    /** 小窗上的挂断。走与红按钮同一条路（会议房里是离房，不是 hangup）。 */
+    var onHangup: (() -> Unit)? = null
     /** 视频形态下远端缩略画面放这里。 */
     val videoHost = FrameLayout(context)
 
     private val icon = ImageView(context)
+    private val hangup = android.widget.ImageButton(context)
     private val duration = TextView(context)
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private var downRawX = 0f
@@ -55,6 +61,15 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
             addView(duration)
         }
         addView(column, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        hangup.setImageResource(IMKitIcon.PHONE_DOWN.resId)
+        hangup.setColorFilter(IMKitTheme.primaryText)
+        hangup.background = IMKitTheme.circleDrawable(IMKitTheme.hangup)
+        hangup.contentDescription = "挂断"
+        hangup.setPadding(dp(5), dp(5), dp(5), dp(5))
+        hangup.scaleType = ImageView.ScaleType.FIT_CENTER
+        hangup.setOnClickListener { onHangup?.invoke() }
+        addView(hangup, LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.END))
+        // 悬浮球自己 clipToOutline，挂断得贴在圆内的右上角，不能探到外面去。
         contentDescription = "通话中，点击展开"
     }
 
@@ -83,6 +98,18 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
         }
         videoHost.visibility = if (video) VISIBLE else GONE
         if (view != null) videoHost.addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    /** 挂断按钮自己处理触摸：不拦的话 onTouchEvent 会把它吞成「点球 = 展开」。 */
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && hitsHangup(event)) return false
+        return true
+    }
+
+    private fun hitsHangup(event: MotionEvent): Boolean {
+        val x = event.x - hangup.left
+        val y = event.y - hangup.top
+        return x >= 0 && y >= 0 && x <= hangup.width && y <= hangup.height
     }
 
     @SuppressLint("ClickableViewAccessibility")

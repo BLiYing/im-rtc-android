@@ -57,11 +57,22 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     private var capturer: CameraVideoCapturer? = null
     private var captureHelper: SurfaceTextureHelper? = null
 
-    /** uid → 渲染器。**弱不弱引用不重要，重要的是卸载时一定要摘轨道**。 */
+    /** uid → 渲染器（本端预览用 [LOCAL] 这把钥匙）。**卸载时一定要先摘轨道**。 */
     private val renderers = LinkedHashMap<String, SurfaceViewRenderer>()
 
-    /** 远端轨道：uid → VideoTrack。画面挂载与「第一帧到了」都靠它。 */
+    /**
+     * 远端轨道：**track_id → VideoTrack**。
+     *
+     * 键是 track_id 而不是 uid：轨道到达时归属通常还不知道（信令帧可能后到），
+     * 先按 track_id 收着，等 [claimRemoteTracks] 认领。
+     */
     private val remoteVideo = LinkedHashMap<String, VideoTrack>()
+
+    /** 归属表：track_id → uid，由信令层通过 [claimRemoteTracks] 灌进来。 */
+    private val trackOwners = LinkedHashMap<String, String>()
+
+    /** 已经挂上去的：track_id → 渲染器。摘 sink 要拿它，重复挂也靠它判。 */
+    private val attached = LinkedHashMap<String, SurfaceViewRenderer>()
 
     private var running = false
     private var frontCamera = true
@@ -84,12 +95,15 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         running = false
         stopCapture()
         // 先摘轨道再 release：反了会崩在 native 层。
-        renderers.values.forEach { renderer ->
-            remoteVideo.values.forEach { track -> runCatching { track.removeSink(renderer) } }
-            runCatching { renderer.release() }
+        attached.forEach { (trackId, renderer) ->
+            remoteVideo[trackId]?.let { track -> runCatching { track.removeSink(renderer) } }
         }
+        attached.clear()
+        renderers[LOCAL]?.let { renderer -> runCatching { videoTrack?.removeSink(renderer) } }
+        renderers.values.forEach { renderer -> runCatching { renderer.release() } }
         renderers.clear()
         remoteVideo.clear()
+        trackOwners.clear()
         audioTrack = null
         videoTrack = null
         peers.stop()
@@ -103,7 +117,10 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             return
         }
         if (kind == "audio") {
-            val track = peers.factory().createAudioTrack("audio-$cid", peers.createAudioSource())
+            // **track id 必须就是 cid**：服务端按 msid 的第二段（= track id）认领 m-line（协议 §3.2）。
+            // 这里原先是 "audio-$cid"，服务端永远认不回来——上行 RTP 到了却一直挂在
+            // 「先攒着」的队列里，别人一格画面都没有、也听不见声音，而日志里只有一行 DEBUG。
+            val track = peers.factory().createAudioTrack(cid, peers.createAudioSource())
             audioTrack = track
             connection.addTransceiver(
                 track,
@@ -117,6 +134,12 @@ class IMWebRTCAdapter @JvmOverloads constructor(
 
         val track = startCapture(cid) ?: return
         videoTrack = track
+        // 预览可能**早于**采集就挂好了（拨出时先给本端一个格子）。那时候还没有轨道，
+        // 不在这里补挂的话本端预览一辈子是空的——真机上的「开了摄像头自己也看不见」。
+        renderers[LOCAL]?.let { renderer ->
+            renderer.setMirror(frontCamera)
+            track.addSink(renderer)
+        }
         // simulcast：三层同时发上去，SFU 按每个订阅者的网速替他挑一层。
         // rid 必须是 l/m/h——与服务端的层选择、max_layer 枚举同名。
         val encodings = if (simulcast) {
@@ -156,24 +179,65 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         SurfaceViewRenderer(context)
 
     override fun attachView(uid: String, view: Any?) {
-        val previous = renderers.remove(uid)
-        if (previous != null) {
-            remoteVideo[uid]?.runCatching { removeSink(previous) }
-            runCatching { previous.release() }
-        }
+        detachRenderer(uid)
         val renderer = view as? SurfaceViewRenderer ?: return
         renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(uid))
         renderer.setEnableHardwareScaler(true)
         renderers[uid] = renderer
-        remoteVideo[uid]?.addSink(renderer)
+        bindRemoteTracks()
+    }
+
+    override fun claimRemoteTracks(owners: Map<String, String>) {
+        trackOwners.putAll(owners)
+        bindRemoteTracks()
     }
 
     override fun startLocalPreview(view: Any?) {
-        val renderer = view as? SurfaceViewRenderer ?: return
+        renderers[LOCAL]?.let { old ->
+            runCatching { videoTrack?.removeSink(old) }
+            runCatching { old.release() }
+        }
+        val renderer = view as? SurfaceViewRenderer ?: run {
+            renderers.remove(LOCAL)
+            return
+        }
         renderer.init(peers.eglBase.eglBaseContext, null)
         renderer.setMirror(frontCamera)
         renderers[LOCAL] = renderer
+        // 采集可能还没起来（拨出时先摆格子）；publish 里会补挂。
         videoTrack?.addSink(renderer)
+    }
+
+    /**
+     * bindRemoteTracks 把「已认领归属 + 有渲染器」的远端轨道接上去。
+     *
+     * 轨道、归属、渲染器三者**到达顺序完全不定**，所以三条路径（onRemoteTrack /
+     * claimRemoteTracks / attachView）都调它，由这一个地方判重与换绑。
+     */
+    private fun bindRemoteTracks() {
+        for ((trackId, track) in remoteVideo) {
+            val renderer = trackOwners[trackId]?.let { renderers[it] }
+            val current = attached[trackId]
+            if (current === renderer) continue
+            if (current != null) runCatching { track.removeSink(current) }
+            if (renderer == null) {
+                attached.remove(trackId)
+                continue
+            }
+            runCatching { track.addSink(renderer) }
+            attached[trackId] = renderer
+        }
+    }
+
+    /** 卸掉某个 uid 的渲染器：先把挂在它上面的轨道摘干净，再 release（反了会崩在 native 层）。 */
+    private fun detachRenderer(uid: String) {
+        val previous = renderers.remove(uid) ?: return
+        val gone = attached.filterValues { it === previous }.keys
+        for (trackId in gone) {
+            remoteVideo[trackId]?.let { runCatching { it.removeSink(previous) } }
+            attached.remove(trackId)
+        }
+        runCatching { previous.release() }
     }
 
     override fun switchCamera() {
@@ -217,7 +281,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         capturer = videoCapturer as? CameraVideoCapturer
         captureHelper = helper
         videoSource = source
-        return peers.factory().createVideoTrack("video-$cid", source)
+        // track id 就是 cid（同 publish 里那条注释）。
+        return peers.factory().createVideoTrack(cid, source)
     }
 
     private fun stopCapture() {
@@ -257,10 +322,18 @@ class IMWebRTCAdapter @JvmOverloads constructor(
 
         override fun onRemoteTrack(pc: String, streamId: String, track: org.webrtc.MediaStreamTrack) {
             val video = track as? VideoTrack ?: return
-            // 服务端把 uid 放在 msid 里。挂载可能比轨道先到，所以两边都要试着接上。
-            remoteVideo[streamId] = video
-            renderers[streamId]?.let { video.addSink(it) }
-            IMRTCLog.i("media", "远端视频轨道到达：uid=$streamId")
+            /*
+             **键是 track_id，不是 stream id。** 订阅侧 SDP 的 msid 第二段就是 track_id
+             （协议 §3.2），而 stream id 服务端给的是同一个常量（`im-rtc`）——
+             原先按 stream id 收，等于所有人的画面共用一把钥匙，真机上一格都不出。
+
+             归属这时候通常还不知道（`room.track_published` 可能后到），先收着，
+             等 claimRemoteTracks 认领。
+            */
+            val trackId = track.id()
+            remoteVideo[trackId] = video
+            IMRTCLog.i("media", "远端视频轨道到达：track_id=$trackId stream=$streamId")
+            bindRemoteTracks()
         }
 
         override fun onError(message: String) {

@@ -35,8 +35,19 @@ interface IMCallEngineListener {
 
     // ── 来电与拨出 ────────────────────────────────────────────────────
 
-    /** 收到邀请（被叫）。 */
-    fun onCallReceived(callId: String, caller: String, mediaType: String, isGroup: Boolean) {}
+    /**
+     * 收到邀请（被叫）。
+     *
+     * `calleeIds` 是**这通电话邀了谁**（不含主叫，含自己）。群通话的界面靠它把还没接的人
+     * 先摆成占位格——否则主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
+     */
+    fun onCallReceived(
+        callId: String,
+        caller: String,
+        calleeIds: List<String>,
+        mediaType: String,
+        isGroup: Boolean,
+    ) {}
 
     /** 通话接通，主被叫都抛。`role` 是 "caller" 或 "callee"。 */
     fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {}
@@ -61,6 +72,14 @@ interface IMCallEngineListener {
 
     /** 见 [onCallCancelled]。 */
     fun onCallNoAnswer(uid: String) {}
+
+    /**
+     * **通话中**有人打进来，服务端已经替你回了忙线——你不会为这一通振铃。
+     *
+     * MVP 是单通道：同一时刻只有一通电话（协议 §4.3 的忙线分支）。这条回调只是让界面
+     * 能提示一句「谁来过电话」，不需要宿主做任何处理。
+     */
+    fun onCallMissed(callId: String, caller: String, reason: String) {}
 
     /** 本账号另一台设备接听或拒绝了这通电话。`action` 是 "accept" 或 "reject"。 */
     fun onHandledOnOtherDevice(callId: String, action: String) {}

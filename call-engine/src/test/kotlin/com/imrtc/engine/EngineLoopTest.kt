@@ -326,7 +326,13 @@ class EngineLoopTest {
         val errors = mutableListOf<Int>()
 
         override fun onConnected(sessionId: String, resumed: Boolean) { connected += sessionId }
-        override fun onCallReceived(callId: String, caller: String, mediaType: String, isGroup: Boolean) {
+        override fun onCallReceived(
+            callId: String,
+            caller: String,
+            calleeIds: List<String>,
+            mediaType: String,
+            isGroup: Boolean,
+        ) {
             incoming += "$callId from $caller"
         }
         override fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {
@@ -372,6 +378,10 @@ class EngineLoopTest {
         override fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) = Unit
         override fun createVideoView(context: android.content.Context): android.view.View? = null
         override fun attachView(uid: String, view: Any?) = Unit
+
+        /** 最后一次收到的归属表：`track_id → uid`。 */
+        var claimed: Map<String, String> = emptyMap()
+        override fun claimRemoteTracks(owners: Map<String, String>) { claimed = owners }
         override fun startLocalPreview(view: Any?) = Unit
         override fun switchCamera() = Unit
         override fun setSpeakerOn(on: Boolean) = Unit

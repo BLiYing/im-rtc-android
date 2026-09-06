@@ -310,7 +310,13 @@ internal object DemoSession {
             IMRTCLog.w("demo", "错误 $code $message")
         }
 
-        override fun onCallReceived(callId: String, caller: String, mediaType: String, isGroup: Boolean) {
+        override fun onCallReceived(
+            callId: String,
+            caller: String,
+            calleeIds: List<String>,
+            mediaType: String,
+            isGroup: Boolean,
+        ) {
             pending = Meta(caller, mediaType, isGroup, "callee")
         }
 

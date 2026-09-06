@@ -41,6 +41,7 @@ internal class IMEventDispatcher(
                 listener.onCallReceived(
                     args.str("call_id"),
                     args.str("caller"),
+                    args.strs("callee_ids"),
                     args.str("media_type"),
                     args.flag("is_group"),
                 )
@@ -65,6 +66,9 @@ internal class IMEventDispatcher(
             "onCallRejected" -> onMain { listener.onCallRejected(args.str("uid")) }
             "onCallBusy" -> onMain { listener.onCallBusy(args.str("uid")) }
             "onCallNoAnswer" -> onMain { listener.onCallNoAnswer(args.str("uid")) }
+            "onCallMissed" -> onMain {
+                listener.onCallMissed(args.str("call_id"), args.str("caller"), args.str("reason"))
+            }
             "onHandledOnOtherDevice" -> onMain {
                 listener.onHandledOnOtherDevice(args.str("call_id"), args.str("action"))
             }
@@ -129,6 +133,9 @@ private fun Map<String, IMJson>.str(key: String) = (this[key] as? IMJson.Str)?.v
 private fun Map<String, IMJson>.num(key: String) = (this[key] as? IMJson.Num)?.value ?: 0L
 
 private fun Map<String, IMJson>.flag(key: String) = (this[key] as? IMJson.Bool)?.value ?: false
+
+private fun Map<String, IMJson>.strs(key: String): List<String> =
+    ((this[key] as? IMJson.Arr)?.items ?: emptyList()).mapNotNull { (it as? IMJson.Str)?.value }
 
 private fun Map<String, IMJson>.objects(key: String): List<Map<String, IMJson>> =
     ((this[key] as? IMJson.Arr)?.items ?: emptyList()).mapNotNull { (it as? IMJson.Obj)?.fields }

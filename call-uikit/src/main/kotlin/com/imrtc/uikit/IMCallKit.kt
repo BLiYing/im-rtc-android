@@ -365,7 +365,7 @@ object IMCallKit {
     private fun mountBubble(host: Activity?, current: IMCallViewState) {
         val bubble = overlay.mount(
             host, IMFloatingBubble::class.java,
-            { activity -> IMFloatingBubble(activity).apply { onExpand = { expand() } } },
+            { activity -> IMFloatingBubble(activity).apply { onExpand = { expand() }; onHangup = { hangup() } } },
             { activity -> IMFloatingBubble.initialParams(activity) },
         )
         bubble?.render(current)

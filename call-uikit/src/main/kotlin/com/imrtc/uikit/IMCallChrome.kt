@@ -12,9 +12,14 @@ import android.widget.TextView
  * 通话页的「壳」：顶部那条、顶部橙条、语音页的中间区块。三个小视图放一个文件——它们都不含业务逻辑。
  */
 
-/** 顶部那条（规范 §04）：左 32 圆「收起」、中间标题 + 副标题 + 网络条、右 32 圆「加人」。固定高 64。 */
+/**
+ * 顶部那条（规范 §04）：左 32 圆「小窗」、中间标题 + 副标题 + 网络条、右 32 圆「加人」。固定高 64。
+ *
+ * 左上角那颗就是**收进小窗的唯一入口**（控制条里不再重复放一颗）：那个位置在三端都是
+ * 「离开这一屏」的手势位，用户第一反应就是往那儿点。
+ */
 internal class IMCallHeader(context: Context) : FrameLayout(context) {
-    val minimizeButton = roundButton(IMKitIcon.CHEVRON_DOWN, "收进小窗")
+    val minimizeButton = roundButton(IMKitIcon.MINIMIZE, "收进小窗")
     val inviteButton = roundButton(IMKitIcon.PERSON_ADD, "添加成员")
     private val title = TextView(context)
     private val subtitle = TextView(context)

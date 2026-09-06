@@ -60,7 +60,6 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val micButton = IMControlButton(context, IMKitIcon.MIC, "静音", IMKitIcon.MIC_SLASH, "已静音")
     private val cameraButton = IMControlButton(context, IMKitIcon.VIDEO_SLASH, "开摄像头", IMKitIcon.VIDEO, "关摄像头")
     private val speakerButton = IMControlButton(context, IMKitIcon.SPEAKER, "扬声器")
-    private val minimizeControl = IMControlButton(context, IMKitIcon.MINIMIZE, "小窗")
     private val hangupButton = IMControlButton(context, IMKitIcon.PHONE_DOWN, "挂断", role = IMControlButton.Role.DANGER)
     private val answerButton = IMControlButton(context, IMKitIcon.PHONE, "接听", role = IMControlButton.Role.ACCEPT)
     private val rejectButton = IMControlButton(context, IMKitIcon.XMARK, "拒绝", role = IMControlButton.Role.DANGER)
@@ -72,7 +71,11 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private var state = IMCallViewState()
     /** 画中画模式：只留画面，壳全藏（Android 差异 2）。 */
     var pipMode = false
-        set(value) { field = value; render(state) }
+        set(value) {
+            field = value
+            requestApplyInsets() // 画中画进出时留白要跟着变（见 onApplyWindowInsets）
+            render(state)
+        }
 
     init {
         setBackgroundColor(IMKitTheme.background)
@@ -83,7 +86,12 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         column.addView(controls, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.CONTROLS_HEIGHT_DP)).apply { bottomMargin = dp(26) })
 
         stage.addView(audioStage, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        stage.addView(grid, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
+        // 九宫格整块居中（与 iOS 一样）：格子是正方形，剩下的空间摊在四周，不摊进格子里。
+        stage.addView(
+            grid,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER)
+                .apply { setMargins(dp(12), dp(4), dp(12), dp(4)) },
+        )
         endedLabel.textSize = 17f
         endedLabel.setTextColor(IMKitTheme.primaryText)
         endedLabel.gravity = Gravity.CENTER
@@ -117,26 +125,63 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         micButton.setOnClickListener { actions?.onToggleMic() }
         cameraButton.setOnClickListener { actions?.onToggleCamera() }
         speakerButton.setOnClickListener { actions?.onToggleSpeaker() }
-        minimizeControl.setOnClickListener { actions?.onMinimize() }
         hangupButton.setOnClickListener { actions?.onHangup() }
         answerButton.setOnClickListener { actions?.onAnswer() }
         rejectButton.setOnClickListener { actions?.onHangup() }
         pip.onTap = { if (layout == IMCallViewState.Layout.VIDEO) actions?.onSwap() }
     }
 
+    /** 当前摆在九宫格里的那批格子。容器尺寸变了要按真尺寸重摆一次（见 layoutGrid）。 */
+    private var gridOrdered: List<View> = emptyList()
+
+    /**
+     * 让开状态栏与导航栏。
+     *
+     * Activity 是边到边的（[IMCallActivity.goFullScreen]），不让的话「对方名字 + 时长」那一行
+     * 直接压在状态栏的时间和电量上，而底部的挂断键会被手势条盖掉一半。
+     * **只给根容器加 padding**，版式代码一行不用改。
+     */
+    @Suppress("DEPRECATION")
+    override fun onApplyWindowInsets(insets: android.view.WindowInsets): android.view.WindowInsets {
+        val top: Int
+        val bottom: Int
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+            top = bars.top
+            bottom = bars.bottom
+        } else {
+            top = insets.systemWindowInsetTop
+            bottom = insets.systemWindowInsetBottom
+        }
+        // 画中画里那一小块窗口没有系统栏，再留白等于白白吃掉画面。
+        setPadding(0, if (pipMode) 0 else top, 0, if (pipMode) 0 else bottom)
+        return super.onApplyWindowInsets(insets)
+    }
+
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
-        if (changed) pip.layoutInContainer()
+        if (!changed) return
+        pip.layoutInContainer()
+        // 第一轮 render 时 stage 还没量出来，格子边长只能按默认形状估。这里补摆一次。
+        if (layout == IMCallViewState.Layout.GRID && gridOrdered.isNotEmpty()) {
+            post { layoutGrid(gridOrdered) }
+        }
     }
 
     fun render(state: IMCallViewState) {
         this.state = state
         val hasLocalVideo = actions?.hasLocalVideo() ?: false
-        layout = state.layout(hasLocalVideo)
+        layout = state.layout
         val isEnded = state.phase == IMCallViewState.Phase.ENDED
         val peerLevel = if (state.isGroup) 0 else (state.members.values.firstOrNull()?.networkLevel ?: 0)
+        /*
+         **呼叫中与来电页的标题栏留空。** 那两屏的正中间已经是「大头像 + 名字 + 状态」，
+         顶部再写一遍同样的名字和同一行状态，同一句话在一屏里出现两次。
+         接通之后才有真正只属于顶栏的信息（对方名字 + 计时器 + 网络条）。
+        */
+        val bare = state.phase == IMCallViewState.Phase.INCOMING || state.phase == IMCallViewState.Phase.OUTGOING
         header.apply(
-            state.titleText, state.statusText,
+            if (bare) "" else state.titleText, if (bare) "" else state.statusText,
             if (state.phase == IMCallViewState.Phase.CONNECTED) peerLevel else 0,
             showsMinimize = state.canMinimize && IMCallKit.config.floatingWindow,
             showsInvite = state.canShowInvite,
@@ -183,8 +228,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             state.phase == IMCallViewState.Phase.INCOMING ->
                 // 视频来电多一个摄像头开关，而不是「以语音接听」按钮（拍板 §11-10）。
                 if (state.showsCameraButton) listOf(cameraButton, rejectButton, answerButton) else listOf(rejectButton, answerButton)
-            state.showsCameraButton -> listOf(micButton, cameraButton, speakerButton, minimizeControl, hangupButton)
-            else -> listOf(micButton, speakerButton, minimizeControl, hangupButton)
+            // 「小窗」不在控制条里——它在标题栏左上角那一颗（IMCallHeader 的注释）。
+            state.showsCameraButton -> listOf(micButton, cameraButton, speakerButton, hangupButton)
+            else -> listOf(micButton, speakerButton, hangupButton)
         }
         if ((0 until controls.childCount).map { controls.getChildAt(it) } != wanted) {
             controls.removeAllViews()
@@ -195,7 +241,6 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         cameraButton.isDisabledLook = state.cameraBlocked
         cameraButton.caption = if (state.cameraBlocked) "无权限" else "开摄像头"
         speakerButton.isOn = state.speakerOn
-        minimizeControl.visibility = if (IMCallKit.config.floatingWindow) VISIBLE else GONE
         // 红按钮的语义按房间类型分叉（规范 §05）：群 / 会议写「离开」，拨出中写「取消」。
         hangupButton.caption = when {
             state.isGroup || state.isMeeting -> "离开"
@@ -259,23 +304,46 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         layoutGrid(ordered)
     }
 
-    /** 格子恒为正方形，行列跟着容器形状走（与 iOS / Web 同一个算法）。 */
+    /**
+     * 格子恒为正方形、整块居中，行列跟着容器形状走（与 iOS / Web 同一个算法）。
+     *
+     * **不给 spec 带权重**：带权重的话 GridLayout 会把剩余空间摊到每一格上，
+     * 算出来的正方形边长当场被撑没——竖屏两个人就变成两条又高又窄的长条，
+     * 与 iOS 完全不是一个样子。整块的居中交给 grid 自己的 `Gravity.CENTER`。
+     */
     private fun layoutGrid(ordered: List<View>) {
-        val width = stage.width - dp(24)
-        val height = stage.height - dp(8)
-        val aspect = if (height > 0) width.toDouble() / height else 0.7
-        val (columns, rows) = IMGrid.dimensions(ordered.size, aspect)
+        gridOrdered = ordered
         val gap = dp(IMKitTheme.TILE_GAP_DP)
-        val side = if (ordered.size > 1 && width > 0 && height > 0) IMGrid.cellSide(columns, rows, width, height, gap) else 0
+        // 每格四周各留 gap/2 的外边距，所以可用区要先扣掉一整个 gap，算出来的边长才放得下。
+        val width = stage.width - dp(24) - gap
+        val height = stage.height - dp(8) - gap
+        val measured = width > 0 && height > 0
+        // 容器还没量出来（第一轮 render 早于 layout）：先按竖屏手机的形状排一版，
+        // onLayout 量到真尺寸会再摆一次。
+        val aspect = if (measured) width.toDouble() / height else 0.7
+        val (columns, rows) = IMGrid.dimensions(ordered.size, aspect)
+        val cellWidth: Int
+        val cellHeight: Int
+        when {
+            !measured -> { cellWidth = dp(120); cellHeight = dp(120) }
+            // 只有一格时铺满：正方形是为了「多格之间不互相拉伸」，一格时没有别人可比。
+            ordered.size <= 1 -> { cellWidth = width; cellHeight = height }
+            else -> {
+                val side = IMGrid.cellSide(columns, rows, width, height, gap)
+                cellWidth = side
+                cellHeight = side
+            }
+        }
         grid.removeAllViews()
         grid.columnCount = columns
         grid.rowCount = rows
         for (view in ordered) {
             (view.parent as? android.view.ViewGroup)?.removeView(view)
             val params = GridLayout.LayoutParams().apply {
-                if (side > 0) { this.width = side; this.height = side } else { this.width = 0; this.height = 0 }
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                this.width = cellWidth
+                this.height = cellHeight
+                columnSpec = GridLayout.spec(GridLayout.UNDEFINED)
+                rowSpec = GridLayout.spec(GridLayout.UNDEFINED)
                 setMargins(gap / 2, gap / 2, gap / 2, gap / 2)
             }
             grid.addView(view, params)

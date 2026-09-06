@@ -24,6 +24,7 @@ internal fun reduceCallRecv(
     type: String,
     data: Map<String, IMJson>,
 ): IMMachineOutput<IMCallContext> {
+    if (isForAnotherCall(ctx, data)) return handleForeignCall(ctx, type, data)
     if (type == IMFrameType.CALL_ENDED) return handleEnded(ctx, data)
     if (ctx.state == IMCallState.IDLE && type != IMFrameType.CALL_INCOMING) return IMCallMachine.out(ctx)
 
@@ -83,6 +84,46 @@ internal fun reduceCallRecv(
     }
 }
 
+/**
+ * 这一帧说的是不是**别的一通电话**。
+ *
+ * 通话中被第三个人呼叫时，服务端会判他忙线并给我们发一条 `call.ended{busy}`——
+ * 那条帧的 `call_id` 是**新来那通**的。原先这里不看 call_id，于是这条帧被当成
+ * 「当前通话结束了」：媒体面直接关掉、通话页收起，而对面还好好地显示着通话中。
+ * 真机日志里就是 08:30:39 那一串 `PC 状态 closed` 紧跟一条别的 call_id 的 callEnd。
+ */
+private fun isForAnotherCall(ctx: IMCallContext, data: Map<String, IMJson>): Boolean {
+    val frameCallId = Wire.str(data, "call_id")
+    return ctx.callId.isNotEmpty() && frameCallId.isNotEmpty() && frameCallId != ctx.callId
+}
+
+/**
+ * 别的一通电话的帧：**一律不碰当前状态**。
+ *
+ * 只有终态帧要露个头——那说明「有人打进来，已经被自动回了忙线」，
+ * 界面据此提示一句谁来过电话（交互规则见 UX_FLOWS §06）。
+ */
+private fun handleForeignCall(
+    ctx: IMCallContext,
+    type: String,
+    data: Map<String, IMJson>,
+): IMMachineOutput<IMCallContext> {
+    if (type != IMFrameType.CALL_ENDED) return IMCallMachine.out(ctx)
+    return IMCallMachine.out(
+        ctx,
+        emit = listOf(
+            IMEmittedEvent(
+                "onCallMissed",
+                mapOf(
+                    "call_id" to s(Wire.str(data, "call_id")),
+                    "caller" to s(Wire.str(data, "caller")),
+                    "reason" to s(Wire.str(data, "reason")),
+                ),
+            ),
+        ),
+    )
+}
+
 private fun handleIncoming(ctx: IMCallContext, data: Map<String, IMJson>): IMMachineOutput<IMCallContext> {
     if (ctx.state != IMCallState.IDLE) return IMCallMachine.out(ctx)
     val mediaType = if (Wire.str(data, "media_type") == "video") "video" else "audio"
@@ -102,6 +143,9 @@ private fun handleIncoming(ctx: IMCallContext, data: Map<String, IMJson>): IMMac
                 mapOf(
                     "call_id" to s(next.callId),
                     "caller" to s(Wire.str(data, "caller")),
+                    // **原样带上**：群通话里被叫要靠它把还没接的人摆成占位格，
+                    // 不然主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
+                    "callee_ids" to arr(Wire.strList(data, "callee_ids")),
                     "media_type" to s(mediaType),
                     "is_group" to b(next.isGroup),
                 ),

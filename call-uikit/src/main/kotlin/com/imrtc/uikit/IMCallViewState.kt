@@ -98,12 +98,21 @@ internal data class IMCallViewState(
     /** 还能加几个人（选人页顶部「还能加 N 人」）。 */
     val inviteSlotsLeft: Int get() = maxOf(IMGrid.MAX_TILES - 1 - members.size, 0)
 
-    /** 用哪种版式。**两端都关摄像头 → 整页退回语音版式**（交互稿 §04）。`hasLocalVideo` 由 Kit 给。 */
-    fun layout(hasLocalVideo: Boolean): Layout = when {
+    /**
+     * 用哪种版式。
+     *
+     * **接通后的 1v1 视频恒为 VIDEO 版式**，哪怕两边都关着摄像头——那时全屏格与小窗各显示一个
+     * 头像盘。原先是「都没画面就退回语音版式」，实测下来不对：小窗会整个消失，用户以为通话断了，
+     * 而且关掉摄像头之后就再也点不到「互换」。没画面是格子的事，不是版式的事。
+     *
+     * 拨出中与来电页仍用语音版式：那时对端画面不存在，本端预览叠在右上角。
+     * 与 iOS 的 `imPickLayout(for:)` 是同一条判据。
+     */
+    val layout: Layout get() = when {
         isGroup || isMeeting -> Layout.GRID
-        mediaType != "video" || phase == Phase.OUTGOING -> Layout.AUDIO
-        (members.values.firstOrNull()?.video == true) || (cameraOn && hasLocalVideo) -> Layout.VIDEO
-        else -> Layout.AUDIO
+        mediaType != "video" -> Layout.AUDIO
+        phase == Phase.OUTGOING || phase == Phase.INCOMING -> Layout.AUDIO
+        else -> Layout.VIDEO
     }
 
     /** 标题栏那一行。**群通话与会议不能显示某一个人的名字**；人数要 `+1`：[members] 里不含自己。 */
@@ -183,18 +192,32 @@ internal data class IMCallViewState(
 /** 视图模型的全部变更入口。**界面不许自己改字段**，改法都在这里。 */
 internal object IMCallViewReducer {
 
-    fun incoming(state: IMCallViewState, callId: String, caller: String, mediaType: String, isGroup: Boolean) =
-        IMCallViewState(
-            phase = IMCallViewState.Phase.INCOMING,
-            callId = callId,
-            peer = if (isGroup) "" else caller,
-            mediaType = mediaType,
-            isGroup = isGroup,
-            cameraOn = mediaType == "video",
-            speakerOn = mediaType == "video",
-            members = mapOf(caller to IMCallViewState.Member(caller)),
-            connection = state.connection,
-        )
+    /**
+     * `calleeIds` 是这通电话邀了谁（**已去掉自己**）。
+     *
+     * 主叫先摆上（他一定在通话里），其余被邀请的人摆成「还在响铃」的占位格——
+     * 不摆的话群通话在两侧长得不一样：主叫看到四格（含没接的），被叫只看到两格。
+     */
+    fun incoming(
+        state: IMCallViewState,
+        callId: String,
+        caller: String,
+        calleeIds: List<String>,
+        mediaType: String,
+        isGroup: Boolean,
+    ) = IMCallViewState(
+        phase = IMCallViewState.Phase.INCOMING,
+        callId = callId,
+        peer = if (isGroup) "" else caller,
+        mediaType = mediaType,
+        isGroup = isGroup,
+        cameraOn = mediaType == "video",
+        speakerOn = mediaType == "video",
+        members = linkedMapOf(caller to IMCallViewState.Member(caller)) +
+            calleeIds.filter { it != caller }
+                .associateWith { IMCallViewState.Member(it, accepted = false) },
+        connection = state.connection,
+    )
 
     fun outgoing(state: IMCallViewState, peers: List<String>, mediaType: String, isGroup: Boolean) =
         IMCallViewState(

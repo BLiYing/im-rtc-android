@@ -80,6 +80,18 @@ interface IMMediaAdapter {
     /** 把某个 uid 的画面挂到一个视图上；`view` 为 null 表示卸载。 */
     fun attachView(uid: String, view: Any?)
 
+    /**
+     * 告诉媒体层「哪条 track_id 是谁的」（`[track_id: uid]`）。
+     *
+     * **媒体层自己无从知道这件事**：`onAddTrack` 只带得出 track_id，归属写在信令帧
+     * `room.track_published` 里，两者谁先到都可能。Engine 每推进一步就同步一次。
+     *
+     * 这条口子原先整个不存在，于是 Android 端认远端画面靠的是 msid 的 **stream id**——
+     * 而服务端给所有下行轨道用的是同一个常量 stream（`im-rtc`），
+     * 结果每个人的画面都被挂到同一把钥匙上，真机表现是「协商全通、一格画面都没有」。
+     */
+    fun claimRemoteTracks(owners: Map<String, String>)
+
     /** 本端预览。 */
     fun startLocalPreview(view: Any?)
 

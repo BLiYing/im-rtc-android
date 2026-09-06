@@ -19,7 +19,7 @@ class CallViewStateTest {
         val meeting = IMCallViewReducer.meeting(IMCallViewState(), "r-1")
         assertEquals(IMCallViewState.Action.LEAVE_ROOM, meeting.hangupAction)
 
-        val incoming = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", "audio", false)
+        val incoming = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", emptyList(), "audio", false)
         assertEquals(IMCallViewState.Action.REJECT, incoming.hangupAction)
         assertTrue("来电时才显示接听键", incoming.showAnswerButton)
 
@@ -124,7 +124,7 @@ class CallViewStateTest {
         val outgoing = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
         assertFalse(IMCallViewReducer.minimize(outgoing).isMinimized)
 
-        val incoming = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", "audio", false)
+        val incoming = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", emptyList(), "audio", false)
         assertFalse(IMCallViewReducer.minimize(incoming).isMinimized)
 
         val connected = IMCallViewReducer.connected(

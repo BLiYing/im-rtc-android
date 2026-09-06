@@ -49,9 +49,23 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         host.onError(code, message)
     }
 
-    override fun onCallReceived(callId: String, caller: String, mediaType: String, isGroup: Boolean) {
-        IMCallKit.update(IMCallViewReducer.incoming(state, callId, caller, mediaType, isGroup))
-        host.onCallReceived(callId, caller, mediaType, isGroup)
+    override fun onCallReceived(
+        callId: String,
+        caller: String,
+        calleeIds: List<String>,
+        mediaType: String,
+        isGroup: Boolean,
+    ) {
+        // 名单里含自己，摆格子之前先去掉——「自己」不是远端成员。
+        val others = calleeIds.filter { it != IMCallKit.engine?.uid }
+        IMCallKit.update(IMCallViewReducer.incoming(state, callId, caller, others, mediaType, isGroup))
+        host.onCallReceived(callId, caller, calleeIds, mediaType, isGroup)
+    }
+
+    /** 通话中有人打进来，服务端已经替我们回了忙线——**只提示，不动当前通话**。 */
+    override fun onCallMissed(callId: String, caller: String, reason: String) {
+        IMCallKit.hint("$caller 来电，已自动回复忙线")
+        host.onCallMissed(callId, caller, reason)
     }
 
     override fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {

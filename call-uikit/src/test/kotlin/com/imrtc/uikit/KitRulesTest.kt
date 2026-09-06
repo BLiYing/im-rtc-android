@@ -101,23 +101,26 @@ class KitRulesTest {
         assertEquals(setOf("bob"), state.members.keys)
     }
 
+    /**
+     * **接通后的 1v1 视频恒为 VIDEO 版式**：两边都关摄像头时也不退回语音页，
+     * 否则小窗整个消失，用户以为断了，而且再也点不到互换。
+     */
     @Test
-    fun `版式：两端都没画面退回语音，拨出中是头像页`() {
-        var state = IMCallViewReducer.begin(IMCallViewReducer.incoming(IMCallViewState(), "c", "bob", "video", false), "c", "r", "video", "callee")
+    fun `版式：接通后的视频通话恒为视频页，拨出中是头像页`() {
+        var state = IMCallViewReducer.begin(IMCallViewReducer.incoming(IMCallViewState(), "c", "bob", emptyList(), "video", false), "c", "r", "video", "callee")
         state = IMCallViewReducer.connected(state)
-        assertEquals(IMCallViewState.Layout.AUDIO, state.layout(hasLocalVideo = false))
-        assertEquals("本端有画面就够", IMCallViewState.Layout.VIDEO, state.layout(hasLocalVideo = true))
-        assertEquals(IMCallViewState.Layout.VIDEO, IMCallViewReducer.availability(state, "bob", "video", true).layout(false))
-        assertEquals(IMCallViewState.Layout.GRID, groupCall("caller").layout(true))
+        assertEquals(IMCallViewState.Layout.VIDEO, state.layout)
+        assertEquals(IMCallViewState.Layout.VIDEO, IMCallViewReducer.availability(state, "bob", "video", true).layout)
+        assertEquals(IMCallViewState.Layout.GRID, groupCall("caller").layout)
         val outgoing = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "video", false)
-        assertEquals("拨出中是头像页，本端预览另叠一层小窗", IMCallViewState.Layout.AUDIO, outgoing.layout(true))
+        assertEquals("拨出中是头像页，本端预览另叠一层小窗", IMCallViewState.Layout.AUDIO, outgoing.layout)
         assertEquals("语音通话永远是头像页", IMCallViewState.Layout.AUDIO,
-            IMCallViewReducer.connected(IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)).layout(true))
+            IMCallViewReducer.connected(IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)).layout)
     }
 
     @Test
     fun `互换、权限被拒与连接横幅`() {
-        var state = IMCallViewReducer.connected(IMCallViewReducer.incoming(IMCallViewState(), "c", "bob", "video", false))
+        var state = IMCallViewReducer.connected(IMCallViewReducer.incoming(IMCallViewState(), "c", "bob", emptyList(), "video", false))
         state = IMCallViewReducer.setSwapped(state, true)
         assertTrue(state.isSwapped)
         state = IMCallViewReducer.cameraBlocked(state)
@@ -127,12 +130,12 @@ class KitRulesTest {
 
         val reconnecting = IMCallViewReducer.connection(IMCallViewState(), IMCallViewState.Connection.RECONNECTING)
         // 连接状态跨通话保留：新来电不该把「正在重连」抹掉。
-        assertEquals(IMCallViewState.Connection.RECONNECTING, IMCallViewReducer.incoming(reconnecting, "c", "a", "audio", false).connection)
+        assertEquals(IMCallViewState.Connection.RECONNECTING, IMCallViewReducer.incoming(reconnecting, "c", "a", emptyList(), "audio", false).connection)
         assertEquals(3, IMCallViewState.networkBarsLit(2))
         assertEquals(2, IMCallViewState.networkBarsLit(4))
         assertEquals(1, IMCallViewState.networkBarsLit(6))
         assertTrue(IMCallViewState.isNetworkPoor(3))
         assertEquals("网络很差", IMCallViewState.networkText(5))
-        assertEquals("邀请你加入群通话", IMCallViewReducer.incoming(IMCallViewState(), "c", "a", "video", true).statusText)
+        assertEquals("邀请你加入群通话", IMCallViewReducer.incoming(IMCallViewState(), "c", "a", emptyList(), "video", true).statusText)
     }
 }
