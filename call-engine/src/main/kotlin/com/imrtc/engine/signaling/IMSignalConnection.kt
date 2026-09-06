@@ -1,5 +1,6 @@
 package com.imrtc.engine.signaling
 
+import com.imrtc.engine.IMKickedOutReason
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.protocol.IMCloseCode
 import com.imrtc.engine.protocol.IMEnvelope
@@ -40,8 +41,16 @@ internal class IMSignalConnection(
         /** 一条下行帧（事件或双向帧；应答已经在本层配对掉了）。 */
         fun onFrame(type: String, data: Map<String, IMJson>)
 
-        /** 连续三次鉴权失败：别再敲了，回登录页。 */
-        fun onKickedOut()
+        /**
+         * 被踢下线，**不会自动重连**。
+         *
+         * `reason` 决定宿主该做什么，两者处置相反——合并成一个「被踢」的话，
+         * 宿主只能都当登录失效处理，把本可静默恢复的场景也变成「请重新登录」。
+         */
+        fun onKickedOut(reason: IMKickedOutReason)
+
+        /** 票快到期了，宿主该去取新票并 updateToken。见 [IMTokenExpiryTimer]。 */
+        fun onTokenWillExpire(expiresAtMs: Long)
 
         /** 连接层自己的错误（解析失败等）。 */
         fun onError(code: IMErrorCode, message: String)
@@ -79,6 +88,9 @@ internal class IMSignalConnection(
     private var heartbeatTimer: IMScheduler.Cancellable? = null
     private var authFailures = 0
     private var lastInboundMs = 0L
+    private val tokenExpiry = IMTokenExpiryTimer(scheduler) { expiresAtMs ->
+        events.onTokenWillExpire(expiresAtMs)
+    }
 
     val isConnected: Boolean get() = connected
 
@@ -98,10 +110,14 @@ internal class IMSignalConnection(
      * 语义四端一致：**下一次重连生效，不打断当前连接**。不做「token provider 回调」
      * 那种让 Engine 自己去宿主账号体系要票的设计——票是宿主的东西，Engine 不认识那套。
      */
-    fun updateToken(token: String) {
+    @JvmOverloads
+    fun updateToken(token: String, expiresAtMs: Long = 0L) {
         this.token = token
         // 换了新票，鉴权失败计数归零：这是一把新钥匙，不是同一把坏钥匙又敲一次。
         authFailures = 0
+        // 宿主刚从自家后台拿到票，必然知道它的 expires_in。传了就按新票重新武装；
+        // 不传就让旧定时器继续跑到下一次握手——那时 sys.hello.ok 会给出权威值。
+        if (expiresAtMs > 0L) tokenExpiry.arm(expiresAtMs)
     }
 
     fun stop(code: Int = IMCloseCode.NORMAL.code, reason: String = "logout") {
@@ -109,6 +125,7 @@ internal class IMSignalConnection(
         connecting = false
         connected = false
         cancelTimers()
+        tokenExpiry.disarm()
         pending.failAll(IMErrorCode.NOT_LOGGED_IN, "连接已关闭")
         transport.close(code, reason)
         sessionId = ""
@@ -173,6 +190,7 @@ internal class IMSignalConnection(
         val pingSec = (data["ping_interval_sec"] as? IMJson.Num)?.value ?: DEFAULT_PING_SEC
         IMRTCLog.i("signal", "已连接 session=$sessionId resumed=$resumed ping=${pingSec}s")
         startHeartbeat(pingSec.coerceIn(MIN_PING_SEC, MAX_PING_SEC))
+        tokenExpiry.arm((data["token_expires_at_ms"] as? IMJson.Num)?.value ?: 0L)
         events.onConnected(sessionId, resumed)
     }
 
@@ -227,7 +245,7 @@ internal class IMSignalConnection(
                 // 被踢：重连没有意义——那等于跟另一台设备打架。
                 IMRTCLog.w("signal", "被踢下线（4403），不再重连")
                 stopped = true
-                events.onKickedOut()
+                events.onKickedOut(IMKickedOutReason.TAKEN_OVER)
                 return
             }
             IMCloseCode.UNAUTHORIZED.code -> {
@@ -237,7 +255,7 @@ internal class IMSignalConnection(
                     // 四端同一个数：3。到顶就别再敲了，让宿主回登录页换票。
                     IMRTCLog.e("signal", "连续 $MAX_AUTH_FAILURES 次鉴权失败，放弃")
                     stopped = true
-                    events.onKickedOut()
+                    events.onKickedOut(IMKickedOutReason.AUTH_EXPIRED)
                     return
                 }
             }

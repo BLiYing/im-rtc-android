@@ -4,6 +4,7 @@ import android.content.Context;
 
 import com.imrtc.engine.IMCallEngine;
 import com.imrtc.engine.IMCallEngineListener;
+import com.imrtc.engine.IMKickedOutReason;
 import com.imrtc.engine.IMNetworkQuality;
 import com.imrtc.engine.IMSpeaker;
 import com.imrtc.engine.media.IMVideoProfile;
@@ -44,6 +45,21 @@ final class JavaApiCheck {
             }
 
             @Override
+            public void onKickedOut(IMKickedOutReason reason) {
+                // 枚举在 Java 侧要能 switch —— 这正是不用字符串的理由。
+                if (reason == IMKickedOutReason.AUTH_EXPIRED) {
+                    // 取新票重登
+                } else if (reason == IMKickedOutReason.TAKEN_OVER) {
+                    // 回登录页
+                }
+            }
+
+            @Override
+            public void onTokenWillExpire(long expiresAtMs) {
+                // 去自家后台换票，然后 engine.updateToken(token, expiresAtMs)
+            }
+
+            @Override
             public void onActiveSpeakers(List<IMSpeaker> speakers) {
                 for (IMSpeaker speaker : speakers) {
                     int volume = speaker.getVolume();
@@ -75,6 +91,8 @@ final class JavaApiCheck {
         // 连接
         engine.login("token");
         engine.updateToken("new-token");
+        // @JvmOverloads：带到期时刻的两参数形态 Java 也要能写出来。
+        engine.updateToken("new-token", System.currentTimeMillis() + 3_600_000L);
         engine.logout();
         engine.destroy();
 

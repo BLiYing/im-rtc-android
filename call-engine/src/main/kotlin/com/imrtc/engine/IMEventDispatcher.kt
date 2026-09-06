@@ -32,7 +32,13 @@ internal class IMEventDispatcher(
             // 状态机那份 onDisconnected 不带关闭码——码由连接层独占上报（见 IMSignalConnection）。
             // 这里刻意不派发它，免得宿主收到两条、其中一条还是假的。
             "onDisconnected" -> Unit
-            "onKickedOut" -> onMain { listener.onKickedOut() }
+            /*
+              状态机那份 onKickedOut 也不带原因——原因只有连接层知道（它才看得见关闭码，
+              而且「鉴权失败到顶」复用了同一个 ws_closed_4403 内部事件）。
+              与上面的 onDisconnected 同一条理由：由连接层独占上报，这里刻意不派发，
+              免得宿主收到两条、其中一条还没有 reason。
+            */
+            "onKickedOut" -> Unit
             "onError" -> onMain {
                 listener.onError(args.num("code").toInt(), args.str("name"))
             }
@@ -116,6 +122,10 @@ internal class IMEventDispatcher(
      * 混着报会出现「假的 4403」，宿主想数重连次数就数不对。
      */
     fun disconnected(code: Int, reason: String) = onMain { listener.onDisconnected(code, reason) }
+
+    fun kickedOut(reason: IMKickedOutReason) = onMain { listener.onKickedOut(reason) }
+
+    fun tokenWillExpire(expiresAtMs: Long) = onMain { listener.onTokenWillExpire(expiresAtMs) }
 
     /** 媒体层直接抛的两个，不经过状态机。 */
     fun firstVideoFrame(uid: String) = onMain { listener.onFirstVideoFrame(uid) }

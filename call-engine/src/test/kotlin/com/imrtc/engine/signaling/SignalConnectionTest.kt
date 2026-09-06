@@ -1,5 +1,6 @@
 package com.imrtc.engine.signaling
 
+import com.imrtc.engine.IMKickedOutReason
 import com.imrtc.engine.protocol.IMCloseCode
 import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMFrameType
@@ -190,11 +191,34 @@ class SignalConnectionTest {
         assertTrue(events.errors.isEmpty())
     }
 
+    /*
+      被顶号与「票不好使」是两种相反的处置：一个回登录页，一个悄悄换票重来。
+      分不开的话宿主只能都当登录失效，把本可静默恢复的场景也变成「请重新登录」。
+    */
+    @Test
+    fun `被踢的两种原因分得开`() {
+        connect()
+        transport.closed(IMCloseCode.KICKED.code, "elsewhere")
+        assertEquals(listOf(IMKickedOutReason.TAKEN_OVER), events.kickReasons)
+    }
+
+    @Test
+    fun `4401 用尽报的是 AUTH_EXPIRED 而不是被顶号`() {
+        connect()
+        repeat(3) {
+            transport.closed(IMCloseCode.UNAUTHORIZED.code, "bad token")
+            scheduler.advance(60_000)
+        }
+        assertEquals(listOf(IMKickedOutReason.AUTH_EXPIRED), events.kickReasons)
+    }
+
     private class RecordingEvents : IMSignalConnection.Events {
         val connected = mutableListOf<Pair<String, Boolean>>()
         val frames = mutableListOf<Pair<String, Map<String, IMJson>>>()
         val errors = mutableListOf<Pair<IMErrorCode, String>>()
         var kickedOut = 0
+        val kickReasons = mutableListOf<IMKickedOutReason>()
+        val tokenWarnings = mutableListOf<Long>()
         var disconnects = 0
 
         override fun onConnected(sessionId: String, resumed: Boolean) {
@@ -209,8 +233,13 @@ class SignalConnectionTest {
             frames += type to data
         }
 
-        override fun onKickedOut() {
+        override fun onKickedOut(reason: IMKickedOutReason) {
             kickedOut++
+            kickReasons += reason
+        }
+
+        override fun onTokenWillExpire(expiresAtMs: Long) {
+            tokenWarnings += expiresAtMs
         }
 
         override fun onError(code: IMErrorCode, message: String) {

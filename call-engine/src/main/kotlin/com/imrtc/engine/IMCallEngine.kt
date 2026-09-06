@@ -103,7 +103,9 @@ class IMCallEngine private constructor(
      * **push 不 pull**：Engine 不去宿主的账号体系要票。语义四端一致——
      * **下一次重连生效，不打断当前连接**。
      */
-    fun updateToken(token: String) = scheduler.post { connection.updateToken(token) }
+    @JvmOverloads
+    fun updateToken(token: String, expiresAtMs: Long = 0L) =
+        scheduler.post { connection.updateToken(token, expiresAtMs) }
 
     /** 登出并释放连接。**之后可以再 login。** */
     fun logout() = scheduler.post {
@@ -425,7 +427,15 @@ class IMCallEngine private constructor(
             input(IMMachineInput.Recv(type, data))
         }
 
-        override fun onKickedOut() = input(IMMachineInput.Internal("ws_closed_4403"))
+        override fun onKickedOut(reason: IMKickedOutReason) {
+            // 状态机只认「被踢了」这一件事；原因是给宿主做处置判断的，两者分开走
+            // （dispatcher 里刻意不派发状态机那份 onKickedOut）。
+            input(IMMachineInput.Internal("ws_closed_4403"))
+            dispatcher.kickedOut(reason)
+        }
+
+        override fun onTokenWillExpire(expiresAtMs: Long) =
+            dispatcher.tokenWillExpire(expiresAtMs)
 
         override fun onError(code: IMErrorCode, message: String) =
             dispatcher.error(code.code, message)

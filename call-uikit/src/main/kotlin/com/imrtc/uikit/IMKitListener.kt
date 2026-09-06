@@ -1,5 +1,6 @@
 package com.imrtc.uikit
 
+import com.imrtc.engine.IMKickedOutReason
 import com.imrtc.engine.IMCallEngineListener
 import com.imrtc.engine.IMNetworkQuality
 import com.imrtc.engine.IMSpeaker
@@ -26,9 +27,15 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         host.onDisconnected(code, reason)
     }
 
-    override fun onKickedOut() {
+    override fun onKickedOut(reason: IMKickedOutReason) {
         IMCallKit.update(IMCallViewReducer.connection(state, IMCallViewState.Connection.LOST))
-        host.onKickedOut()
+        host.onKickedOut(reason)
+    }
+
+    override fun onTokenWillExpire(expiresAtMs: Long) {
+        // Kit 对票期没有界面表达——换票是宿主的事（票从宿主的账号体系来）。
+        // 这里只做透传，不吞掉：吞了的话用 Kit 的宿主就收不到这个回调了。
+        host.onTokenWillExpire(expiresAtMs)
     }
 
     /** 加人的两条失败分支（交互稿 §05）：满员出提示；非主叫把入口藏掉。别的错误码由宿主处理。 */

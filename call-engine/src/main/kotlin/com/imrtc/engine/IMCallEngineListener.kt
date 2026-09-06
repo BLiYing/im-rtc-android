@@ -28,7 +28,19 @@ interface IMCallEngineListener {
      * 两种情况会抛：同账号同设备号在别处登录（4403）；**连续三次鉴权失败**
      * （票过期了而宿主没换新票）。
      */
-    fun onKickedOut() {}
+    fun onKickedOut(reason: IMKickedOutReason) {}
+
+    /**
+     * 当前这张票快到期了（默认到期前 60s），宿主该去取新票并 [IMCallEngine.updateToken]。
+     *
+     * **不处理也不会立刻出事**——服务端不复查活连接，票过期不断线。但下一次重连
+     * （切基站、NAT 超时、切后台回来）会撞上 4401，用户被踢回登录页。
+     * 这个回调就是把那次「必然发生但时间不定」的掉线消灭在发生之前。
+     *
+     * 服务端说「未知」（`token_expires_at_ms` 为 0）时**不会触发**，
+     * 此时退化成被动行为，是刻意降级不是故障。
+     */
+    fun onTokenWillExpire(expiresAtMs: Long) {}
 
     /** 任意内部错误。`code` 取自五仓共用的错误码表；`message` 是英文短语，**别直接显示给用户**。 */
     fun onError(code: Int, message: String) {}

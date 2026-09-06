@@ -27,14 +27,18 @@ internal class DemoApi(private val baseUrl: String) {
         .readTimeout(5, TimeUnit.SECONDS)
         .build()
 
-    data class LoginResult(val token: String, val uid: String)
+    data class LoginResult(val token: String, val uid: String, val expiresAtMs: Long = 0L)
 
     data class RoomResult(val roomId: String, val roomToken: String)
 
     @Throws(IOException::class)
     fun demoLogin(username: String): LoginResult {
         val json = post("/v1/demo/login", null, JSONObject().put("username", username))
-        return LoginResult(json.optString("token"), json.optString("uid", username))
+        // expires_in_sec 是 /v1/demo/login 与 /v1/tokens 都会回的字段；
+        // 换算成绝对时刻交给 updateToken，Engine 就能重新武装到期提醒。
+        val expiresInSec = json.optLong("expires_in_sec", 0L)
+        val expiresAtMs = if (expiresInSec > 0L) System.currentTimeMillis() + expiresInSec * 1000 else 0L
+        return LoginResult(json.optString("token"), json.optString("uid", username), expiresAtMs)
     }
 
     /**
