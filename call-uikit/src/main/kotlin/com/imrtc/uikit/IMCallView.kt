@@ -304,11 +304,22 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         }
     }
 
-    /** 摆一排按钮：等宽平分，同一排的按钮无论几个都对齐。内容没变就不重建（重建会打断按下动效）。 */
+    /**
+     * 摆一排按钮：等宽平分，同一排的按钮无论几个都对齐。内容没变就不重建（重建会打断按下动效）。
+     *
+     * **占位格的高度必须写死 0**：裸 `View` 用 `wrap_content` 量出来的不是 0——
+     * `View.getDefaultSize` 对 `AT_MOST` 直接返回 specSize，也就是**整块可用高度**。
+     * 它一撑，下排跟着高到整屏，`controls` 这个 `wrap_content` 的容器再一撑，
+     * 贴底的重力就没有意义了：两排按钮整体被顶到屏幕最上面，压在标题栏和状态栏上。
+     * 真机上就是这个样子（v3.3 修）。
+     */
     private fun fillRow(row: LinearLayout, wanted: List<View>) {
         if ((0 until row.childCount).map { row.getChildAt(it) } == wanted) return
         row.removeAllViews()
-        wanted.forEach { row.addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
+        wanted.forEach {
+            val height = if (it === spacer) 0 else LinearLayout.LayoutParams.WRAP_CONTENT
+            row.addView(it, LinearLayout.LayoutParams(0, height, 1f))
+        }
         row.visibility = if (wanted.isEmpty()) GONE else VISIBLE
     }
 
