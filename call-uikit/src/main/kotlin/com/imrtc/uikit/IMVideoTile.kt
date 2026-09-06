@@ -80,14 +80,48 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         border.setColor(android.graphics.Color.TRANSPARENT)
     }
 
-    /** 挂渲染器。传 null 卸载。`overlay` 为真时让 SurfaceView 浮在别的 SurfaceView 之上（小窗压在全屏画面上）。 */
+    /** 当前挂着的渲染器是不是「压在别人上面」那一层。换角色时要重挂一次，见 [setVideoView]。 */
+    private var overlayApplied = false
+
+    /**
+     * 挂渲染器。传 null 卸载。`overlay` 为真时让 SurfaceView 浮在别的 SurfaceView 之上
+     * （小窗压在全屏画面上——两个 SurfaceView 叠放时谁在上面是不定的）。
+     *
+     * **角色变了必须摘下来重挂。** `setZOrderMediaOverlay` 只在 Surface 创建之前有效，
+     * 对着已经挂好的 View 再调一次是没有作用的。A/B 互换恰恰会让两个渲染器交换角色：
+     * 原先「已经挂着同一个 view 就直接返回」，于是互换之后进小窗的那一路还是压在下面，
+     * 被全屏那一路整个盖住——真机上的症状是「点了互换，小窗里什么都没有」。
+     * 摘下来再加回去会重建 Surface，新的层次才生效（只有互换时才发生，画面闪一下可以接受）。
+     */
     fun setVideoView(view: View?, overlay: Boolean = false) {
-        if (videoHost.childCount == 1 && videoHost.getChildAt(0) === view) return
+        val current = videoHost.getChildAt(0)
+        if (current === view && overlayApplied == overlay) return
         videoHost.removeAllViews()
-        if (view == null) return
+        if (view == null) {
+            overlayApplied = false
+            return
+        }
         (view.parent as? FrameLayout)?.removeView(view)
         (view as? SurfaceView)?.setZOrderMediaOverlay(overlay)
+        overlayApplied = overlay
         videoHost.addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    /**
+     * 圆角 + 底色**只有九宫格里的格子要**。
+     *
+     * 全屏与小窗的外形由容器负责：**`clipToOutline` 对 SurfaceView 不起作用**
+     * （它是独立的 Surface，由窗口管理器合成，应用画不到它上面），
+     * 格子自己再画一层 10dp 圆角底，就会在小窗那 12dp 的圆角框里露出一圈方角，
+     * 看着像小窗上多了个透明方块。
+     */
+    fun setRounded(rounded: Boolean) {
+        clipToOutline = rounded
+        background = if (rounded) {
+            IMKitTheme.roundedDrawable(IMKitTheme.tileBackground, dp(IMKitTheme.TILE_RADIUS_DP))
+        } else {
+            null
+        }
     }
 
     fun apply(

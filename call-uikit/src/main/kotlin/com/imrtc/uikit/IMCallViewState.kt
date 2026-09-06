@@ -260,9 +260,15 @@ internal object IMCallViewReducer {
         if (state.phase == IMCallViewState.Phase.CONNECTED) state.copy(durationSec = state.durationSec + 1) else state
 
     /** 结束。**顺手把小窗展开**：结束原因要让用户看见，藏在一个小球里等于没提示。 */
-    fun ended(state: IMCallViewState, reason: String) = state.copy(
+    /**
+     * @param durationSec 通话时长，**由服务端给**（`call.ended.duration_sec`）。
+     *   不变量 I8：四端禁止自己算时长（时钟对不齐）。传 -1 表示「沿用本地计时」——
+     *   会议房没有 `call.ended`，那一条只能靠本地的计数器。
+     */
+    fun ended(state: IMCallViewState, reason: String, durationSec: Long = -1) = state.copy(
         phase = IMCallViewState.Phase.ENDED,
         endReason = reason,
+        durationSec = if (durationSec >= 0) durationSec else state.durationSec,
         speakingUid = "",
         isMinimized = false,
         hint = "",

@@ -19,7 +19,7 @@ import android.widget.TextView
  * 「离开这一屏」的手势位，用户第一反应就是往那儿点。
  */
 internal class IMCallHeader(context: Context) : FrameLayout(context) {
-    val minimizeButton = roundButton(IMKitIcon.MINIMIZE, "收进小窗")
+    val minimizeButton = roundButton(IMKitIcon.PIP, "收进小窗")
     val inviteButton = roundButton(IMKitIcon.PERSON_ADD, "添加成员")
     private val title = TextView(context)
     private val subtitle = TextView(context)
@@ -152,11 +152,27 @@ internal class IMAudioStage(context: Context) : FrameLayout(context) {
         addView(column, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
     }
 
-    fun apply(uid: String, nameText: String, statusText: String, isRinging: Boolean, networkLevel: Int) {
+    /**
+     * @param showsCaption 名字与状态这一行要不要显示。
+     *
+     * **接通之后不显示**：那时候标题栏里已经是「对方名字 + 计时器」，中间再写一遍
+     * 就是同一句话在一屏里出现两次，还各走各的计时。呼叫中 / 来电页的标题栏是空的，
+     * 名字与状态只在那两屏出现。
+     */
+    fun apply(
+        uid: String,
+        nameText: String,
+        statusText: String,
+        isRinging: Boolean,
+        networkLevel: Int,
+        showsCaption: Boolean = true,
+    ) {
         avatar.text = IMAvatar.initial(nameText)
         avatar.background = IMKitTheme.avatarDrawable(uid.ifEmpty { nameText })
         name.text = nameText
         status.text = statusText
+        name.visibility = if (showsCaption) View.VISIBLE else View.GONE
+        status.visibility = if (showsCaption) View.VISIBLE else View.GONE
         netChip.visibility = if (networkLevel > 0) View.VISIBLE else View.GONE
         netBars.level = networkLevel
         netText.text = IMCallViewState.networkText(networkLevel)

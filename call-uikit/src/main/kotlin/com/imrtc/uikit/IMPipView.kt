@@ -49,12 +49,20 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
     private val enterDrag = Runnable { beginDrag() }
 
     init {
-        background = IMKitTheme.roundedDrawable(IMKitTheme.tileBackground, dp(IMKitTheme.PIP_RADIUS_DP))
-        foreground = IMKitTheme.roundedDrawable(android.graphics.Color.TRANSPARENT, dp(IMKitTheme.PIP_RADIUS_DP)).apply {
+        /*
+         **直角，不做圆角。**
+
+         小窗里装的是 `SurfaceViewRenderer`——它是独立的 Surface，由窗口管理器合成，
+         `clipToOutline` 管不到它。画一个 12dp 的圆角框，画面照样是方的，
+         于是框的四个角外面各露出一块方角，看着就是「小窗上多了个透明方块」。
+         iOS 那边用的是 Metal 视图（就是普通的 layer），圆角是真圆得了的——
+         这是平台差异，不是没对齐。
+        */
+        background = IMKitTheme.roundedDrawable(IMKitTheme.tileBackground, 0)
+        foreground = IMKitTheme.roundedDrawable(android.graphics.Color.TRANSPARENT, 0).apply {
             setStroke((1.5f * density).toInt(), 0x8CFFFFFF.toInt())
         }
         elevation = dp(10).toFloat()
-        clipToOutline = true
         contentDescription = "本端画面。轻点互换，长按可移动"
     }
 

@@ -136,6 +136,8 @@ internal enum class IMKitIcon(val resId: Int) {
     PHONE_DOWN(R.drawable.ic_im_phone_down),
     XMARK(R.drawable.ic_im_xmark),
     MINIMIZE(R.drawable.ic_im_minimize),
+    /** 收进小窗。**画中画字形**（外框 + 右下角一个实心小窗）——双向箭头那一版在真机上被认成「全屏」。 */
+    PIP(R.drawable.ic_im_pip),
     EXPAND(R.drawable.ic_im_expand),
     SPEAKER(R.drawable.ic_im_speaker),
     SPEAKER_SLASH(R.drawable.ic_im_speaker_slash),

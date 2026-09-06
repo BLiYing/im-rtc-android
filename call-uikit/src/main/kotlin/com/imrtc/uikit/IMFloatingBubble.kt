@@ -22,11 +22,15 @@ import android.widget.TextView
  *
  * 拖完吸附到最近的左右边缘；位移超过 `touchSlop` 才算拖，否则松手当点击。
  *
- * **底部居中恒有一颗 28 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
+ * **球体下面挂一颗 28 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
  * 而「随手挂掉」正是小窗最常用的一件事。红色是危险动作的唯一颜色（规范 §01 danger）。
  *
- * 位置在底部居中而不是右上角：球会吸到屏幕左右边缘，右上角那一版有一半贴着边框，
- * 拇指够过去十次有三次点不中。与 iOS 的 `IMFloatingBubble` 同一处位置。
+ * # 为什么本体是「容器 + 球 + 挂断」三层
+ *
+ * 球自己要 `clipToOutline` 才能把视频裁成圆角，而**被裁掉的正好是挂断那一颗**——
+ * 放在球内底部会被圆形轮廓切掉大半，放在球外又超出父视图的边界（Android 不给
+ * 边界外的子视图派发触摸）。所以本类是一个**透明容器**：球在上、挂断在下，
+ * 两个都在容器边界内，拖动时整块一起走。
  */
 internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
 
@@ -36,6 +40,8 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
     /** 视频形态下远端缩略画面放这里。 */
     val videoHost = FrameLayout(context)
 
+    /** 球体本身（圆形 / 圆角矩形）。裁剪、底色、视频都在它身上，挂断在它外面。 */
+    private val body = FrameLayout(context)
     private val icon = ImageView(context)
     private val hangup = android.widget.ImageButton(context)
     private val duration = TextView(context)
@@ -48,10 +54,14 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
     private var isVideo = false
 
     init {
-        background = IMKitTheme.circleDrawable(IMKitTheme.bannerBackground)
-        elevation = dp(10).toFloat()
-        clipToOutline = true
-        addView(videoHost, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        body.background = IMKitTheme.circleDrawable(IMKitTheme.bannerBackground)
+        body.elevation = dp(10).toFloat()
+        body.clipToOutline = true
+        addView(
+            body,
+            LayoutParams(dp(IMKitTheme.BUBBLE_SIZE_DP), dp(IMKitTheme.BUBBLE_SIZE_DP), Gravity.TOP or Gravity.CENTER_HORIZONTAL),
+        )
+        body.addView(videoHost, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         videoHost.visibility = GONE
         icon.setColorFilter(IMKitTheme.primaryText)
         val column = android.widget.LinearLayout(context).apply {
@@ -63,20 +73,17 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
             duration.setTextColor(IMKitTheme.primaryText)
             addView(duration)
         }
-        addView(column, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        body.addView(column, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+
         hangup.setImageResource(IMKitIcon.PHONE_DOWN.resId)
         hangup.setColorFilter(IMKitTheme.primaryText)
         hangup.background = IMKitTheme.circleDrawable(IMKitTheme.hangup)
         hangup.contentDescription = "挂断"
         hangup.setPadding(dp(6), dp(6), dp(6), dp(6))
         hangup.scaleType = ImageView.ScaleType.FIT_CENTER
+        hangup.elevation = dp(10).toFloat()
         hangup.setOnClickListener { onHangup?.invoke() }
-        // 贴在球体底部**内侧**：球自己 clipToOutline，探到外面去会被裁掉。
-        addView(
-            hangup,
-            LayoutParams(dp(HANGUP_DP), dp(HANGUP_DP), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-                .apply { bottomMargin = dp(2) },
-        )
+        addView(hangup, LayoutParams(dp(HANGUP_DP), dp(HANGUP_DP), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         contentDescription = "通话中，点击展开"
     }
 
@@ -91,9 +98,13 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
         val video = view != null
         if (video != isVideo) {
             isVideo = video
-            background = if (video) IMKitTheme.roundedDrawable(IMKitTheme.bannerBackground, dp(14)) else IMKitTheme.circleDrawable(IMKitTheme.bannerBackground)
+            body.background = if (video) IMKitTheme.roundedDrawable(IMKitTheme.bannerBackground, dp(14)) else IMKitTheme.circleDrawable(IMKitTheme.bannerBackground)
             icon.visibility = if (video) GONE else VISIBLE
-            val size = if (video) LayoutParams(dp(IMKitTheme.BUBBLE_VIDEO_W_DP), dp(IMKitTheme.BUBBLE_VIDEO_H_DP)) else LayoutParams(dp(IMKitTheme.BUBBLE_SIZE_DP), dp(IMKitTheme.BUBBLE_SIZE_DP))
+            val bodyW = dp(if (video) IMKitTheme.BUBBLE_VIDEO_W_DP else IMKitTheme.BUBBLE_SIZE_DP)
+            val bodyH = dp(if (video) IMKitTheme.BUBBLE_VIDEO_H_DP else IMKitTheme.BUBBLE_SIZE_DP)
+            body.layoutParams = LayoutParams(bodyW, bodyH, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+            // 容器 = 球 + 间隙 + 挂断，整块一起拖。
+            val size = LayoutParams(bodyW, bodyH + dp(HANGUP_GAP_DP) + dp(HANGUP_DP))
             (layoutParams as? LayoutParams)?.let { size.gravity = it.gravity; size.setMargins(it.leftMargin, it.topMargin, it.rightMargin, it.bottomMargin) }
             layoutParams = size
             // 视频形态：时长挪到右下角的小标签里。
@@ -171,11 +182,15 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
         /** 挂断按钮的直径。28 是「拇指够得着」的下限（规范 §04 的小控件尺寸）。 */
         private const val HANGUP_DP = 28
 
+        /** 球体与挂断之间的间隙。 */
+        private const val HANGUP_GAP_DP = 4
+
         /** 初始位置：右上角靠下一点，避开状态栏与常见的顶部导航。 */
         fun initialParams(context: Context): FrameLayout.LayoutParams {
             val density = context.resources.displayMetrics.density
             val size = (IMKitTheme.BUBBLE_SIZE_DP * density).toInt()
-            return FrameLayout.LayoutParams(size, size).apply {
+            val height = size + ((HANGUP_GAP_DP + HANGUP_DP) * density).toInt()
+            return FrameLayout.LayoutParams(size, height).apply {
                 gravity = Gravity.TOP or Gravity.END
                 marginEnd = (8 * density).toInt()
                 topMargin = (120 * density).toInt()

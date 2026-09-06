@@ -138,4 +138,39 @@ class KitRulesTest {
         assertEquals("网络很差", IMCallViewState.networkText(5))
         assertEquals("邀请你加入群通话", IMCallViewReducer.incoming(IMCallViewState(), "c", "a", emptyList(), "video", true).statusText)
     }
+
+    /**
+     * 结束画面的两条：**提示要清掉**、**时长用服务端给的那个**。
+     *
+     * 提示不清的话，结束画面上写的是刚刚那句「bob 已拒接」而不是结束原因「对方已拒接」——
+     * 同一个结局在 iOS 与 Android 上写着不一样的话。
+     */
+    @Test
+    fun `结束时清掉提示，时长用服务端给的`() {
+        var state = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
+        state = IMCallViewReducer.hint(state, "bob 已拒接")
+        assertEquals("bob 已拒接", state.hint)
+        state = IMCallViewReducer.ended(state, "reject", 0)
+        assertEquals("", state.hint)
+        assertEquals("对方已拒接", state.statusText)
+
+        var call = IMCallViewReducer.connected(IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false))
+        call = IMCallViewReducer.ended(call, "hangup", 201)
+        assertEquals("通话结束 · 03:21", call.statusText)
+    }
+
+    /** 与 iOS 的 `imEndReasonText` / Web 的 `endReasonText` 逐字对齐——漏一条就是两端写着不一样的话。 */
+    @Test
+    fun `每种结束原因都有自己那句话`() {
+        val table = mapOf(
+            "cancel" to "已取消", "reject" to "对方已拒接", "busy" to "对方忙线中",
+            "no_answer" to "对方无人接听", "offline" to "对方当前不在线", "network" to "网络中断",
+            "answered_elsewhere" to "已在其他设备接听", "rejected_elsewhere" to "已在其他设备拒绝",
+            "room_closed" to "房间已解散", "kicked" to "已被移出",
+        )
+        for ((reason, want) in table) {
+            assertEquals(reason, want, IMCallViewState.endReasonText(reason, "caller", 0))
+        }
+        assertEquals("已结束", IMCallViewState.endReasonText("什么鬼", "caller", 0))
+    }
 }

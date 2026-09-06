@@ -271,8 +271,13 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
     private fun renderAudio(state: IMCallViewState, hasLocalVideo: Boolean) {
         val peer = state.members.values.firstOrNull()
-        audioStage.apply(state.peer, state.peer.ifEmpty { peer?.uid ?: "通话中" }, state.statusText,
-            isRinging = state.phase == IMCallViewState.Phase.OUTGOING, networkLevel = peer?.networkLevel ?: 0)
+        audioStage.apply(
+            state.peer, state.peer.ifEmpty { peer?.uid ?: "通话中" }, state.statusText,
+            isRinging = state.phase == IMCallViewState.Phase.OUTGOING,
+            networkLevel = peer?.networkLevel ?: 0,
+            // 接通之后名字与时长归标题栏，中间只留头像——两处各走各的计时是重复也是打架。
+            showsCaption = state.phase != IMCallViewState.Phase.CONNECTED,
+        )
         unpinFull()
         retireTiles(emptySet())
         // 拨出视频时右上角叠本端预览（草图 §03-E：拨出时看得见自己）。
@@ -312,8 +317,10 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         applySelf(state, actions?.hasLocalVideo() ?: false, 44)
         val ordered = ArrayList<View>()
         ordered += selfTile
+        selfTile.setRounded(true)
         for (m in members) {
             val tile = tiles.getOrPut(m.uid) { IMVideoTile(context) }
+            tile.setRounded(true)
             tile.setVideoView(if (m.video) actions?.videoViewFor(m.uid) else null)
             tile.apply(m.uid, m.uid, m.video, m.audio, state.speakingUid == m.uid,
                 isRinging = !m.accepted, settled = m.settled, networkLevel = m.networkLevel)
@@ -377,6 +384,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     }
 
     private fun mountInPip(tile: IMVideoTile) {
+        // 外形由小窗容器负责——格子自己再画一层圆角底，会在小窗的框里露出一圈方角。
+        tile.setRounded(false)
         if (pip.childCount == 1 && pip.getChildAt(0) === tile) return
         pip.removeAllViews()
         (tile.parent as? android.view.ViewGroup)?.removeView(tile)
@@ -388,15 +397,12 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         unpinFull()
         (tile.parent as? android.view.ViewGroup)?.removeView(tile)
         videoFull.addView(tile, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        tile.background = null
+        tile.setRounded(false)
         fullTile = tile
     }
 
     private fun unpinFull() {
-        fullTile?.let {
-            videoFull.removeView(it)
-            it.background = IMKitTheme.roundedDrawable(IMKitTheme.tileBackground, dp(IMKitTheme.TILE_RADIUS_DP))
-        }
+        fullTile?.let { videoFull.removeView(it) }
         fullTile = null
     }
 

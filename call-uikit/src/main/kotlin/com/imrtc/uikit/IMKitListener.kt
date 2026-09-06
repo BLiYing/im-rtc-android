@@ -79,7 +79,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         if (state.phase == IMCallViewState.Phase.INCOMING) {
             IMCallKit.update(IMCallViewReducer.reset())
         } else {
-            IMCallKit.update(IMCallViewReducer.ended(state, reason))
+            IMCallKit.update(IMCallViewReducer.ended(state, reason, durationSec))
             // 停一会让用户看清结束原因再收场。**说不清原因的那几种要停久一点**（与 iOS / Web 同一张表）。
             val hold = if (reason == "hangup" || reason == "cancel") 1_500L else 3_000L
             IMCallKit.main.postDelayed({ if (state.phase == IMCallViewState.Phase.ENDED) IMCallKit.update(IMCallViewReducer.reset()) }, hold)
@@ -156,6 +156,14 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         // 这里把它关回去——**用户表示不出镜，指示灯就不该亮**。
         if (state.mediaType == "video" && !state.cameraOn) IMCallKit.engine?.closeCamera()
         if (!state.micOn) IMCallKit.engine?.closeMic()
+        /*
+         **把「视频通话默认外放」真的应用到音频路由上。**
+
+         `speakerOn` 一直只是个界面开关：视图状态里写着 true、按钮也是亮的，
+         可 `engine.setSpeakerOn` 从来没被调用过——声音还是从听筒出来，
+         举着手机看画面的人根本听不见。iOS 在同一处（`onRoomJoined`）就是这么做的。
+        */
+        IMCallKit.engine?.setSpeakerOn(state.speakerOn)
         IMCallKit.onLocalMediaStarted()
         host.onRoomJoined(roomId)
     }
