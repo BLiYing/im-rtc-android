@@ -72,14 +72,17 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
 
         bottomRow.orientation = LinearLayout.HORIZONTAL
         bottomRow.gravity = Gravity.CENTER_VERTICAL
-        bottomRow.addView(namePlate, LinearLayout.LayoutParams(0, dp(20), 1f))
+        // **名字牌只包住文字**：给它权重的话，「我」两个像素宽的名字会拖着一条
+        // 横贯整格的深色底板（与 iOS 的名字牌完全不是一个样子）。太长时靠
+        // onSizeChanged 里算出来的 maxWidth 截断，不会把静音角标顶出格子。
+        bottomRow.addView(namePlate, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(20)))
         bottomRow.addView(
             mutedPlate,
             LinearLayout.LayoutParams(dp(20), dp(20)).apply { leftMargin = dp(4) },
         )
         addView(
             bottomRow,
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
                 setMargins(dp(PLATE_INSET_DP), 0, dp(PLATE_INSET_DP), dp(PLATE_INSET_DP))
             },
         )
@@ -184,6 +187,17 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         alpha = if (isRinging) 0.55f else 1f
         ringingLabel.visibility = if (isRinging) VISIBLE else GONE
         ringingLabel.text = if (settled == IMCallViewState.Settled.NONE) "呼叫中…" else IMCallViewState.settledText(settled)
+    }
+
+    /**
+     * 名字最多占多宽。
+     *
+     * 格子多宽只有量出来才知道，所以在这里算：整格宽减掉两侧留白、静音角标与那 4dp 间隙。
+     * 不设上限的话，长名字会把静音角标一路顶出格子外。
+     */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        namePlate.maxWidth = (w - dp(PLATE_INSET_DP) * 2 - dp(20) - dp(4)).coerceAtLeast(dp(24))
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

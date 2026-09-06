@@ -317,6 +317,10 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         if ((0 until row.childCount).map { row.getChildAt(it) } == wanted) return
         row.removeAllViews()
         wanted.forEach {
+            // **先脱离原来那一排**：摄像头开关来电时在下排、接通后在上排，
+            // 而 addView 遇到「已经有父容器」的 View 会直接抛 IllegalStateException——
+            // 真机上就是「点接听，通话页当场闪退」（v3.3 修）。
+            (it.parent as? android.view.ViewGroup)?.removeView(it)
             val height = if (it === spacer) 0 else LinearLayout.LayoutParams.WRAP_CONTENT
             row.addView(it, LinearLayout.LayoutParams(0, height, 1f))
         }
