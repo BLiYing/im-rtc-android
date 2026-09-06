@@ -10,45 +10,41 @@
 
 ## 当前焦点
 
-**按三端真机联调日志（2026-09-06 08:00–08:50）修根因**，`./scripts/test.sh` 六步全绿。
-**真机仍未验**：下面每一条都是「编得过 + 纯逻辑有单测」。
+**Android 的视频通路已在真机（OPPO PKD130）上跑通并逐条验过**（2026-09-06）：
+远端画面、本端预览、全屏铺满、小窗吸右上角、拨出中就看得见自己。
+`./scripts/test.sh` 六步全绿。
 
-**「Android 一路没有视频」是两个独立的媒体层 bug**，服务端日志把它们分得很清楚：
+「Android 一格画面都不出」前后一共**四个独立根因**，前两个是上一轮修的媒体通路，
+后两个是这一轮真机才炸出来的渲染层：
 
-| 方向 | 症状 | 根因 |
+| # | 症状 | 根因 |
 |---|---|---|
-| 上行 | 别人**一格画面都没有、也听不见声音**；服务端日志里只有一行 DEBUG「上行 Track 先于 room.publish 到达，先攒着」，之后再无下文 | 本端 Track 的 id 是 `"audio-$cid"` / `"video-$cid"`，而服务端按 **msid 第二段（= track id）** 认领 m-line（协议 §3.2）。改成 track id 就是 `cid` |
-| 下行 | 协商全通、`auto_subscribed` 也对，**却一格画面都不出** | `onAddTrack` 里拿 **stream id** 当 uid，而服务端给所有下行轨道用的是同一个常量 stream（`im-rtc`）——所有人共用一把钥匙。补 `IMMediaAdapter.claimRemoteTracks`（iOS / Web 早就有），轨道按 track_id 收着、归属到了再挂 |
-| 本端预览 | 拨出中的小窗是空的 | `startLocalPreview` 早于 `publish` 时永远接不上采集轨道；publish 里补挂一次 |
+| 1 | 别人看不见我、也听不见我 | 本端 Track 的 id 是 `"audio-$cid"`，而服务端按 msid 第二段（= track id）认领 m-line（协议 §3.2） |
+| 2 | 协商全通却一格不出 | `onAddTrack` 拿 **stream id** 当 uid，而服务端给所有下行轨道用同一个常量 stream（`im-rtc`）。补了 `claimRemoteTracks` |
+| 3 | **自己和别人的画面都不出** | `SurfaceViewRenderer.init` 头一行是 `ThreadUtils.checkIsOnMainThread()`，而 Engine 的方法跑在自己那条单线程上，`IMExecutorScheduler` 又把异常吞掉记一行日志——**渲染器一次都没初始化成功** |
+| 4 | 只有本端预览不出 | `onLocalMediaStarted` 要拿前台 Activity，而通话页一起来宿主那个就 pause 了，`IMActivityTracker.foreground()` 刻意不认自己家的通话页 → 返回 null → `startLocalPreview` **一次都没被调用过** |
 
-**界面（与 iOS / Web 同一份稿 v3.1）**：
+这一轮还做了：
 
-| 症状 | 落点 |
+| 项 | 落点 |
 |---|---|
-| 通话中第三个人打进来会把当前通话拆掉 | `CallStateMachineRecv.isForAnotherCall` + 新回调 `onCallMissed` |
-| 群通话里被叫只看到两格 | `call.incoming.callee_ids` 上抛 → `IMCallViewReducer.incoming` 摆占位格 |
-| 九宫格与 iOS 不是一个样子（竖屏两人是两条细长条） | `GridLayout.spec` **不能带权重**——带了的话算出来的正方形边长当场被摊没；整块 `Gravity.CENTER` 居中；容器量出来之后 `onLayout` 补摆一次 |
-| 标题压在状态栏的时间电量上 | Activity 全屏边到边（不引 androidx）+ `IMCallView.onApplyWindowInsets` 让开系统栏 |
-| 画中画上的「静音」点了不生效 | 去掉那个 `RemoteAction`，只留挂断 |
-| 小窗没法直接挂断 | 悬浮球右上角加一颗 22 的红色挂断 |
-| 两端都关摄像头时小窗消失 / 小窗入口两处 / 呼叫页标题重复 | 与 iOS / Web 同一批改法 |
-
-**上一轮（2026-09-06 早些时候）**：UIKit 按设计稿 v3 落地——19 个由稿里同一份路径生成的
-VectorDrawable、权限门（多「再劝一次」那一屏）、系统画中画、返回键收小窗、选人 Dialog。
+| **只采集不发布**（拨出中就看得见自己） | 预览与推流共用一个 source、两条 track（推流那条 id 必须是 cid，而 cid 要进房才生成）。接采集前先查 CAMERA 权限，不然会抢在权限门前面开摄像头 |
+| **切后台自动暂停本端视频** | `IMActivityTracker` 数 started 的 Activity；进系统画中画不算切后台。回前台恢复到用户原来的选择（与 iOS 同一条规则） |
+| **全屏画面真的铺满整屏** | 画面挂在根布局最底下一层（`videoFull`），头部与控制条浮在上面；inset 只让开壳、不让开画面 |
+| **1v1 不做发言高亮** | 绿描边 + 绿名牌只留给九宫格 |
+| 小窗吸角 | **容器没量出来时不吸**——算出来的「右上角」会退化成 x=0，正好压住左上角那颗「小窗」按钮 |
+| 悬浮球红键 | 挪到**底部居中**（球吸到边上时右上角那颗有一半在屏幕外） |
+| 系统画中画那颗叉 | 删不掉（系统画的），定成**「收起」不是「挂断」**：通话继续，回宿主界面变悬浮球 |
 
 ## 下一步
 
-- **真机验收本轮的每一条**（清单见交互稿 **v3.1 §09 的 22 条**，Android 还要加 §08 的六条）：
-  **先验「视频到底通没通」**（本轮两个根因都在媒体层，纯 JVM 单测碰不到），再验权限说明卡 /
-  再劝一次 / 去设置、系统画中画进出与挂断动作、返回键收小窗、小窗长按拖动 / 互换、
-  加号格与选人、占位格终局、切后台、全屏与状态栏避让。
+- **真机验收剩下的那些**（清单见交互稿 **v3.1 §09 的 25 条**，Android 还要加 §08 的六条）：
+  视频通路 / 全屏 / 小窗吸角 / 拨出中预览**已验**；还没验的是权限说明卡与「再劝一次」
+  （本机权限早就授过，要 `adb shell pm revoke com.imrtc.demo android.permission.CAMERA` 再走一遍）、
+  系统画中画进出与那颗叉、返回键收小窗、小窗长按拖动 / 互换、加号格与选人、占位格终局、
+  切后台暂停视频、九宫格三人以上。
   首台验收机是 OPPO PKD130（ColorOS，后台限制最严的那一类）。
-- **本端预览仍要等进房发布之后才有画面**（Engine 在进房时才起采集）：拨出中右上角的小窗是空的。
-  本轮修的是「publish 之后预览接不上」，**「拨出时就看见自己」还得给 Engine 加
-  「只采集不发布」的路径**，属媒体层一刀。
-- **切后台自动暂停本端视频**（交互稿 §03）Android 侧还没做：进画中画时采集照跑；不在画中画而切后台的场景要补
-  `closeCamera` / 回前台恢复。
-- 悬浮球拖到底部 = 挂断（交互稿 M2）没做；全屏来电 `fullScreenIntent`（差异 5）属推送阶段，MVP 不做。
+- 悬浮球拖到底部 = 挂断（交互稿 M2）**拍板不做**；全屏来电 `fullScreenIntent`（差异 5）属推送阶段，MVP 不做。
 - 「只引 Engine 自画 UI」的示范、日志回传汇入时间轴仍是 ⬜（见 CLIENT_PARITY）。
 
 ## 已知坑 / 限制
@@ -62,6 +58,15 @@ VectorDrawable、权限门（多「再劝一次」那一屏）、系统画中画
 - **远端轨道按 track_id 认领，不能按 stream id**：服务端给所有下行轨道用的是同一个常量 stream。
   归属由信令层通过 `claimRemoteTracks` 灌进来，轨道 / 归属 / 渲染器**三者到达顺序完全不定**，
   统一在 `bindRemoteTracks` 里判重与换绑。
+- **`SurfaceViewRenderer` 的 `init` / `setEnableHardwareScaler` / `setScalingType` 只能在主线程调**
+  （头一行就是 `ThreadUtils.checkIsOnMainThread()`）。Engine 的方法在自己那条单线程上跑，
+  而调度器会把异常吞掉——**渲染器初始化失败是没有声音的**，症状只有「画面全黑」。
+  渲染相关的一切（含轨道 / 归属 / 渲染器三张表）统一在 `IMWebRTCAdapter.onMain` 里。
+- **`IMActivityTracker.foreground()` 拿不到通话页**（它刻意不认 `IMCallActivity`，横幅不该盖自己）。
+  凡是「通话中要一个 Context」的地方一律用 `appContext`，别指望前台 Activity。
+- **小窗吸角要等容器量出来**：`IMPipLayout.origin` 是拿容器宽高算的，宽是 0 时右上角退化成 x=0。
+- **前台服务类型不能降级**：预览可能先把摄像头开起来了，`start()` 再传 `withCamera=false`，
+  Android 14 起就是「正在用摄像头却没有 camera 类型」。
 - **`GridLayout.spec` 不能带权重**：带了的话剩余空间会摊到每一格上，正方形边长当场失效，
   竖屏两个人就变成两条又高又窄的长条。
 - **渲染器要按 uid 整通复用**（`IMCallKit.remoteViews`）：`engine.attachView` 会释放上一个渲染器，每次刷新都要新的话画面闪。
