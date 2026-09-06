@@ -173,4 +173,38 @@ class KitRulesTest {
         }
         assertEquals("已结束", IMCallViewState.endReasonText("什么鬼", "caller", 0))
     }
+
+    /*
+     前后台判定：**装钩子之前就在前台的那个界面，它的 onStop 不算「App 进后台」。**
+
+     不加这一条就是 2026-09-06 那个真机 bug：钩子是登录成功后才装的，宿主首页早就 onStart 过、
+     没被数进去；接听后通话页 onStart（+1），~0.5s 开场动画放完首页 onStop（-1 → 0），
+     Kit 当成切后台把摄像头 mute 掉——本机界面毫无异样，坏的是对端（只看到头像）。
+    */
+    @Test
+    fun `装钩子之前就 started 的界面，它的 stop 不算进后台`() {
+        val state = IMForegroundState()
+        val host = Any()   // 宿主首页：钩子装上时它已经 started 了，我们没见过它的 onStart
+        val callPage = Any()
+
+        assertTrue("第一个见到的 onStart 算回前台", state.started(callPage))
+        assertFalse("没见过 onStart 的界面退下去，不能算整个 App 进后台", state.stopped(host))
+        assertTrue("通话页自己退下去才是真的进后台", state.stopped(callPage))
+    }
+
+    @Test
+    fun `正常的前后台来回：只在空集合与非空之间翻转时才回调`() {
+        val state = IMForegroundState()
+        val a = Any()
+        val b = Any()
+
+        assertTrue(state.started(a))
+        assertFalse("已经在前台了，再起一个界面不重复报", state.started(b))
+        assertFalse("还剩一个界面在前台", state.stopped(a))
+        assertTrue("最后一个退下去才报后台", state.stopped(b))
+        assertTrue("再起来又是回前台", state.started(a))
+        // 同一个 key 重复 stop 不该再报一次（onStop 与 onDestroy 都清一次也不会出事）。
+        assertTrue(state.stopped(a))
+        assertFalse(state.stopped(a))
+    }
 }

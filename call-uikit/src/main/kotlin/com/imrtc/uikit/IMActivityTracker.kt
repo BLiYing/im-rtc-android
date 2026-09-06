@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.Application
 import android.os.Bundle
 import java.lang.ref.WeakReference
+import java.util.Collections
+import java.util.WeakHashMap
 
 /**
  * 记住宿主当前在前台的那个 Activity。
@@ -23,12 +25,10 @@ internal object IMActivityTracker : Application.ActivityLifecycleCallbacks {
     private var installed = false
 
     /**
-     * 还有几个 Activity 处于 started 状态。**0 = 整个 App 到后台了。**
-     *
-     * 这里连 [IMCallActivity] 一起数（与 [current] 不同）：判「App 在不在前台」要看全部界面，
+     * App 前后台判定。**通话页也算在内**（与 [current] 不同）：判「App 在不在前台」要看全部界面，
      * 而通话页恰恰是通话中最常在前台的那一个。
      */
-    private var startedCount = 0
+    private val foregroundState = IMForegroundState()
 
     /** App 前后台切换。通话页据此暂停 / 恢复本端视频（交互稿 §03）。 */
     var onForegroundChanged: ((Boolean) -> Unit)? = null
@@ -57,17 +57,64 @@ internal object IMActivityTracker : Application.ActivityLifecycleCallbacks {
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
 
     override fun onActivityStarted(activity: Activity) {
-        startedCount++
-        if (startedCount == 1) onForegroundChanged?.invoke(true)
+        if (foregroundState.started(activity)) onForegroundChanged?.invoke(true)
     }
 
     override fun onActivityStopped(activity: Activity) {
-        startedCount = (startedCount - 1).coerceAtLeast(0)
-        if (startedCount == 0) onForegroundChanged?.invoke(false)
+        if (foregroundState.stopped(activity)) onForegroundChanged?.invoke(false)
     }
 
     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+    // onStop 一定先于 onDestroy，前台记账在那时就清了，这里只用管 current。
     override fun onActivityDestroyed(activity: Activity) {
         if (current?.get() === activity) current = null
+    }
+}
+
+/**
+ * 「App 在不在前台」的纯逻辑：**只认我们亲眼看见 started 过的界面**。
+ *
+ * 为什么不是一个计数器（这就是 2026-09-06 那个「对端看不到我的画面」的根）：
+ * 生命周期钩子是在 `IMCallKit.start` 里装的，而宿主是**登录成功之后**才调它的
+ * （Demo 在 `DemoSession.onLoggedIn`）——那时宿主首页早就 `onStart` 过了，
+ * 计数器压根没数到它。于是：
+ *
+ * ```
+ * 装钩子（count=0，实际首页在前台）
+ * 接听 → IMCallActivity.onStart → count=1 → 回调 foreground(true)（无害）
+ *       ~0.5s 后开场动画放完 → 首页 onStop → count=0 → 回调 foreground(false)
+ *       → IMCallKit 以为切后台了，把摄像头 mute 掉
+ * ```
+ *
+ * 症状极具迷惑性：**本机界面一切正常**——「关摄像头」按钮还亮着、本端预览也还在画，
+ * 因为 `cameraOn` 这个界面状态压根没被改，被关掉的只是上行轨道；
+ * 坏的是**对端**，它收到 `room.track_muted{video}` 后只显示头像。
+ * 真机上 100% 复现，且「进一次后台再回来」就自愈（那一轮把首页数进去了），
+ * 于是它看起来还很随机。
+ *
+ * 所以这里改成记**集合**，并且**没见过它 start 就不认它的 stop**：
+ * 装钩子之前就在前台的那个界面退下去时，不该被算成「整个 App 进后台」。
+ * 代价是「装钩子后用户第一次按 Home」这一次不报后台——那时还没有通话（phase=IDLE），
+ * 收不到也没有任何影响，而下一次 onStart 就把它数进来了，之后永远准。
+ *
+ * 用 [Any] 而不是 Activity 作键：这样它就是纯 JVM 逻辑，不用 Robolectric 也能测
+ * （CONVENTIONS §1「需要平台能力就注入抽象」）。
+ */
+internal class IMForegroundState {
+
+    /** 弱引用持有：Activity 被回收了不该因为这个集合而泄漏。 */
+    private val started: MutableSet<Any> = Collections.newSetFromMap(WeakHashMap())
+
+    /** 登记一次 onStart。@return 是否**刚从后台回到前台**。 */
+    fun started(key: Any): Boolean {
+        val wasBackground = started.isEmpty()
+        started.add(key)
+        return wasBackground
+    }
+
+    /** 登记一次 onStop。@return 是否**刚从前台进了后台**。 */
+    fun stopped(key: Any): Boolean {
+        if (!started.remove(key)) return false
+        return started.isEmpty()
     }
 }

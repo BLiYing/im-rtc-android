@@ -10,7 +10,26 @@
 
 ## 当前焦点
 
-**九宫格拉齐 + 三个只在 Android 上有的坑（2026-09-06 下午）**，`./scripts/test.sh` 六步全绿。
+**「对端看不到我的画面」——前后台记账把摄像头 mute 了（2026-09-06 傍晚）**，`./scripts/test.sh` 六步全绿。
+
+三端联调（web alice 主叫 + iOS bob + Android ivan，呼 8 个人）报的两条，一条在本仓、一条在服务端：
+
+| 症状 | 根因 | 落点 |
+|---|---|---|
+| **web 与 iOS 都看不到 ivan 的视频**（只显示头像），本机一切正常 | `IMActivityTracker` 的前后台记账是个**计数器**，而生命周期钩子是 `IMCallKit.start` 装的、宿主是**登录成功之后**才调它——那时首页早就 `onStart` 过、计数器压根没数到它。接听后通话页 `onStart`（0→1），~0.5s 开场动画放完首页 `onStop`（1→0），Kit 当成「App 切后台」，按既定规矩把摄像头 mute 掉 | `IMActivityTracker` 改记**集合**（`IMForegroundState`）：**没见过它 start 就不认它的 stop** |
+| 离线的人在 Android 这侧一直「呼叫中…」（主叫侧正常） | **不是本仓的 bug**，在服务端：`call.incoming.callee_ids` 发的是原始名单，而字典序靠后的被叫会先收到前面那些人的 `call.no_answer`（那时他还 idle，四端一致地丢弃）。iOS 的 bob 排第一所以没事 | `im-rtc-server` 的 `call.calleeIDs()` 只列还没出局的人 |
+
+**这个前后台 bug 极具迷惑性，值得记住**：`cameraOn` 这个界面状态压根没被改，
+所以「关摄像头」按钮还亮着、本端预览也还在画，**坏的只有对端**（它收到 `room.track_muted{video}`）。
+100% 复现，可**按一次 Home 再回来就自愈**（那一轮把首页数进去了），于是看起来还很随机。
+`IMForegroundState` 是纯 JVM 的，两个用例先换回旧的计数器实现看它红过。
+iOS 用 `UIApplication` 通知、Web 用 `visibilitychange`，**没有这套记账，不存在同一个洞**。
+
+真机复验（OPPO PKD130，**force-stop 后冷启动**——正是触发条件）：alice 那侧
+`userVideoAvailable{ivan,true}` 之后不再翻 false，两侧都看得到对方；Android 标题从
+「群通话 · 7 人 + 5 个呼叫中」变成「群通话 · 2 人」。
+
+**同日下午：九宫格拉齐 + 三个只在 Android 上有的坑**，`./scripts/test.sh` 六步全绿。
 起因是用户三端并排看九宫格，报了五条——**其中三条是本仓独有的**：
 
 | 症状（用户报的） | 根因 | 落点 |
@@ -94,6 +113,10 @@
   （头一行就是 `ThreadUtils.checkIsOnMainThread()`）。Engine 的方法在自己那条单线程上跑，
   而调度器会把异常吞掉——**渲染器初始化失败是没有声音的**，症状只有「画面全黑」。
   渲染相关的一切（含轨道 / 归属 / 渲染器三张表）统一在 `IMWebRTCAdapter.onMain` 里。
+- **前后台判定只认「我们亲眼看见 started 过的界面」**（`IMForegroundState`）：钩子是登录后才装的，
+  宿主首页的第一次 `onStart` 我们没见过——它的 `onStop` **不能**算成「App 进后台」。
+  代价是装钩子后用户第一次按 Home 不报后台（那时 phase 还是 IDLE，无影响），下一次 `onStart` 起就准了。
+  **任何「按数量判前后台」的写法都会重蹈覆辙**，因为 SDK 永远是半路装上去的。
 - **`IMActivityTracker.foreground()` 拿不到通话页**（它刻意不认 `IMCallActivity`，横幅不该盖自己）。
   凡是「通话中要一个 Context」的地方一律用 `appContext`，别指望前台 Activity。
 - **小窗吸角要等容器量出来**：`IMPipLayout.origin` 是拿容器宽高算的，宽是 0 时右上角退化成 x=0。
