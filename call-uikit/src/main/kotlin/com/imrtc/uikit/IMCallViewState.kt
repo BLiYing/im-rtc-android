@@ -212,7 +212,8 @@ internal object IMCallViewReducer {
         mediaType = mediaType,
         isGroup = isGroup,
         cameraOn = mediaType == "video",
-        speakerOn = mediaType == "video",
+        // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
+        speakerOn = false,
         members = linkedMapOf(caller to IMCallViewState.Member(caller)) +
             calleeIds.filter { it != caller }
                 .associateWith { IMCallViewState.Member(it, accepted = false) },
@@ -227,7 +228,8 @@ internal object IMCallViewReducer {
             isGroup = isGroup,
             role = "caller",
             cameraOn = mediaType == "video",
-            speakerOn = mediaType == "video",
+            // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
+            speakerOn = false,
             // 呼出时对方还没接——**先摆上去且标成未接听**，界面才有「呼叫中…」的占位格。
             members = peers.associateWith { IMCallViewState.Member(it, accepted = false) },
             connection = state.connection,
@@ -240,7 +242,8 @@ internal object IMCallViewReducer {
         isGroup = true,
         mediaType = "video",
         cameraOn = true,
-        speakerOn = true,
+        // 一条规则到底：**默认都不外放**，要外放由用户自己点（拍板 2026-09-06）。
+        speakerOn = false,
         connection = state.connection,
     )
 

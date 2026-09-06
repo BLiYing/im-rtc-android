@@ -4,7 +4,8 @@
         <!--
           通话页是**独立 Activity，不入宿主导航栈**——任何界面都能被来电覆盖。
           singleTask + excludeFromRecents：通话只该有一个实例，也不该在最近任务里留残影。
-          supportsPictureInPicture：视频通话收起默认走系统画中画（交互稿 §08 差异 2）。
+          **不用系统画中画**（v3.2 撤掉，理由见 IMCallActivity 的类注释）：那一小块窗口右上角
+          有一颗系统自己画的关闭键，删不掉，而它按下去的语义与本 Kit 的「挂断只有红键一个入口」对不上。
           锁屏来电（showWhenLocked / turnScreenOn）属推送阶段，MVP 不做。
         -->
         <activity
@@ -13,7 +14,6 @@
             android:exported="false"
             android:launchMode="singleTask"
             android:excludeFromRecents="true"
-            android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
 
         <!--

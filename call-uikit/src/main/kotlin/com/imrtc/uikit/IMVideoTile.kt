@@ -9,6 +9,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
@@ -26,6 +27,7 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
     private val namePlate = TextView(context)
     private val mutedPlate = FrameLayout(context)
     private val mutedIcon = ImageView(context)
+    private val bottomRow = LinearLayout(context)
     private val netPlate = FrameLayout(context)
     private val netBars = IMNetworkBarsView(context)
     private val ringingLabel = TextView(context)
@@ -45,28 +47,52 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         avatar.setTypeface(null, android.graphics.Typeface.BOLD)
         addView(avatar, LayoutParams(dp(44), dp(44), Gravity.CENTER))
 
+        /*
+         名字牌 + 静音角标是**左下角同一行**（v3.2 改）。
+
+         静音角标原先在右上角，而全屏画面是铺满整屏的——那个位置正好压在状态栏的
+         时间与电量上。挪到名字右边之后两者一起排，也不会再和系统栏打架。
+
+         离左边与下边都留 `PLATE_INSET_DP`（12，比原来的 8 大）：格子有圆角，
+         贴到 8 的话名字在圆角上会被切掉一截，有的机型上直接看不全。
+        */
         namePlate.textSize = 12f
         namePlate.setTextColor(IMKitTheme.primaryText)
         namePlate.maxLines = 1
+        namePlate.ellipsize = android.text.TextUtils.TruncateAt.END
         namePlate.setPadding(dp(8), 0, dp(8), 0)
         namePlate.gravity = Gravity.CENTER_VERTICAL
         namePlate.background = IMKitTheme.roundedDrawable(IMKitTheme.scrim, dp(6))
-        addView(namePlate, LayoutParams(LayoutParams.WRAP_CONTENT, dp(18), Gravity.BOTTOM or Gravity.START).apply {
-            setMargins(dp(8), 0, dp(8), dp(8))
-        })
 
-        // 静音角标放右上，与左下的名字牌分开：名字可能很长，挤在一起时角标会被顶出格子。
         mutedIcon.setImageResource(IMKitIcon.MIC_SLASH.resId)
         mutedIcon.setColorFilter(IMKitTheme.mutedBadge)
         mutedPlate.background = IMKitTheme.circleDrawable(IMKitTheme.scrim)
         mutedPlate.addView(mutedIcon, LayoutParams(dp(14), dp(14), Gravity.CENTER))
         mutedPlate.contentDescription = "已静音"
-        addView(mutedPlate, LayoutParams(dp(24), dp(24), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(8), dp(8), 0) })
+
+        bottomRow.orientation = LinearLayout.HORIZONTAL
+        bottomRow.gravity = Gravity.CENTER_VERTICAL
+        bottomRow.addView(namePlate, LinearLayout.LayoutParams(0, dp(20), 1f))
+        bottomRow.addView(
+            mutedPlate,
+            LinearLayout.LayoutParams(dp(20), dp(20)).apply { leftMargin = dp(4) },
+        )
+        addView(
+            bottomRow,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
+                setMargins(dp(PLATE_INSET_DP), 0, dp(PLATE_INSET_DP), dp(PLATE_INSET_DP))
+            },
+        )
 
         netPlate.background = IMKitTheme.circleDrawable(IMKitTheme.scrim)
         netPlate.addView(netBars, LayoutParams(dp(14), dp(14), Gravity.CENTER))
         netPlate.contentDescription = "网络不佳"
-        addView(netPlate, LayoutParams(dp(24), dp(24), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(8), dp(8)) })
+        addView(
+            netPlate,
+            LayoutParams(dp(24), dp(24), Gravity.TOP or Gravity.END).apply {
+                setMargins(0, dp(PLATE_INSET_DP), dp(PLATE_INSET_DP), 0)
+            },
+        )
 
         ringingLabel.textSize = 11f
         ringingLabel.setTextColor(IMKitTheme.primaryText)
@@ -161,6 +187,16 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private companion object {
+        /**
+         * 角标离格子边缘的距离。
+         *
+         * 12 而不是 8：格子有 10dp 圆角，名字牌贴到 8 会被圆角切掉一截——
+         * 有的机型上直接看不全（真机反馈）。
+         */
+        const val PLATE_INSET_DP = 12
+    }
 }
 
 /**

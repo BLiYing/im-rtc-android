@@ -74,8 +74,6 @@ internal object IMKitTheme {
     /** 一次性提示（「通话已满员」「对方已拒接」）停多久自己撤掉。 */
     const val HINT_HOLD_MS = 3_000L
     const val NETWORK_BANNER_MS = 2_000L
-    /** 横幅 5s 不处理升级为全屏来电页（交互稿 §06）。 */
-    const val BANNER_ESCALATE_MS = 5_000L
 
     /**
      * 九个头像渐变（规范 §02），取哪一个见 [IMAvatar.index]：**同一个 uid 五端同色**。

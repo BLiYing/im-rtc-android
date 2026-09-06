@@ -29,6 +29,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         fun onToggleMic()
         fun onToggleCamera()
         fun onToggleSpeaker()
+        fun onSwitchCamera()
         fun onMinimize()
         fun onSwap()
         fun onInvite()
@@ -51,6 +52,10 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val endedLabel = TextView(context)
     private val controlsScrim = View(context)
     private val controls = LinearLayout(context)
+    /** 控制条上排：三个开关。 */
+    private val controlsTop = LinearLayout(context)
+    /** 控制条下排：挂断居中 + 翻转摄像头。 */
+    private val controlsBottom = LinearLayout(context)
     private val selfTile = IMVideoTile(context)
     private val addTile = ImageButton(context)
     /** uid → 这个人的格子。**不每次重建**：重建会让媒体层挂着的渲染器重来，画面会闪。 */
@@ -60,6 +65,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val micButton = IMControlButton(context, IMKitIcon.MIC, "静音", IMKitIcon.MIC_SLASH, "已静音")
     private val cameraButton = IMControlButton(context, IMKitIcon.VIDEO_SLASH, "开摄像头", IMKitIcon.VIDEO, "关摄像头")
     private val speakerButton = IMControlButton(context, IMKitIcon.SPEAKER, "扬声器")
+    private val switchCameraButton = IMControlButton(context, IMKitIcon.CAMERA_FLIP, "翻转")
+    /** 下排左边那个空位：有它挂断才真的在屏幕正中。 */
+    private val spacer = View(context)
     private val hangupButton = IMControlButton(context, IMKitIcon.PHONE_DOWN, "挂断", role = IMControlButton.Role.DANGER)
     private val answerButton = IMControlButton(context, IMKitIcon.PHONE, "接听", role = IMControlButton.Role.ACCEPT)
     private val rejectButton = IMControlButton(context, IMKitIcon.XMARK, "拒绝", role = IMControlButton.Role.DANGER)
@@ -69,13 +77,6 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private var chromeVisible = true
     private var layout = IMCallViewState.Layout.AUDIO
     private var state = IMCallViewState()
-    /** 画中画模式：只留画面，壳全藏（Android 差异 2）。 */
-    var pipMode = false
-        set(value) {
-            field = value
-            requestApplyInsets() // 画中画进出时留白要跟着变（见 onApplyWindowInsets）
-            render(state)
-        }
 
     /**
      * 全屏画面的宿主：**根布局最底下一层，铺满整屏**（含状态栏与手势条那两条）。
@@ -93,7 +94,6 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         addView(column, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         column.addView(header, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.HEADER_HEIGHT_DP)).apply { topMargin = dp(8) })
         column.addView(stage, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
-        column.addView(controls, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.CONTROLS_HEIGHT_DP)).apply { bottomMargin = dp(26) })
 
         stage.addView(audioStage, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         // 九宫格整块居中（与 iOS 一样）：格子是正方形，剩下的空间摊在四周，不摊进格子里。
@@ -114,11 +114,30 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         addView(controlsScrim, LayoutParams(LayoutParams.MATCH_PARENT, dp(160), Gravity.BOTTOM))
         controlsScrim.visibility = GONE
         addView(banner, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(12) })
-        // 控制条放在最上层（它在 column 里会被 scrim 盖住），所以从 column 摘出来重挂。
-        column.removeView(controls)
-        addView(controls, LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.CONTROLS_HEIGHT_DP), Gravity.BOTTOM).apply { bottomMargin = dp(CONTROLS_BOTTOM_DP) })
-        controls.orientation = LinearLayout.HORIZONTAL
-        controls.gravity = Gravity.CENTER or Gravity.TOP
+        // 控制条放在最上层（它在 column 里会被 scrim 盖住），所以直接挂在根布局上。
+        /*
+         控制条**两排**（v3.2）：上排是三个开关（静音 / 摄像头 / 扬声器），
+         下排是「挂断居中 + 翻转摄像头在它右边」。
+
+         下排用三格等宽：左边一格空着，挂断占中间那格所以**真的在屏幕正中**，
+         翻转占右边那格。少了左边那个占位，挂断就会偏左——红键偏了最容易点错。
+        */
+        controls.orientation = LinearLayout.VERTICAL
+        controls.gravity = Gravity.CENTER_HORIZONTAL
+        controlsTop.orientation = LinearLayout.HORIZONTAL
+        controlsTop.gravity = Gravity.CENTER or Gravity.TOP
+        controlsBottom.orientation = LinearLayout.HORIZONTAL
+        controlsBottom.gravity = Gravity.CENTER or Gravity.TOP
+        controls.addView(controlsTop, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        controls.addView(
+            controlsBottom,
+            LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(12) },
+        )
+        addView(
+            controls,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM)
+                .apply { bottomMargin = dp(CONTROLS_BOTTOM_DP) },
+        )
         grid.alignmentMode = GridLayout.ALIGN_BOUNDS
 
         addTile.setImageResource(IMKitIcon.PLUS.resId)
@@ -135,6 +154,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         micButton.setOnClickListener { actions?.onToggleMic() }
         cameraButton.setOnClickListener { actions?.onToggleCamera() }
         speakerButton.setOnClickListener { actions?.onToggleSpeaker() }
+        switchCameraButton.setOnClickListener { actions?.onSwitchCamera() }
         hangupButton.setOnClickListener { actions?.onHangup() }
         answerButton.setOnClickListener { actions?.onAnswer() }
         rejectButton.setOnClickListener { actions?.onHangup() }
@@ -163,9 +183,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             top = insets.systemWindowInsetTop
             bottom = insets.systemWindowInsetBottom
         }
-        // 画中画里那一小块窗口没有系统栏，再留白等于白白吃掉画面。
-        val padTop = if (pipMode) 0 else top
-        val padBottom = if (pipMode) 0 else bottom
+        val padTop = top
+        val padBottom = bottom
         // **只让开「壳」，不让开画面**：留白打在根布局上的话，全屏画面也会被一起顶下去，
         // 顶上顶着一条黑边——那正是「没有全屏」的样子。
         (column.layoutParams as? LayoutParams)?.let { it.topMargin = padTop; column.layoutParams = it }
@@ -204,14 +223,13 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             showsMinimize = state.canMinimize && IMCallKit.config.floatingWindow,
             showsInvite = state.canShowInvite,
         )
-        header.visibility = if (pipMode) GONE else VISIBLE
         background = if (layout == IMCallViewState.Layout.VIDEO && !isEnded) null else IMKitTheme.callBackground()
         if (background == null) setBackgroundColor(IMKitTheme.background)
         endedLabel.visibility = if (isEnded) VISIBLE else GONE
         endedLabel.text = state.statusText
         audioStage.visibility = if (layout == IMCallViewState.Layout.AUDIO && !isEnded) VISIBLE else GONE
         grid.visibility = if (layout == IMCallViewState.Layout.GRID && !isEnded) VISIBLE else GONE
-        controlsScrim.visibility = if (layout == IMCallViewState.Layout.VIDEO && !isEnded && !pipMode) VISIBLE else GONE
+        controlsScrim.visibility = if (layout == IMCallViewState.Layout.VIDEO && !isEnded) VISIBLE else GONE
         renderBanner(state)
         renderControls(state, isEnded)
         if (isEnded) { pip.visibility = GONE; unpinFull(); return }
@@ -220,7 +238,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             IMCallViewState.Layout.VIDEO -> renderVideo(state)
             IMCallViewState.Layout.GRID -> renderGrid(state)
         }
-        if (layout != IMCallViewState.Layout.VIDEO || pipMode) setChrome(visible = !pipMode, arm = false) else if (chromeVisible) armAutoHide()
+        if (layout != IMCallViewState.Layout.VIDEO) setChrome(visible = true, arm = false) else if (chromeVisible) armAutoHide()
     }
 
     private fun renderBanner(state: IMCallViewState) {
@@ -241,19 +259,38 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private var poorShown = false
 
     private fun renderControls(state: IMCallViewState, isEnded: Boolean) {
-        val wanted: List<View> = when {
-            isEnded || pipMode -> emptyList()
-            state.phase == IMCallViewState.Phase.INCOMING ->
+        val top: List<View>
+        val bottom: List<View>
+        when {
+            isEnded -> {
+                top = emptyList()
+                bottom = emptyList()
+            }
+            state.phase == IMCallViewState.Phase.INCOMING -> {
                 // 视频来电多一个摄像头开关，而不是「以语音接听」按钮（拍板 §11-10）。
-                if (state.showsCameraButton) listOf(cameraButton, rejectButton, answerButton) else listOf(rejectButton, answerButton)
+                top = emptyList()
+                bottom = if (state.showsCameraButton) {
+                    listOf(cameraButton, rejectButton, answerButton)
+                } else {
+                    listOf(rejectButton, answerButton)
+                }
+            }
             // 「小窗」不在控制条里——它在标题栏左上角那一颗（IMCallHeader 的注释）。
-            state.showsCameraButton -> listOf(micButton, cameraButton, speakerButton, hangupButton)
-            else -> listOf(micButton, speakerButton, hangupButton)
+            state.showsCameraButton -> {
+                top = listOf(micButton, cameraButton, speakerButton)
+                // 左边留一个空位，挂断才真的在正中；翻转在它右边。
+                bottom = listOf(spacer, hangupButton, switchCameraButton)
+            }
+            else -> {
+                top = listOf(micButton, speakerButton)
+                bottom = listOf(hangupButton)
+            }
         }
-        if ((0 until controls.childCount).map { controls.getChildAt(it) } != wanted) {
-            controls.removeAllViews()
-            wanted.forEach { controls.addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
-        }
+        fillRow(controlsTop, top)
+        fillRow(controlsBottom, bottom)
+        // 摄像头关着的时候翻转没有意义（也没有画面可翻）。
+        switchCameraButton.isEnabled = state.cameraOn && !state.cameraBlocked
+        switchCameraButton.alpha = if (switchCameraButton.isEnabled) 1f else 0.4f
         micButton.isOn = !state.micOn
         cameraButton.isOn = state.cameraOn
         cameraButton.isDisabledLook = state.cameraBlocked
@@ -265,6 +302,14 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             state.phase == IMCallViewState.Phase.OUTGOING -> "取消"
             else -> "挂断"
         }
+    }
+
+    /** 摆一排按钮：等宽平分，同一排的按钮无论几个都对齐。内容没变就不重建（重建会打断按下动效）。 */
+    private fun fillRow(row: LinearLayout, wanted: List<View>) {
+        if ((0 until row.childCount).map { row.getChildAt(it) } == wanted) return
+        row.removeAllViews()
+        wanted.forEach { row.addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
+        row.visibility = if (wanted.isEmpty()) GONE else VISIBLE
     }
 
     // ── 三种版式 ──────────────────────────────────────────────────────
@@ -304,7 +349,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         val (full, small) = if (state.isSwapped) selfTile to remote else remote to selfTile
         pinFull(full)
         mountInPip(small)
-        pip.visibility = if (pipMode) GONE else VISIBLE
+        pip.visibility = VISIBLE
         pip.liftsForControls = chromeVisible
         pip.contentDescription = if (state.isSwapped) "对方画面。轻点互换，长按可移动" else "本端画面。轻点互换，长按可移动"
     }

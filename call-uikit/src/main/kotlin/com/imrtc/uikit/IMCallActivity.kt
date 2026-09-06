@@ -1,44 +1,35 @@
 package com.imrtc.uikit
 
 import android.app.Activity
-import android.app.PendingIntent
-import android.app.PictureInPictureParams
-import android.app.RemoteAction
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.PackageManager
-import android.content.res.Configuration
-import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
-import android.util.Rational
 import android.view.View
 import android.view.WindowManager
 
 /**
  * 通话全屏页。**独立 Activity，不入宿主导航栈**——任何界面都能被来电覆盖。
  *
- * Android 与 iOS 的两处差异在这里落地（交互稿 §08）：
- * · **返回键 = 收进小窗**，不是挂断、也不是什么都不做。挂断只有红按钮一个入口。
- * · **收起默认走系统画中画**（`enterPictureInPictureMode`，16:9，带「挂断」动作）：不用权限、跨应用可见、
- *   行为符合系统习惯。语音通话 / 不支持画中画的设备退回应用内悬浮球。按 Home 键也自动进画中画。
+ * Android 与 iOS 的差异在这里落地（交互稿 §08）：
+ * **返回键 = 收进小窗**，不是挂断、也不是什么都不做。挂断只有红按钮一个入口。
  *
- * **全屏、边到边**：通话页自己画背景，让系统栏透出来；标题栏按 window inset 下移，
- * 否则「对方名字 + 时长」那一行会压在状态栏的时间和电量上。
+ * # 为什么不用系统画中画（v3.2 撤掉）
+ *
+ * 系统画中画那一小块窗口右上角有一颗**系统自己画的关闭（×）**，
+ * `PictureInPictureParams` 没有隐藏它的口子。它按下去的语义与本 Kit 对不上：
+ * 通话还活着，窗口却没了——用户看到的就是「小窗消失了但电话还在打」。
+ * 无论把它接成「挂断」还是「收起」，都会有一半的人按错。
+ * 所以收起统一走**应用内悬浮球**（与 iOS 一致，`IMCallOverlay`）：
+ * 一个入口、一种形态、一颗自己的红色挂断。
+ * 代价是离开宿主 App 就看不见那个球——这与不申请 `SYSTEM_ALERT_WINDOW` 是同一笔账
+ * （CONVENTIONS §8：那是敏感权限，不该由通话 SDK 替宿主做决定）。
+ *
+ * **全屏、边到边**：通话页自己画背景，让系统栏透出来；标题栏与控制条按 window inset 让开，
+ * 画面自己铺满（见 `IMCallView.onApplyWindowInsets`）。
  */
 class IMCallActivity : Activity() {
 
     private lateinit var view: IMCallView
     private val observer: (IMCallViewState) -> Unit = { render(it) }
-    private var receiverRegistered = false
-
-    private val pipActions = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.getStringExtra(EXTRA_ACTION) == ACTION_HANGUP) IMCallKit.hangup()
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,6 +41,7 @@ class IMCallActivity : Activity() {
             override fun onToggleMic() = IMCallKit.toggleMic()
             override fun onToggleCamera() = IMCallKit.toggleCamera()
             override fun onToggleSpeaker() = IMCallKit.toggleSpeaker()
+            override fun onSwitchCamera() = IMCallKit.switchCamera()
             override fun onMinimize() = minimize()
             override fun onSwap() = IMCallKit.swap()
             override fun onInvite() = IMCallKit.showInvitePicker(this@IMCallActivity)
@@ -59,14 +51,18 @@ class IMCallActivity : Activity() {
         }
         setContentView(view)
         IMCallKit.observe(observer)
-        registerPipActions()
+    }
+
+    override fun onDestroy() {
+        IMCallKit.forget(observer)
+        super.onDestroy()
     }
 
     /**
      * 全屏、边到边，状态栏与导航栏都透出来（图标走浅色——通话页恒为深色底）。
      *
      * 只做「让内容铺到系统栏底下」，**不隐藏系统栏**：通话页是要长时间停留的界面，
-     * 藏掉状态栏会让人看不到时间和电量。真正的避让在 [IMCallView.applyTopInset]。
+     * 藏掉状态栏会让人看不到时间和电量。真正的避让在 [IMCallView.onApplyWindowInsets]。
      */
     private fun goFullScreen() {
         // 不引 androidx（Kit 是要塞进别人 App 的库，少一个依赖少一次版本冲突）：
@@ -85,27 +81,6 @@ class IMCallActivity : Activity() {
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
     }
 
-    /**
-     * 用户在系统画中画那一小块窗口上点了「关闭」（右上角那颗叉）。
-     *
-     * **那颗叉是系统画的，应用删不掉**（`PictureInPictureParams` 没有隐藏它的口子），
-     * 我们只能决定它意味着什么。这里定成**「收起」而不是「挂断」**——
-     * 挂断在本 Kit 里只有红按钮一个入口（交互稿 §08 差异 1），
-     * 所以通话继续，回到宿主界面时变成应用内悬浮球。
-     */
-    override fun onStop() {
-        super.onStop()
-        val alive = IMCallKit.state.phase != IMCallViewState.Phase.IDLE
-        if (alive && !isFinishing && !IMCallKit.state.isMinimized) IMCallKit.minimize()
-    }
-
-    override fun onDestroy() {
-        IMCallKit.forget(observer)
-        if (receiverRegistered) unregisterReceiver(pipActions)
-        IMCallKit.inSystemPip = false
-        super.onDestroy()
-    }
-
     /** 通话中按返回 = 收进小窗（交互稿 §08 差异 1）；接通前什么都不做——挂断请点红键。 */
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
@@ -115,75 +90,15 @@ class IMCallActivity : Activity() {
         }
     }
 
-    /** 按 Home：视频通话自动进画中画（差异 2）。 */
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        if (IMCallKit.state.canMinimize && canUseSystemPip()) enterPip()
-    }
-
     private fun minimize() {
         if (!IMCallKit.config.floatingWindow) return
-        if (canUseSystemPip()) enterPip() else IMCallKit.minimize()
-    }
-
-    /** 系统画中画：Android 8+、设备支持、且是视频通话（语音通话进画中画只剩一块黑，不如悬浮球）。 */
-    private fun canUseSystemPip(): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
-            IMCallKit.state.mediaType == "video"
-
-    private fun enterPip() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val params = PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
-            // **只放挂断**。画中画里的「静音」原先点了不生效（RemoteAction 打到的是另一份进程内状态，
-            // 而且那一格小窗上也没有任何反馈说明它切过去了），一个点了没反应的按钮比没有更糟。
-            .setActions(listOf(remoteAction(ACTION_HANGUP, IMKitIcon.PHONE_DOWN, "挂断")))
-            .build()
-        IMCallKit.inSystemPip = true
         IMCallKit.minimize()
-        if (!enterPictureInPictureMode(params)) {
-            IMCallKit.inSystemPip = false
-        }
-    }
-
-    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        IMCallKit.inSystemPip = isInPictureInPictureMode
-        view.pipMode = isInPictureInPictureMode
-        // 用户点了画中画上的「展开」：回全屏。
-        if (!isInPictureInPictureMode && IMCallKit.state.isMinimized) IMCallKit.expand()
-    }
-
-    private fun remoteAction(action: String, icon: IMKitIcon, label: String): RemoteAction {
-        val intent = Intent(PIP_ACTION).setPackage(packageName).putExtra(EXTRA_ACTION, action)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
-        val pending = PendingIntent.getBroadcast(this, action.hashCode(), intent, flags)
-        return RemoteAction(Icon.createWithResource(this, icon.resId), label, label, pending)
-    }
-
-    private fun registerPipActions() {
-        val filter = IntentFilter(PIP_ACTION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(pipActions, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            registerReceiver(pipActions, filter)
-        }
-        receiverRegistered = true
     }
 
     private fun render(state: IMCallViewState) {
         view.render(state)
         // 收进悬浮球 = 关掉全屏页（通话照常）。**不能只是隐藏**：留着它，宿主的界面还是被盖着的。
-        // 在系统画中画里则不关——那个小窗就是这个 Activity。
-        val shouldClose = state.phase == IMCallViewState.Phase.IDLE || (state.isMinimized && !IMCallKit.inSystemPip)
+        val shouldClose = state.phase == IMCallViewState.Phase.IDLE || state.isMinimized
         if (shouldClose && !isFinishing) finish()
-    }
-
-    private companion object {
-        const val PIP_ACTION = "com.imrtc.uikit.PIP_ACTION"
-        const val EXTRA_ACTION = "action"
-        const val ACTION_HANGUP = "hangup"
     }
 }

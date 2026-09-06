@@ -43,10 +43,6 @@ object IMCallKit {
     private var bannerExpanded = false
     private var mode = Mode.HIDDEN
 
-    /** 全屏页此刻是不是在系统画中画里。是的话形态保持 FULLSCREEN，别再往宿主界面上挂悬浮球。 */
-    @Volatile
-    internal var inSystemPip = false
-
     private enum class Mode { HIDDEN, BANNER, BUBBLE, FULLSCREEN }
 
     @Volatile
@@ -54,7 +50,6 @@ object IMCallKit {
         private set
 
     private var timer: Runnable? = null
-    private var bannerEscalate: Runnable? = null
     private var hintExpiry: Runnable? = null
     /** 最后一批邀请出去的 uid。加人被服务端拒时用它把占位格收回来。 */
     private var lastInvited: List<String> = emptyList()
@@ -274,6 +269,11 @@ object IMCallKit {
     /** 互换 1v1 的两块画面（交互稿 §04）。纯本端行为，不发帧。 */
     internal fun swap() = update(IMCallViewReducer.setSwapped(state, !state.isSwapped))
 
+    /** 前后摄像头翻转。纯媒体动作，不改视图状态。 */
+    internal fun switchCamera() {
+        engine?.switchCamera()
+    }
+
     /**
      * 往群通话里加人：占位格**立刻**出现，帧随后才发（交互稿 §05 G3）。
      *
@@ -338,7 +338,6 @@ object IMCallKit {
      */
     private fun onForegroundChanged(foreground: Boolean) {
         val instance = engine ?: return
-        if (inSystemPip) return
         if (!foreground) {
             if (state.phase == IMCallViewState.Phase.IDLE || !state.cameraOn) return
             cameraPausedByBackground = true
@@ -383,7 +382,7 @@ object IMCallKit {
 
     /** 按当前状态决定用哪种形态，并把上一种收掉。**每次状态更新都会走一遍**，所以它必须便宜且幂等。 */
     private fun applyPresentation(current: IMCallViewState) {
-        if (current.phase == IMCallViewState.Phase.IDLE) { bannerExpanded = false; inSystemPip = false; clearCallViews() }
+        if (current.phase == IMCallViewState.Phase.IDLE) { bannerExpanded = false; clearCallViews() }
         val host = IMActivityTracker.foreground()
         val wanted = desiredMode(current, host)
         val changed = wanted != mode
@@ -391,10 +390,9 @@ object IMCallKit {
         when (wanted) {
             Mode.HIDDEN -> if (changed) overlay.detach()
             Mode.FULLSCREEN -> { overlay.detach(); if (changed) present() }
-            Mode.BANNER -> mountBanner(host, current, changed)
+            Mode.BANNER -> mountBanner(host, current)
             Mode.BUBBLE -> mountBubble(host, current)
         }
-        if (wanted != Mode.BANNER) cancelBannerEscalation()
         if (changed) IMRTCLog.i("kit", "通话界面形态：${wanted.name.lowercase()}")
     }
 
@@ -404,31 +402,25 @@ object IMCallKit {
      */
     private fun desiredMode(current: IMCallViewState, host: Activity?): Mode = when {
         current.phase == IMCallViewState.Phase.IDLE -> Mode.HIDDEN
-        current.isMinimized && inSystemPip -> Mode.FULLSCREEN
         current.isMinimized && config.floatingWindow -> if (host != null) Mode.BUBBLE else Mode.HIDDEN
         current.phase == IMCallViewState.Phase.INCOMING && config.bannerFirst && !bannerExpanded && host != null -> Mode.BANNER
         else -> Mode.FULLSCREEN
     }
 
-    private fun mountBanner(host: Activity?, current: IMCallViewState, changed: Boolean) {
+    private fun mountBanner(host: Activity?, current: IMCallViewState) {
         val banner = overlay.mount(
             host, IMIncomingBanner::class.java,
-            { activity -> IMIncomingBanner(activity).apply { onAccept = { answer() }; onReject = { hangup() }; onExpand = { expand() } } },
+            { activity ->
+                IMIncomingBanner(activity).apply {
+                    onAccept = { answer() }
+                    onReject = { hangup() }
+                    onExpand = { expand() }
+                    onToggleCamera = { toggleCamera() }
+                }
+            },
             { activity -> IMCallOverlay.bannerParams(activity) },
         )
         banner?.render(current)
-        // 横幅 5s 不处理升级为全屏来电页（交互稿 §06）。
-        if (changed) {
-            cancelBannerEscalation()
-            val escalate = Runnable { if (state.phase == IMCallViewState.Phase.INCOMING) expand() }
-            bannerEscalate = escalate
-            main.postDelayed(escalate, IMKitTheme.BANNER_ESCALATE_MS)
-        }
-    }
-
-    private fun cancelBannerEscalation() {
-        bannerEscalate?.let { main.removeCallbacks(it) }
-        bannerEscalate = null
     }
 
     private fun mountBubble(host: Activity?, current: IMCallViewState) {
