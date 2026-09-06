@@ -156,7 +156,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         // 这里把它关回去——**用户表示不出镜，指示灯就不该亮**。
         if (state.mediaType == "video" && !state.cameraOn) IMCallKit.engine?.closeCamera()
         if (!state.micOn) IMCallKit.engine?.closeMic()
-        IMActivityTracker.foreground()?.let { IMCallKit.onLocalMediaStarted(it) }
+        IMCallKit.onLocalMediaStarted()
         host.onRoomJoined(roomId)
     }
 

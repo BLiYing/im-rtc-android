@@ -85,6 +85,20 @@ class IMCallActivity : Activity() {
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
     }
 
+    /**
+     * 用户在系统画中画那一小块窗口上点了「关闭」（右上角那颗叉）。
+     *
+     * **那颗叉是系统画的，应用删不掉**（`PictureInPictureParams` 没有隐藏它的口子），
+     * 我们只能决定它意味着什么。这里定成**「收起」而不是「挂断」**——
+     * 挂断在本 Kit 里只有红按钮一个入口（交互稿 §08 差异 1），
+     * 所以通话继续，回到宿主界面时变成应用内悬浮球。
+     */
+    override fun onStop() {
+        super.onStop()
+        val alive = IMCallKit.state.phase != IMCallViewState.Phase.IDLE
+        if (alive && !isFinishing && !IMCallKit.state.isMinimized) IMCallKit.minimize()
+    }
+
     override fun onDestroy() {
         IMCallKit.forget(observer)
         if (receiverRegistered) unregisterReceiver(pipActions)

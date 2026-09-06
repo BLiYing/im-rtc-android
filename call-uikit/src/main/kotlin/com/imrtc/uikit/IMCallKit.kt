@@ -81,6 +81,7 @@ object IMCallKit {
         this.config = config
         if (asker == null) asker = IMPermissionActivity.asker(context.applicationContext)
         (context.applicationContext as? Application)?.let { IMActivityTracker.install(it) }
+        IMActivityTracker.onForegroundChanged = { foreground -> onForegroundChanged(foreground) }
     }
 
     @JvmStatic
@@ -117,7 +118,11 @@ object IMCallKit {
         update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup))
         ensurePermissions(IMPermissionGate.devicesFor(mediaType, withCamera = true)) { outcome ->
             when (outcome) {
-                IMPermissionGate.Outcome.OK -> instance.call(peers, mediaType, isGroup)
+                IMPermissionGate.Outcome.OK -> {
+                    // 摄像头到手了才接采集——**拨出中就该看见自己**（草图 §03-E）。
+                    onLocalMediaStarted()
+                    instance.call(peers, mediaType, isGroup)
+                }
                 IMPermissionGate.Outcome.CAMERA_BLOCKED -> {
                     update(IMCallViewReducer.cameraBlocked(state))
                     instance.call(peers, mediaType, isGroup)
@@ -134,7 +139,11 @@ object IMCallKit {
         ensurePermissions(IMPermissionGate.devicesFor("video", withCamera = true)) { outcome ->
             if (outcome == IMPermissionGate.Outcome.MIC_BLOCKED || outcome == IMPermissionGate.Outcome.CANCELLED) return@ensurePermissions
             update(IMCallViewReducer.meeting(state, roomId))
-            if (outcome == IMPermissionGate.Outcome.CAMERA_BLOCKED) update(IMCallViewReducer.cameraBlocked(state))
+            if (outcome == IMPermissionGate.Outcome.CAMERA_BLOCKED) {
+                update(IMCallViewReducer.cameraBlocked(state))
+            } else {
+                onLocalMediaStarted()
+            }
             instance.joinRoom(roomId, roomToken)
         }
     }
@@ -176,15 +185,45 @@ object IMCallKit {
         return view
     }
 
-    /** 本端预览的渲染器。**采集要等发布之后才有**（Engine 在进房时发布），拨出中先给一个空视图占着。 */
+    /**
+     * 本端预览的渲染器。**造出来就当场接上采集**（`startLocalPreview` 自己会把摄像头开起来）。
+     *
+     * 原先是「造一个空视图，等 onRoomJoined 再接」，而那一步要拿前台 Activity——
+     * 可通话页 [IMCallActivity] 一起来，宿主的 Activity 就 pause 了，
+     * `IMActivityTracker.foreground()` 返回 null（它刻意不认自己家的通话页），
+     * 于是 `startLocalPreview` **一次都没被调用过**：真机上「别人看得见我，我自己看不见我」。
+     */
     internal fun localPreviewView(context: Context): View? {
-        localPreview?.let { return it }
-        val view = engine?.createVideoView(context.applicationContext) ?: return null
-        localPreview = view
+        val instance = engine ?: return null
+        val view = localPreview
+            ?: instance.createVideoView(appContext ?: context.applicationContext)?.also { localPreview = it }
+            ?: return null
+        /*
+         **摄像头权限没到手之前不许接采集。** 预览自己会开摄像头，而拨出时界面先切到
+         「正在呼叫…」、权限卡叠在它上面——这一步比权限门先跑。抢在授权之前开摄像头，
+         轻则拿不到设备被记成 `2002 device_not_found`，重则把权限门的三段式整个绕过去。
+         授权通过后 `onLocalMediaStarted()` 会再来一次，那时才真的接上。
+        */
+        if (!localPreviewStarted && cameraGranted()) {
+            instance.startLocalPreview(view)
+            localPreviewStarted = true
+        }
         return view
     }
 
-    internal fun hasLocalVideo(): Boolean = localPreviewStarted && state.cameraOn
+    /** 摄像头权限到手没有。没有 Context 时保守当作没有。 */
+    private fun cameraGranted(): Boolean {
+        val context = appContext ?: return false
+        return IMPermissionActivity.isGranted(context, IMPermissionGate.Device.CAMERA)
+    }
+
+    /**
+     * 本端此刻有没有画面可显示。
+     *
+     * **判据只有「摄像头开着且没被拒」**——不再等「进房发布之后」：预览自己会起采集
+     * （`IMWebRTCAdapter.startLocalPreview`），所以拨出中就该看见自己（草图 §03-E）。
+     */
+    internal fun hasLocalVideo(): Boolean = state.cameraOn && !state.cameraBlocked
 
     /**
      * 接听。**先过权限门再发 accept**——先 accept 再发现没权限，对方那边已经接通了却听不到人。
@@ -194,7 +233,7 @@ object IMCallKit {
         val instance = engine ?: return
         ensurePermissions(IMPermissionGate.devicesFor(state.mediaType, withCamera = state.cameraOn)) { outcome ->
             when (outcome) {
-                IMPermissionGate.Outcome.OK -> instance.accept()
+                IMPermissionGate.Outcome.OK -> { onLocalMediaStarted(); instance.accept() }
                 IMPermissionGate.Outcome.CAMERA_BLOCKED -> { update(IMCallViewReducer.cameraBlocked(state)); instance.accept() }
                 IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED -> instance.reject()
             }
@@ -287,17 +326,47 @@ object IMCallKit {
     /** 收进小窗。接通之前不许收，见 [IMCallViewState.canMinimize]。 */
     internal fun minimize() = update(IMCallViewReducer.minimize(state))
 
+    /**
+     * App 切到后台 / 回到前台（交互稿 §03）。
+     *
+     * **后台不允许继续采集摄像头**（Android 从 9 开始就是这条规矩，各家 ROM 更严），
+     * 对端看到的就是一片黑——比看到头像糟糕得多。所以进后台把摄像头轨道 mute 掉，
+     * 对端收到「摄像头已关闭」、看到头像；回前台**恢复到用户原来的选择**：
+     * 他进后台前本来就关着摄像头，回前台不要替他打开。与 iOS 的 `IMCallController` 同一条规则。
+     *
+     * 进系统画中画不算切后台：那时候采集照跑，画面就在那一小块窗口里。
+     */
+    private fun onForegroundChanged(foreground: Boolean) {
+        val instance = engine ?: return
+        if (inSystemPip) return
+        if (!foreground) {
+            if (state.phase == IMCallViewState.Phase.IDLE || !state.cameraOn) return
+            cameraPausedByBackground = true
+            instance.closeCamera()
+            return
+        }
+        if (!cameraPausedByBackground) return
+        cameraPausedByBackground = false
+        if (state.cameraOn) instance.openCamera()
+    }
+
+    /** 摄像头是**因为切后台**才关的——只有这种情况回前台才自动打开。 */
+    private var cameraPausedByBackground = false
+
     /** 从小窗 / 横幅展开回全屏。 */
     internal fun expand() {
         bannerExpanded = true
         update(IMCallViewReducer.expand(state))
     }
 
-    /** 本端采集起来了（进房发布之后）。**必须无条件通知界面**：cid 不在 state 里，状态相等时不会自己刷。 */
-    internal fun onLocalMediaStarted(context: Context) {
-        val view = localPreviewView(context) ?: return
-        engine?.startLocalPreview(view)
-        localPreviewStarted = true
+/**
+     * 本端采集起来了。**必须无条件通知界面**：cid 不在 state 里，状态相等时界面不会自己刷。
+     *
+     * 不再需要「前台 Activity」——渲染器用 applicationContext 造得出来，
+     * 而拿前台 Activity 恰恰是拿不到的（通话页一起来宿主那个就 pause 了）。
+     */
+    internal fun onLocalMediaStarted() {
+        appContext?.let { localPreviewView(it) }
         update(state)
     }
 

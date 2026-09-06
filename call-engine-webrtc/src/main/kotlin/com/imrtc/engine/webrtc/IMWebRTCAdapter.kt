@@ -33,6 +33,18 @@ import org.webrtc.VideoTrack
  *
  * `SurfaceViewRenderer` 的 `init` / `release` **必须成对**，且释放顺序有讲究：
  * 先把轨道从渲染器上摘掉再 release，反了会崩在 native 层。
+ *
+ * ## 渲染这一摊**全部在主线程上**（[onMain]）
+ *
+ * `SurfaceViewRenderer.init` / `setEnableHardwareScaler` / `setScalingType` 头一行就是
+ * `ThreadUtils.checkIsOnMainThread()`，不在主线程直接抛 `IllegalStateException`。
+ * 而 Engine 的方法一律跑在它自己那条单线程上，`IMExecutorScheduler` 又会把异常吞掉记一条日志——
+ * 于是**渲染器一次都没初始化成功，画面永远是空的，而日志里只有一行「任务抛了异常」**。
+ * 真机上就是「Android 端自己和别人的视频都不显示」。
+ *
+ * 顺带把轨道 / 归属 / 渲染器三张表也收到主线程上：它们本来就被三条线程碰
+ * （Engine 线程的 `claimRemoteTracks`、WebRTC 信令线程的 `onRemoteTrack`、UI 线程的挂载），
+ * 收到一条线程上比加锁简单，也不会有半个绑定关系的中间态。
  */
 class IMWebRTCAdapter @JvmOverloads constructor(
     context: Context,
@@ -48,11 +60,36 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     private val appContext = context.applicationContext
     private var events: IMMediaAdapter.Events? = null
 
+    /** 渲染相关的一切都在主线程上跑（见类注释）。已经在主线程时就地执行，不排队。 */
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private fun onMain(block: () -> Unit) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) block() else main.post(block)
+    }
+
     private val audio = IMAudioRouter(appContext)
     private val peers = IMPeerConnections(appContext, PeerCallbacks())
 
     private var audioTrack: AudioTrack? = null
+
+    /** 推上去的那条视频轨道，id = cid。 */
+    @Volatile
     private var videoTrack: VideoTrack? = null
+
+    /**
+     * **只给本端预览用的那条轨道**，与 [videoTrack] 共用同一个 [videoSource]。
+     *
+     * 为什么要两条：拨出中还没有房间可发布，而用户此刻就该看见自己（草图 §03-E）。
+     * 而推流那条的 id **必须是 cid**（协议 §3.2），cid 要等进房发布时才生成——
+     * 所以预览不能等它。一个 source 上挂两条 track 是 libwebrtc 允许的，摄像头只开一次。
+     */
+    @Volatile
+    private var previewTrack: VideoTrack? = null
+
+    /** 采集这一摊被主线程（预览）与 Engine 线程（发布）同时碰，统一在这把锁下。 */
+    private val captureLock = Any()
+
+    @Volatile
     private var videoSource: VideoSource? = null
     private var capturer: CameraVideoCapturer? = null
     private var captureHelper: SurfaceTextureHelper? = null
@@ -86,7 +123,10 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         running = true
         audio.start()
         peers.start(iceServers)
-        IMCallForegroundService.start(appContext, withCamera = false)
+        // **不能无条件传 false**：本端预览可能早就把摄像头开起来了（拨出中就看得见自己），
+        // 这里再把前台服务降级成「只有麦克风」，Android 14 起就是「正在用摄像头却没有 camera 类型」，
+        // 后台一挂就抛 SecurityException。
+        IMCallForegroundService.start(appContext, withCamera = videoSource != null)
     }
 
     /** **必须可重入**：挂断、被踢、宿主退出会先后到达。 */
@@ -95,17 +135,19 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         running = false
         stopCapture()
         // 先摘轨道再 release：反了会崩在 native 层。
-        attached.forEach { (trackId, renderer) ->
-            remoteVideo[trackId]?.let { track -> runCatching { track.removeSink(renderer) } }
+        // 渲染器的释放也归主线程（`release` 与 `init` 要在同一条线程上成对）。
+        onMain {
+            attached.forEach { (trackId, renderer) ->
+                remoteVideo[trackId]?.let { track -> runCatching { track.removeSink(renderer) } }
+            }
+            attached.clear()
+            renderers[LOCAL]?.let { renderer -> runCatching { videoTrack?.removeSink(renderer) } }
+            renderers.values.forEach { renderer -> runCatching { renderer.release() } }
+            renderers.clear()
+            remoteVideo.clear()
+            trackOwners.clear()
         }
-        attached.clear()
-        renderers[LOCAL]?.let { renderer -> runCatching { videoTrack?.removeSink(renderer) } }
-        renderers.values.forEach { renderer -> runCatching { renderer.release() } }
-        renderers.clear()
-        remoteVideo.clear()
-        trackOwners.clear()
         audioTrack = null
-        videoTrack = null
         peers.stop()
         audio.stop()
         IMCallForegroundService.stop(appContext)
@@ -132,14 +174,11 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             return
         }
 
-        val track = startCapture(cid) ?: return
+        // 采集可能早就起来了（拨出中的本端预览）——那时摄像头只开一次，这里只是多挂一条轨道。
+        val source = ensureCapture() ?: return
+        // track id 就是 cid（同上面那条注释）。
+        val track = peers.factory().createVideoTrack(cid, source)
         videoTrack = track
-        // 预览可能**早于**采集就挂好了（拨出时先给本端一个格子）。那时候还没有轨道，
-        // 不在这里补挂的话本端预览一辈子是空的——真机上的「开了摄像头自己也看不见」。
-        renderers[LOCAL]?.let { renderer ->
-            renderer.setMirror(frontCamera)
-            track.addSink(renderer)
-        }
         // simulcast：三层同时发上去，SFU 按每个订阅者的网速替他挑一层。
         // rid 必须是 l/m/h——与服务端的层选择、max_layer 枚举同名。
         val encodings = if (simulcast) {
@@ -155,7 +194,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
                 encodings,
             ),
         )
-        IMCallForegroundService.start(appContext, withCamera = true)
+        // 前台服务的 camera 类型由 ensureCapture 负责升级——采集起来的那一刻才算真的在用摄像头。
     }
 
     override fun unpublish(cid: String) {
@@ -178,34 +217,50 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     override fun createVideoView(context: android.content.Context): android.view.View =
         SurfaceViewRenderer(context)
 
-    override fun attachView(uid: String, view: Any?) {
+    override fun attachView(uid: String, view: Any?) = onMain {
         detachRenderer(uid)
-        val renderer = view as? SurfaceViewRenderer ?: return
+        val renderer = view as? SurfaceViewRenderer ?: return@onMain
+        // **这两行必须在主线程**，否则直接抛 IllegalStateException（见类注释）。
         renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(uid))
         renderer.setEnableHardwareScaler(true)
         renderers[uid] = renderer
         bindRemoteTracks()
     }
 
-    override fun claimRemoteTracks(owners: Map<String, String>) {
+    override fun claimRemoteTracks(owners: Map<String, String>) = onMain {
         trackOwners.putAll(owners)
         bindRemoteTracks()
     }
 
-    override fun startLocalPreview(view: Any?) {
+    /**
+     * 本端预览。**它自己会把摄像头开起来**（只采集、不发布）。
+     *
+     * 拨出中还没有房间可发布，而用户此刻就该看见自己。预览走 [previewTrack]，
+     * 与推流那条共用同一个 source，所以摄像头只开一次、切换也只有一处。
+     */
+    override fun startLocalPreview(view: Any?) = onMain {
         renderers[LOCAL]?.let { old ->
-            runCatching { videoTrack?.removeSink(old) }
+            runCatching { previewTrack?.removeSink(old) }
             runCatching { old.release() }
         }
         val renderer = view as? SurfaceViewRenderer ?: run {
             renderers.remove(LOCAL)
-            return
+            return@onMain
         }
         renderer.init(peers.eglBase.eglBaseContext, null)
+        renderer.setEnableHardwareScaler(true)
         renderer.setMirror(frontCamera)
         renderers[LOCAL] = renderer
-        // 采集可能还没起来（拨出时先摆格子）；publish 里会补挂。
-        videoTrack?.addSink(renderer)
+        ensurePreviewTrack()?.addSink(renderer)
+    }
+
+    /** 造（或复用）只给预览看的那条轨道。拿不到摄像头时返回 null，界面退回头像。 */
+    private fun ensurePreviewTrack(): VideoTrack? {
+        previewTrack?.let { return it }
+        val source = ensureCapture() ?: return null
+        val track = peers.factory().createVideoTrack(PREVIEW_TRACK_ID, source)
+        previewTrack = track
+        return track
     }
 
     /**
@@ -245,7 +300,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             object : CameraVideoCapturer.CameraSwitchHandler {
                 override fun onCameraSwitchDone(isFront: Boolean) {
                     frontCamera = isFront
-                    renderers[LOCAL]?.setMirror(isFront)
+                    onMain { renderers[LOCAL]?.setMirror(isFront) }
                 }
 
                 override fun onCameraSwitchError(error: String) {
@@ -259,7 +314,13 @@ class IMWebRTCAdapter @JvmOverloads constructor(
 
     // ── 采集 ──────────────────────────────────────────────────────────
 
-    private fun startCapture(cid: String): VideoTrack? {
+    /**
+     * 起摄像头采集，**幂等**：已经在采了就直接返回那个 source。
+     *
+     * 本端预览与推流共用它——摄像头只开一次。拿不到摄像头时抛 `2002 device_not_found` 并返回 null。
+     */
+    private fun ensureCapture(): VideoSource? = synchronized(captureLock) {
+        videoSource?.let { return it }
         val enumerator: CameraEnumerator = if (Camera2Enumerator.isSupported(appContext)) {
             Camera2Enumerator(appContext)
         } else {
@@ -281,11 +342,16 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         capturer = videoCapturer as? CameraVideoCapturer
         captureHelper = helper
         videoSource = source
-        // track id 就是 cid（同 publish 里那条注释）。
-        return peers.factory().createVideoTrack(cid, source)
+        IMCallForegroundService.start(appContext, withCamera = true)
+        return source
     }
 
-    private fun stopCapture() {
+    private fun stopCapture() = synchronized(captureLock) {
+        val preview = previewTrack
+        previewTrack = null
+        videoTrack = null
+        // 先把预览的 sink 摘干净再 dispose，反了会崩在 native 层。
+        onMain { renderers[LOCAL]?.let { r -> runCatching { preview?.removeSink(r) } } }
         runCatching { capturer?.stopCapture() }
         capturer?.dispose()
         captureHelper?.dispose()
@@ -331,9 +397,12 @@ class IMWebRTCAdapter @JvmOverloads constructor(
              等 claimRemoteTracks 认领。
             */
             val trackId = track.id()
-            remoteVideo[trackId] = video
             IMRTCLog.i("media", "远端视频轨道到达：track_id=$trackId stream=$streamId")
-            bindRemoteTracks()
+            // 这里是 WebRTC 的信令线程；三张表都归主线程管（见类注释）。
+            onMain {
+                remoteVideo[trackId] = video
+                bindRemoteTracks()
+            }
         }
 
         override fun onError(message: String) {
@@ -343,5 +412,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
 
     private companion object {
         const val LOCAL = "__local__"
+
+        /** 预览轨道的 id。**不会上线路**（它没进过任何 transceiver），随便取一个不与 cid 冲突的。 */
+        const val PREVIEW_TRACK_ID = "im-local-preview"
     }
 }

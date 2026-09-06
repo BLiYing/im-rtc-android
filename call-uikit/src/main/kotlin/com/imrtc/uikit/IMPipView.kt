@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import com.imrtc.engine.log.IMRTCLog
 
 /**
  * 1v1 视频里浮在角上的那块小画面（交互稿 §04）：单击回调（互换由调用方做）、**长按 350ms 进入拖动态**、
@@ -57,6 +58,37 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
         contentDescription = "本端画面。轻点互换，长按可移动"
     }
 
+    /**
+     * 每次自己被摆放之后校一次位置。
+     *
+     * **位置是按容器宽高算出来的，而第一次 `snap` 往往发生在容器还没量出来的时候**
+     * （通话页一建好就 render 了一轮，那时 stage 的宽是 0）——算出来的「右上角」
+     * 退化成 x=0，于是小窗停在左上角，正好压住标题栏那颗「小窗」按钮。
+     * 而容器量出来之后没有任何一条路径会再摆一次：根布局的 `onLayout(changed)`
+     * 早就不再为真了。这里在自己的 onLayout 里补一次，容器有真尺寸时才动。
+     *
+     * **只改 x/y、不碰 layoutParams**：碰了会再触发一轮 layout，变成死循环。
+     */
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (dragging) return
+        val c = container ?: return
+        if (c.width <= 0 || c.height <= 0) return
+        val origin = restOrigin(corner)
+        val tx = (origin.x * density).toFloat()
+        val ty = (origin.y * density).toFloat()
+        if (kotlin.math.abs(x - tx) > 0.5f || kotlin.math.abs(y - ty) > 0.5f) {
+            x = tx
+            y = ty
+        }
+    }
+
+    /** 一从隐藏变可见就按容器的真尺寸重摆一次（尺寸也可能要跟着容器形状换）。 */
+    override fun onVisibilityAggregated(isVisible: Boolean) {
+        super.onVisibilityAggregated(isVisible)
+        if (isVisible) post { layoutInContainer() }
+    }
+
     /** 容器尺寸变了（转屏、首次布局）就按当前角重摆。 */
     fun layoutInContainer() {
         if (!dragging) snap(animated = false)
@@ -78,12 +110,23 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
     }
 
     private fun snap(animated: Boolean) {
+        /*
+         **容器没量出来就不要摆。** `origin()` 是拿容器宽高算的，宽是 0 时「右上角」会退化成
+         x=0——小窗停在左上角，正好压住标题栏那颗「小窗」按钮。而通话页一建好就 render 了一轮，
+         那一轮恰恰在第一次 layout 之前。等下一轮（post 在布局之后跑）。
+        */
+        val c = container
+        if (c == null || c.width <= 0 || c.height <= 0) {
+            post { if (isAttachedToWindow) snap(animated = false) }
+            return
+        }
         val size = sizeDp()
         val wanted = LayoutParams((size.width * density).toInt(), (size.height * density).toInt())
         if (layoutParams?.width != wanted.width || layoutParams?.height != wanted.height) layoutParams = wanted
         val origin = restOrigin(corner)
         val tx = (origin.x * density).toFloat()
         val ty = (origin.y * density).toFloat()
+        IMRTCLog.d("kit", "小窗吸角 corner=$corner container=${c.width}x${c.height} -> ($tx,$ty)")
         if (!animated) { x = tx; y = ty; return }
         animate().x(tx).y(ty).scaleX(1f).scaleY(1f).setDuration(IMKitTheme.SNAP_MS).start()
     }

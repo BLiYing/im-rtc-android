@@ -77,8 +77,18 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             render(state)
         }
 
+    /**
+     * 全屏画面的宿主：**根布局最底下一层，铺满整屏**（含状态栏与手势条那两条）。
+     *
+     * 原先全屏画面钉在 `stage` 里，而 stage 是「头部下方、控制条上方」那一块——
+     * 于是视频顶上顶着一条黑边、底下再一条，真机上看着就是「没有全屏」。
+     * 现在头部与控制条浮在画面上（它们自带 scrim），画面自己铺满。
+     */
+    private val videoFull = FrameLayout(context)
+
     init {
         setBackgroundColor(IMKitTheme.background)
+        addView(videoFull, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         column.orientation = LinearLayout.VERTICAL
         addView(column, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         column.addView(header, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.HEADER_HEIGHT_DP)).apply { topMargin = dp(8) })
@@ -106,7 +116,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         addView(banner, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(12) })
         // 控制条放在最上层（它在 column 里会被 scrim 盖住），所以从 column 摘出来重挂。
         column.removeView(controls)
-        addView(controls, LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.CONTROLS_HEIGHT_DP), Gravity.BOTTOM).apply { bottomMargin = dp(26) })
+        addView(controls, LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.CONTROLS_HEIGHT_DP), Gravity.BOTTOM).apply { bottomMargin = dp(CONTROLS_BOTTOM_DP) })
         controls.orientation = LinearLayout.HORIZONTAL
         controls.gravity = Gravity.CENTER or Gravity.TOP
         grid.alignmentMode = GridLayout.ALIGN_BOUNDS
@@ -154,7 +164,15 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             bottom = insets.systemWindowInsetBottom
         }
         // 画中画里那一小块窗口没有系统栏，再留白等于白白吃掉画面。
-        setPadding(0, if (pipMode) 0 else top, 0, if (pipMode) 0 else bottom)
+        val padTop = if (pipMode) 0 else top
+        val padBottom = if (pipMode) 0 else bottom
+        // **只让开「壳」，不让开画面**：留白打在根布局上的话，全屏画面也会被一起顶下去，
+        // 顶上顶着一条黑边——那正是「没有全屏」的样子。
+        (column.layoutParams as? LayoutParams)?.let { it.topMargin = padTop; column.layoutParams = it }
+        (controls.layoutParams as? LayoutParams)?.let {
+            it.bottomMargin = dp(CONTROLS_BOTTOM_DP) + padBottom
+            controls.layoutParams = it
+        }
         return super.onApplyWindowInsets(insets)
     }
 
@@ -272,9 +290,11 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         val remote = tiles.getOrPut(peer.uid) { IMVideoTile(context) }
         retireTiles(setOf(peer.uid))
         remote.setVideoView(actions?.videoViewFor(peer.uid), overlay = state.isSwapped)
-        remote.apply(peer.uid, peer.uid, peer.video, peer.audio, state.speakingUid == peer.uid,
+        // **1v1 不做发言高亮**（绿描边 + 绿名牌）：只有两个人，谁在说话本来就一目了然，
+        // 而那圈绿边压在全屏画面上只会显得像出了什么问题。九宫格里才需要它。
+        remote.apply(peer.uid, peer.uid, peer.video, peer.audio, isSpeaking = false,
             networkLevel = peer.networkLevel, avatarSizeDp = if (state.isSwapped) 44 else IMKitTheme.AVATAR_LARGE_DP)
-        applySelf(state, true, if (state.isSwapped) IMKitTheme.AVATAR_LARGE_DP else 44)
+        applySelf(state, actions?.hasLocalVideo() ?: false, if (state.isSwapped) IMKitTheme.AVATAR_LARGE_DP else 44)
         // 默认远端全屏、本端小窗；互换后反过来。层上界由 Kit 按 isSwapped 报。
         val (full, small) = if (state.isSwapped) selfTile to remote else remote to selfTile
         pinFull(full)
@@ -367,14 +387,14 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         if (fullTile === tile) return
         unpinFull()
         (tile.parent as? android.view.ViewGroup)?.removeView(tile)
-        stage.addView(tile, 0, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        videoFull.addView(tile, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         tile.background = null
         fullTile = tile
     }
 
     private fun unpinFull() {
         fullTile?.let {
-            stage.removeView(it)
+            videoFull.removeView(it)
             it.background = IMKitTheme.roundedDrawable(IMKitTheme.tileBackground, dp(IMKitTheme.TILE_RADIUS_DP))
         }
         fullTile = null
@@ -414,4 +434,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private companion object {
+        /** 控制条离屏幕底边的距离（还要再加上手势条的 inset）。 */
+        const val CONTROLS_BOTTOM_DP = 26
+    }
 }

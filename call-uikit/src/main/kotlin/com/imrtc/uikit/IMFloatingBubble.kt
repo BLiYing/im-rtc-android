@@ -22,8 +22,11 @@ import android.widget.TextView
  *
  * 拖完吸附到最近的左右边缘；位移超过 `touchSlop` 才算拖，否则松手当点击。
  *
- * 右上角恒有一颗 **22 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
+ * **底部居中恒有一颗 28 的红色挂断**：收进小窗之后没有它就只能先展开回全屏才能挂断，
  * 而「随手挂掉」正是小窗最常用的一件事。红色是危险动作的唯一颜色（规范 §01 danger）。
+ *
+ * 位置在底部居中而不是右上角：球会吸到屏幕左右边缘，右上角那一版有一半贴着边框，
+ * 拇指够过去十次有三次点不中。与 iOS 的 `IMFloatingBubble` 同一处位置。
  */
 internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
 
@@ -65,11 +68,15 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
         hangup.setColorFilter(IMKitTheme.primaryText)
         hangup.background = IMKitTheme.circleDrawable(IMKitTheme.hangup)
         hangup.contentDescription = "挂断"
-        hangup.setPadding(dp(5), dp(5), dp(5), dp(5))
+        hangup.setPadding(dp(6), dp(6), dp(6), dp(6))
         hangup.scaleType = ImageView.ScaleType.FIT_CENTER
         hangup.setOnClickListener { onHangup?.invoke() }
-        addView(hangup, LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.END))
-        // 悬浮球自己 clipToOutline，挂断得贴在圆内的右上角，不能探到外面去。
+        // 贴在球体底部**内侧**：球自己 clipToOutline，探到外面去会被裁掉。
+        addView(
+            hangup,
+            LayoutParams(dp(HANGUP_DP), dp(HANGUP_DP), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                .apply { bottomMargin = dp(2) },
+        )
         contentDescription = "通话中，点击展开"
     }
 
@@ -161,6 +168,9 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
+        /** 挂断按钮的直径。28 是「拇指够得着」的下限（规范 §04 的小控件尺寸）。 */
+        private const val HANGUP_DP = 28
+
         /** 初始位置：右上角靠下一点，避开状态栏与常见的顶部导航。 */
         fun initialParams(context: Context): FrameLayout.LayoutParams {
             val density = context.resources.displayMetrics.density

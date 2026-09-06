@@ -22,6 +22,17 @@ internal object IMActivityTracker : Application.ActivityLifecycleCallbacks {
     private var current: WeakReference<Activity>? = null
     private var installed = false
 
+    /**
+     * 还有几个 Activity 处于 started 状态。**0 = 整个 App 到后台了。**
+     *
+     * 这里连 [IMCallActivity] 一起数（与 [current] 不同）：判「App 在不在前台」要看全部界面，
+     * 而通话页恰恰是通话中最常在前台的那一个。
+     */
+    private var startedCount = 0
+
+    /** App 前后台切换。通话页据此暂停 / 恢复本端视频（交互稿 §03）。 */
+    var onForegroundChanged: ((Boolean) -> Unit)? = null
+
     fun install(application: Application) {
         if (installed) return
         installed = true
@@ -44,8 +55,17 @@ internal object IMActivityTracker : Application.ActivityLifecycleCallbacks {
     }
 
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-    override fun onActivityStarted(activity: Activity) = Unit
-    override fun onActivityStopped(activity: Activity) = Unit
+
+    override fun onActivityStarted(activity: Activity) {
+        startedCount++
+        if (startedCount == 1) onForegroundChanged?.invoke(true)
+    }
+
+    override fun onActivityStopped(activity: Activity) {
+        startedCount = (startedCount - 1).coerceAtLeast(0)
+        if (startedCount == 0) onForegroundChanged?.invoke(false)
+    }
+
     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
     override fun onActivityDestroyed(activity: Activity) {
         if (current?.get() === activity) current = null
