@@ -10,6 +10,21 @@
 
 ## 当前焦点
 
+**上行 ICE 断了自己重连（2026-09-06 夜）**，`./scripts/test.sh` 六步全绿。
+
+`IMPeerConnections` 的观察者原先看到 `pub` 走到 `FAILED` 只报一条 `onError` 就完了。
+那条 PC 的 offerer 是本端，**只能自己救**（`sub` 那条由服务端救，协议 §3.3 已补规则）：
+现在 `FAILED` 时 `createOffer(pc, iceRestart = true)`，`MediaConstraints` 里带上 `IceRestart`。
+不救的后果是**静默掉队**：切网 / 进电梯 / 锁屏久了人就永久掉出这通通话，
+对端格子从此是一块黑，而界面上一切正常、谁也不挂断。
+
+`pendingIceRestart` 与 `pendingOffer` **刻意分开**：补协商补的是一个普通 offer，
+丢了 restart 这一位那条 PC 就永远重连不上，而日志里一切正常。
+
+**没做**：真机断网实测——这条要拔网线 / 进电梯才验得了，只有编译 + 单测过。
+
+## 上一轮
+
 **「锁屏解锁后某个格子黑屏」——不是解锁弄坏的，是解锁擦掉了那张遮丑的旧画面（2026-09-06 夜）**
 ，`./scripts/test.sh` 六步全绿。
 

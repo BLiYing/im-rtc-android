@@ -65,6 +65,13 @@ internal class IMPeerConnections(
      */
     private val negotiating = mutableSetOf<String>()
     private val pendingOffer = mutableSetOf<String>()
+    /**
+     * 「要重启 ICE，但那一刻有 offer 在飞」。
+     *
+     * **不能和 [pendingOffer] 合并**：补协商补的是一个普通 offer，
+     * 丢了 ICE restart 这一位，网断了这条 PC 就永远重连不上，而日志里一切正常。
+     */
+    private val pendingIceRestart = mutableSetOf<String>()
 
     fun factory(): PeerConnectionFactory = factory
 
@@ -96,6 +103,7 @@ internal class IMPeerConnections(
     fun stop() {
         negotiating.clear()
         pendingOffer.clear()
+        pendingIceRestart.clear()
         pub?.apply {
             close()
             dispose()
@@ -112,15 +120,27 @@ internal class IMPeerConnections(
 
     fun connection(pc: String): PeerConnection? = if (pc == "sub") sub else pub
 
-    fun createOffer(pc: String) {
+    /**
+     * @param iceRestart 这一轮要不要**重启 ICE**（换一对新的 ufrag/pwd 重新打洞）。
+     *   网抖没了、换了 Wi-Fi、锁屏久了之后，`pub` 那条 PC 会走到 `FAILED` 且**自己不会回来**；
+     *   重新协商一个普通 offer 也救不了它，必须带这一位。
+     */
+    fun createOffer(pc: String, iceRestart: Boolean = false) {
         val connection = connection(pc) ?: return
         if (pc in negotiating) {
             // 已经有一个 offer 在飞：记下来，等这一轮的 answer 落地再补一次。
             pendingOffer += pc
-            IMRTCLog.d("media", "$pc 协商进行中，offer 排队")
+            if (iceRestart) pendingIceRestart += pc
+            IMRTCLog.d("media", "$pc 协商进行中，offer 排队（iceRestart=$iceRestart）")
             return
         }
         negotiating += pc
+        // 上一轮想重启但当时有 offer 在飞，这一轮补上。
+        val restart = iceRestart || pendingIceRestart.remove(pc)
+        val constraints = MediaConstraints().apply {
+            if (restart) mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
+        }
+        if (restart) IMRTCLog.i("media", "$pc 重启 ICE")
         connection.createOffer(
             object : SimpleSdpObserver("createOffer/$pc") {
                 override fun onCreateSuccess(description: SessionDescription) {
@@ -128,7 +148,7 @@ internal class IMPeerConnections(
                     events.onLocalSdp(pc, "offer", description.description)
                 }
             },
-            MediaConstraints(),
+            constraints,
         )
     }
 
@@ -208,8 +228,21 @@ internal class IMPeerConnections(
             ) {
                 events.onSubConnected()
             }
+            /*
+             **ICE 失败不是终点，是该重连的信号。**
+
+             `pub` 那条 PC 的 offerer 是客户端，所以只能由我们自己重启；
+             `sub` 那条的 offerer 恒为服务端（协议 §3.3），由服务端自己重启，这里不碰。
+             不重启的后果：网抖一下（换 Wi-Fi、进电梯、锁屏久了）他就**永久掉出这通通话**，
+             对端的格子从此是一块黑，而界面上一切正常、谁也不挂断。
+             真机上抓到过 iOS 的两条 PC 从某一刻起五分钟一轮地失败，再没回到 CONNECTED。
+
+             重启失败还会再进 FAILED，于是天然形成一个重试节奏；人真的走了由信令层收场。
+             `onError` 照旧报——顶部那条橙色提示还是要出的。
+            */
             if (state == PeerConnection.IceConnectionState.FAILED) {
                 events.onError("$pc ICE failed")
+                if (pc == "pub") createOffer(pc, iceRestart = true)
             }
         }
 
