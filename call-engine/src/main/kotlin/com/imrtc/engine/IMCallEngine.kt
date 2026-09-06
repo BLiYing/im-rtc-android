@@ -203,6 +203,7 @@ class IMCallEngine private constructor(
      * Web 的 `setRemoteLayer` 是同一条；本端从缺到有是 2026-09-06 补的。
      */
     fun setRemoteLayer(uid: String, layer: String) = scheduler.post {
+        var sent = 0
         for ((trackId, info) in ctx.room.remoteTracks) {
             if (info.uid != uid || info.kind != "video") continue
             input(
@@ -211,6 +212,23 @@ class IMCallEngine private constructor(
                     mapOf("track_id" to IMJson.Str(trackId), "max_layer" to IMJson.Str(layer)),
                 ),
             )
+            sent++
+        }
+        /*
+         **这两行是这条通路唯一的外部可见性。**
+
+         服务端不记录成功的 room 帧（`room.subscribe` / `room.update_layer` 在它的日志里一条都没有），
+         客户端也不逐帧打日志——于是「层上界压根没发出去」这件事悄悄躺了好几周：
+         门面上连这个方法都没有，而症状只是「画面卡」，没有任何一条报错。
+         想验证这条通路有没有真的走通，除了这行日志没有别的办法。
+
+         **找不到轨道不是错**：人先进来、轨道后到是常态，轨道到了 Kit 会重报
+         （`IMCallKit.invalidateReportedLayer`）。所以那一支记 DEBUG 不记 WARN。
+        */
+        if (sent > 0) {
+            IMRTCLog.i("engine", "层上界已报 uid=$uid layer=$layer tracks=$sent")
+        } else {
+            IMRTCLog.d("engine", "层上界暂不发 uid=$uid layer=$layer（他的视频轨道还没到）")
         }
     }
 
