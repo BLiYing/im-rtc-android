@@ -46,6 +46,14 @@ internal enum class IMErrorCode(
     KICKED_OUT(1104, "kicked_out", "kicked out", "auth", false),
     /** session_id 无效或超出 30s 恢复窗口 */
     SESSION_NOT_RESUMABLE(1105, "session_not_resumable", "session not resumable", "auth", false),
+    /**
+     * 票据合法但该 app_id 已被停用（宿主在控制台停用了整个应用）。
+     *
+     * **与 1101/1102 不是一回事**：那两个是「票有问题，换一张再来」，
+     * 而这个是「票没问题，是这个应用被停了」——端上该显示「服务已停用」
+     * 而不是把人送回登录页反复重试。
+     */
+    APP_DISABLED(1106, "app_disabled", "application disabled", "auth", false),
     /** 房间不存在或已关闭 */
     ROOM_NOT_FOUND(1201, "room_not_found", "room not found", "room", false),
     /** 超出 max_participants */

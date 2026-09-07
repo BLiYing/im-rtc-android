@@ -28,4 +28,9 @@ dependencies {
     implementation(project(":call-engine"))
     implementation(project(":call-engine-webrtc"))
     implementation(project(":call-uikit"))
+
+    // 日志回传那条路要真的验：手写的 JSON 序列化与攒批队列都是纯逻辑，
+    // 跑在 JVM 上不需要设备（CONVENTIONS §测试）。
+    testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
 }
