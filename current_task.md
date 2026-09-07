@@ -10,6 +10,30 @@
 
 ## 当前焦点
 
+**1v1 视频里点小窗必崩，已修 + 真机复验（2026-09-07）**，`./scripts/test.sh` 六步全绿。
+
+崩在 `IMFloatingBubble.setVideoView`：`java.lang.IllegalStateException: The specified
+child already has a parent`（`adb logcat -b crash`，同一条栈两次）。
+
+远端渲染器是**一个 uid 一份、整通复用**的（`IMCallKit.videoViewFor` 缓存在 `remoteViews`），
+点小窗那一刻它还挂在全屏页的格子上，而小窗直接 `addView`——**没先从原父容器上摘下来**。
+旁边两个容器都做了这件事（`IMVideoTile.setVideoView`、`IMCallGridView`），只有小窗漏了。
+
+顺手补的第二个洞：`mountBubble` 挂在 `applyPresentation` 上，**每次状态更新都会跑**，
+而时长每秒走一格——原先每秒把渲染器摘一次挂一次，`SurfaceView` 的 surface 跟着销毁重建。
+判重那行（`IMVideoTile` 早就有）就是防这个的。
+
+**真机复验（OPPO PKD130 + web demo 的 dave 当对端，合成音视频源）**：接通 → 点小窗 →
+小窗里画面正常 → 展开回全屏 → 再收起，`crash` 缓冲区全程为空、进程号不变；
+小窗稳态 8 秒内 surface 创建/销毁 **0 次**（不判重的话这里该是每秒一轮）。
+
+**没加单测，是拍板不加**：这条是纯视图层行为，本仓只有纯 JVM 单测，钉不住
+「addView 前先摘父」这类断言，而引 Robolectric 会把「一条命令、无设备、秒级」磨掉。
+**结论是视图层也走真机**，规则改写进 `CONVENTIONS.md` §10 那条红线里（含判重那半）——
+下次再有人想加容器，照抄现有三个即可，别再重新讨论一遍要不要 Robolectric。
+
+## 上一轮
+
 **Pixel 上「carol 登录不了」查清了：不是 device_id，是地址与链路（2026-09-07）**。
 `./scripts/test.sh` 六步全绿。**SDK 与 Demo 一行没错**——`android-Pixel-2-XL` 已在
 服务端日志里坐实，`sanitizeDeviceId` 那条修复是好的。
@@ -86,7 +110,7 @@ Mac 的网关 ARP 是 `…:08:78`——**同一 SSID 下的两个 AP（主路由
 **没做**：`defaultServer` 的取值策略仍然没动，「失败的地址不记住」保持原样。
 路由器那边两个 AP 互不通的问题也没碰——那要进路由器后台，命令行够不着。
 
-## 上一轮
+## 更早
 
 **SDK 层挡住不合规的 device_id + 握手错误按 retryable 分流（2026-09-07）**，
 `./scripts/test.sh` 六步全绿。都是上一轮真机验收暴露出来的。
@@ -164,23 +188,6 @@ Mac 的网关 ARP 是 `…:08:78`——**同一 SSID 下的两个 AP（主路由
 
 **没做**：真机验收。只有 JVM 单测 + MockWebServer，没在真机上跑过一次完整的
 「打电话 → 看服务端日志文件」。
-
-## 更早
-
-**会话恢复之后重新协商上行 + 红按钮永不静默（2026-09-07）**，`./scripts/test.sh` 全绿。
-
-| 改动 | 为什么 |
-|---|---|
-| `IMMediaAdapter.restartPubICE()`（新）+ `IMPeerConnections.markIceRestart()` | **本仓原先是三端里唯一不对称的**：ICE 重启只活在媒体实现内部，引擎调不到；iOS/Web 的适配器早有这个方法。补齐后三端同名 |
-| `RoomStateMachine` 新增 act `restart_pub_ice`（+ `ROOM_ACTS`） | 与 iOS/Web 对齐：发帧是 Engine 的事，媒体层不认识信令，也不知道此刻房间在不在 joined |
-| `onConnected` 里 `resumed==true` → 重协商上行 | 协议 §1.4 写着「客户端的 pub PC 若已失效则重发 `room.offer{pc:"pub"}`」，一直没实现。只挂在「PC 判 FAILED 那一刻」是不行的——网一断信令也断，房间已是 reconnecting，动作会被拒且不进缓冲 |
-| `IMCallKit.hangup()` 的 `Action.NONE` 分支不再是 `Unit` | 用户按挂断的意图没有歧义：把我弄出去。认不出该发哪种结束帧 = 本地记账已经和服务端对不上，那时唯一正确的动作是**本地收场**，不是什么都不做 |
-
-**媒体实现里那条即时重启保留**（`FAILED` → `createOffer(iceRestart=true)`）：信令还活着时它是对的。
-
-**没做 / 已知限制**：本轮**没有任何真机复验**——ICE 那条尤其要真的拔网线才验得了。
-Android「无法挂断」的**根因未定**（Android 不上报日志到 logsink，只有 logcat），
-只做了「红按钮永不静默」的兜底；服务端补发一落地，那个僵尸态本身就不该再出现了。
 
 ## 下一步
 

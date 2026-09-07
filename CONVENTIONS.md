@@ -165,6 +165,21 @@ libwebrtc 是几十 MB 的预编译包，一旦被 Engine 直接依赖，「跑�
   **只读引用，不许在本仓复制一份**。
 - 纯逻辑（状态机、帧编解码、格子布局计算）用 JUnit 直接跑在 JVM 上，
   **不需要模拟器、不需要 Robolectric**。做不到就说明 §1 那条分层被破坏了。
+- **视图层的行为也走真机，不引 Robolectric**（2026-09-07 拍板）。代价是这类 bug
+  单测拦不住，所以**规则写在这里，靠评审与真机兜**：
+
+  > **任何要挂共享渲染器的容器，`addView` 之前必须先 `(view.parent as? ViewGroup)?.removeView(view)`。**
+
+  渲染器是**一个 uid 一份、整通复用**的（`IMCallKit.videoViewFor`），换容器时它多半
+  还挂在上一个容器上，不摘就是 `IllegalStateException: The specified child already has
+  a parent`，当场崩在主线程。同一条规则目前有三个实现点——`IMVideoTile` /
+  `IMCallGridView` / `IMFloatingBubble`，**小窗那个漏过一次**（1v1 视频里点小窗必崩）。
+  再加第四个容器时照抄前三个。
+
+  同一处还要**判重**（`videoHost.getChildAt(0) === view` 就直接返回）：挂载点大多
+  挂在每秒都会跑的 render 上，不判重就是每秒把渲染器摘一次挂一次，`SurfaceView`
+  的 surface 跟着销毁重建，症状是画面闪而不是报错。
+
 - **音视频链路一律真机验收**，且要写清楚测了什么：接通 / 静音互见 / 翻转摄像头 /
   切后台 / 息屏 / 蓝牙耳机切换 / 弱网。
 - **与另外三端互打**才算通：Android ↔ Web、Android ↔ iOS 各一次。

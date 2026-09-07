@@ -92,8 +92,15 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
         duration.text = IMGrid.formatDuration(state.durationSec)
     }
 
-    /** 挂远端缩略画面：切成 90×120 的视频形态。 */
+    /**
+     * 挂远端缩略画面：切成 90×120 的视频形态。
+     *
+     * **同一个 view 再来一次就直接返回。** `mountBubble` 挂在 `applyPresentation` 上，
+     * 每次状态更新都会调到这里，而时长每秒走一格——不判重的话这块渲染器一秒摘挂一回，
+     * `SurfaceView` 的 surface 跟着销毁重建，小窗里只剩闪烁。
+     */
     fun setVideoView(view: View?) {
+        if (videoHost.getChildAt(0) === view && (view != null) == isVideo) return
         videoHost.removeAllViews()
         val video = view != null
         if (video != isVideo) {
@@ -115,7 +122,17 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
             duration.textSize = if (video) 10f else 11f
         }
         videoHost.visibility = if (video) VISIBLE else GONE
-        if (view != null) videoHost.addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        if (view != null) {
+            /*
+             **先从原父容器上摘下来。** 渲染器是一个 uid 一份、整通复用的
+             （`IMCallKit.videoViewFor`），点小窗这一刻它还挂在全屏页的格子上——
+             不摘就是 `IllegalStateException: The specified child already has a parent`，
+             当场崩在主线程。收起小窗回全屏是同一件事，那边由
+             `IMVideoTile.setVideoView` 摘（同一套写法，那边先踩到）。
+            */
+            (view.parent as? android.view.ViewGroup)?.removeView(view)
+            videoHost.addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        }
     }
 
     /** 挂断按钮自己处理触摸：不拦的话 onTouchEvent 会把它吞成「点球 = 展开」。 */
