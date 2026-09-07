@@ -22,7 +22,12 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
 
     override fun onDisconnected(code: Int, reason: String) {
         // 4401 是「换票再来」、4403 是被踢，其余都是会自己回来的断线。
-        val lost = code == 4403
+        //
+        // **已经是 LOST 就不再翻回 RECONNECTING**：放弃是终态，而 onKickedOut 与
+        // onDisconnected 的先后在不同放弃路径上并不一致——收到 close 那两条是先断后踢，
+        // 而握手当场被拒是先踢、close 后到。翻回去的症状是顶条上永远写着「正在重连」，
+        // 底下那条连接却根本不会再重连。重连成功时 onConnected 会把它拨回 OK。
+        val lost = code == 4403 || state.connection == IMCallViewState.Connection.LOST
         IMCallKit.update(IMCallViewReducer.connection(state, if (lost) IMCallViewState.Connection.LOST else IMCallViewState.Connection.RECONNECTING))
         host.onDisconnected(code, reason)
     }

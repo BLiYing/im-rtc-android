@@ -52,11 +52,21 @@ internal class IMPendingRequests(
         return true
     }
 
-    /** 失败应答（`sys.error`）。 */
-    fun reject(reqId: String, code: IMErrorCode, message: String): Boolean {
+    /**
+     * 失败应答（`sys.error`）。
+     *
+     * **把 `sys.error` 的 data 原样带给回调**，不是给一个空表：那一帧上有服务端自己判的
+     * `retryable`，而本端的错误码表是「上一次同步时」的快照——遇到本端还不认识的新码
+     * （本仓漏过一次 1106），只有帧上那个字段说得准。
+     *
+     * 同理 [code] **可以为 null，且必须原样传下去**：`IMErrorCode.fromCode` 特意用 null
+     * 表示「没见过这个码」。在这里兜底成 `INTERNAL` 的话，那个区分当场就没了——
+     * 而 `INTERNAL` 是 retryable 的，于是所有不认识的终局错误都会退化成无限重连。
+     */
+    fun reject(reqId: String, code: IMErrorCode?, message: String, data: Map<String, IMJson>): Boolean {
         val entry = entries.remove(reqId) ?: return false
         entry.timer.cancel()
-        entry.callback.onResult(false, emptyMap(), code, message)
+        entry.callback.onResult(false, data, code, message)
         return true
     }
 

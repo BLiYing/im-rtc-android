@@ -212,7 +212,7 @@ class SignalConnectionTest {
         assertEquals(listOf(IMKickedOutReason.AUTH_EXPIRED), events.kickReasons)
     }
 
-    // ── 握手失败的分流：可重试的重连，不可重试的一次就放弃 ────────────────
+    // ── 握手失败的分流：可重试的重连，不可重试的按「谁救得了」分三种 ──────────
 
     /**
      * 不可重试的握手错误**一次就放弃**，不再重连。
@@ -242,13 +242,44 @@ class SignalConnectionTest {
         assertEquals("不可重试的错误却重连了", 1, transport.connectCount)
     }
 
+    /**
+     * **放弃的时候要自己把 socket 关掉**，别指望对端替我们关。
+     *
+     * 不关的症状是 `connecting` 一直是 true，而 `openSocket` 第一行就
+     * `if (stopped || connecting || connected) return`——宿主照着 onKickedOut 的建议
+     * 改完配置再 `login()`，会被这一行静默挡掉：没有 socket、没有日志、没有回调。
+     */
     @Test
-    fun `协议版本不支持与应用停用同样一次就放弃`() {
-        for ((code, name) in listOf(
-            1006L to "protocol_version_unsupported",
-            1106L to "app_disabled",
-            1101L to "token_invalid",
-        )) {
+    fun `放弃时自己关掉 socket，之后还能重新 login`() {
+        connection.start(config, "tk-1")
+        transport.open()
+        transport.replyError(IMFrameType.HELLO, 1004, "bad_params")
+
+        assertEquals("放弃时该自己关 socket", 1, transport.closeCount)
+
+        // 宿主改完配置重新登录：必须真的再连一次。
+        connection.start(config, "tk-2")
+        assertEquals("重新 login 之后没有再连", 2, transport.connectCount)
+    }
+
+    /**
+     * **不可重试 ≠ 参数不对。** 三类的处置完全相反，合成一类就是给宿主一条错的建议：
+     * 「去改配置」救不了一枚该换的票，「换票」也救不了一个被封的号。
+     */
+    @Test
+    fun `不可重试的握手错误按「谁救得了」分成三种原因`() {
+        val cases = listOf(
+            // 参数/应用状态不对：换票和重试都没用，只能去改配置。
+            Triple(1004L, "bad_params", IMKickedOutReason.CONFIG_REJECTED),
+            Triple(1006L, "protocol_version_unsupported", IMKickedOutReason.CONFIG_REJECTED),
+            Triple(1106L, "app_disabled", IMKickedOutReason.CONFIG_REJECTED),
+            // 票不合法：**换一枚就好**。服务端轮换签名密钥时全端都会撞上这个码，
+            // 报成 CONFIG_REJECTED 的话，本来静默换票就能恢复的事会把所有人踹回登录页。
+            Triple(1101L, "token_invalid", IMKickedOutReason.AUTH_EXPIRED),
+            // 宿主后台吊销了这个身份：服务端的吊销名单走的就是 sys.error{1104} + 4403。
+            Triple(1104L, "kicked_out", IMKickedOutReason.TAKEN_OVER),
+        )
+        for ((code, name, expected) in cases) {
             val transport = FakeTransport()
             val events = RecordingEvents()
             val scheduler = FakeScheduler()
@@ -260,23 +291,87 @@ class SignalConnectionTest {
             scheduler.advance(60_000)
             assertEquals("$name 不该重连", 1, transport.connectCount)
             assertEquals("$name 该放弃", 1, events.kickedOut)
-            assertEquals(IMKickedOutReason.CONFIG_REJECTED, events.kickReasons[0])
+            assertEquals("$name 的原因归错类了", expected, events.kickReasons[0])
         }
     }
 
     /**
-     * 1102 token_expired 是**唯一可重试**的握手错误：重连时 Engine 可能已经换到新票。
+     * 本端不认识的码**信帧上自带的 `retryable`**。
+     *
+     * 本端那张错误码表是「上次同步时」的快照。本仓漏过一次 1106，症状正是这里要根治的
+     * 无限重连：`fromCode` 返回 null，兜底成 1501 internal（可重试），于是照旧敲到天荒地老。
+     */
+    @Test
+    fun `本端不认识的终局码也一次就放弃`() {
+        connection.start(config, "tk-1")
+        transport.open()
+        // 1107：本端错误码表里没有这个码，但帧上写着 retryable=false。
+        transport.replyError(IMFrameType.HELLO, 1107, "tenant_suspended", retryable = false)
+
+        assertEquals("认不出的终局码却没放弃", 1, events.kickedOut)
+        scheduler.advance(60_000)
+        assertEquals("认不出的终局码却重连了", 1, transport.connectCount)
+    }
+
+    @Test
+    fun `本端不认识但可重试的码照常重连`() {
+        connection.start(config, "tk-1")
+        transport.open()
+        transport.replyError(IMFrameType.HELLO, 1508, "some_new_server_error", retryable = true)
+
+        assertEquals("可重试的错误不该放弃", 0, events.kickedOut)
+        scheduler.advance(60_000)
+        assertTrue("该继续重连，得到 ${transport.connectCount} 次", transport.connectCount > 1)
+    }
+
+    /**
+     * 1102 token_expired 是**可重试**的握手错误：重连时 Engine 可能已经换到新票。
      * 这条守住「别把可重试的也一起放弃了」。
      */
     @Test
     fun `票过期是可重试的：照常退避重连，不放弃`() {
         connection.start(config, "tk-1")
         transport.open()
-        transport.replyError(IMFrameType.HELLO, 1102, "token_expired", "token expired")
+        transport.replyError(IMFrameType.HELLO, 1102, "token_expired", "token expired", retryable = true)
 
         assertEquals("可重试的错误不该放弃", 0, events.kickedOut)
         scheduler.advance(60_000)
         assertTrue("该继续重连，得到 ${transport.connectCount} 次", transport.connectCount > 1)
+    }
+
+    /**
+     * **宿主自己按的退出不该报成「服务端拒了你的参数」。**
+     *
+     * `stop()` 会拿 `2007 not_logged_in`（local 组、retryable=false）把在飞的握手结掉。
+     * 只看 retryable 的话，一次正常的 `logout()` 就会抛 onKickedOut(CONFIG_REJECTED)——
+     * 而 `relogin()` 正是先 `logout()` 再换票的，静默续期会当场变成把人踹回登录页。
+     */
+    @Test
+    fun `握手途中 logout 不该报成被踢`() {
+        connection.start(config, "tk-1")
+        transport.open()
+        // hello 已经发出、还没有应答，这时宿主退出。
+        connection.stop()
+
+        assertEquals("宿主自己退出却报了 onKickedOut", 0, events.kickedOut)
+        scheduler.advance(60_000)
+        assertEquals("退出之后又连回去了", 1, transport.connectCount)
+    }
+
+    /**
+     * 放弃之后**票期定时器也要停**。
+     *
+     * 不停的症状：几分钟后它照样喊 onTokenWillExpire，宿主老实去后台换一枚新票塞回来，
+     * 而连接早就闩上了、不会因此重连——宿主以为救回来了，其实 Engine 已经哑了。
+     */
+    @Test
+    fun `放弃之后不再喊换票`() {
+        connect()
+        events.tokenWarnings.clear()
+        transport.closed(IMCloseCode.KICKED.code, "elsewhere")
+
+        scheduler.advance(24 * 60 * 60_000)
+        assertTrue("放弃之后还在喊换票：${events.tokenWarnings}", events.tokenWarnings.isEmpty())
     }
 
     private class RecordingEvents : IMSignalConnection.Events {

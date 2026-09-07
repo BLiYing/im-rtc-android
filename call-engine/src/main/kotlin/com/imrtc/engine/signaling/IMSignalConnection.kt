@@ -82,6 +82,14 @@ internal class IMSignalConnection(
 
     /** 闩：`logout()` 之后一切重连都不许再排（见类注释第 2 条）。 */
     private var stopped = true
+
+    /**
+     * 握手应答里当场判定的「放弃」原因，由 [handleClosed] 消费。
+     *
+     * 判定在 [sendHello]（只有那儿看得见错误码），收拾现场与上报在 [handleClosed]
+     * （只有那儿是关闭码的唯一出口）——这个字段就是两者之间的交接。
+     */
+    private var pendingGiveUp: IMKickedOutReason? = null
     private var connecting = false
     private var connected = false
     private var reconnectTimer: IMScheduler.Cancellable? = null
@@ -99,6 +107,7 @@ internal class IMSignalConnection(
         this.config = config
         this.token = token
         stopped = false
+        pendingGiveUp = null
         authFailures = 0
         backoff.reset()
         openSocket()
@@ -122,6 +131,7 @@ internal class IMSignalConnection(
 
     fun stop(code: Int = IMCloseCode.NORMAL.code, reason: String = "logout") {
         stopped = true
+        pendingGiveUp = null
         connecting = false
         connected = false
         cancelTimers()
@@ -173,25 +183,49 @@ internal class IMSignalConnection(
             if (ok) onHelloOk(payload) else {
                 IMRTCLog.w("signal", "握手失败：${code?.wireName} $message")
                 events.onError(code ?: IMErrorCode.INTERNAL, message)
-                if (code != null && !code.retryable) {
-                    // **不可重试的握手错误一次就放弃**：device_id 不合规、协议版本不支持、
-                    // 应用被停用——这些不会因为重连而改变。
-                    //
-                    // 不这么做的症状是**无限退避重连**：真机上实测过，device_id 里带了个
-                    // 空格，于是每隔 1s→2s→4s→8s→15s→30s 敲一次，界面上只写着「登录失败」，
-                    // 日志里刷满同一条错误，而真正的原因（服务端说的「出现了 ' '」）
-                    // 从来没被人看见。
-                    //
-                    // 只有 1102 token_expired 是 retryable：那种情况重连时可能已经换到新票。
-                    IMRTCLog.e("signal", "握手参数被拒（${code.wireName}），不再重连")
-                    stopped = true
-                    events.onKickedOut(IMKickedOutReason.CONFIG_REJECTED)
-                } else {
-                    closeAndReconnect(0, "hello failed")
-                }
+                // 判定放在这里，**收拾现场与上报交给 handleClosed**：那边才是本类唯一
+                // 一处「关连接 → 清定时器 → 结掉在飞请求 → 报关闭码」的地方（类注释第 4 条）。
+                // 自己在这儿闩上再抛，会留下一个 connecting=true 的半开连接，
+                // 宿主照着 onKickedOut 的建议改完配置再 login() 就会被 openSocket 静默挡掉。
+                pendingGiveUp = giveUpReason(code, payload)
+                closeAndReconnect(0, "hello failed")
             }
         }
         sendFrame(IMFrameType.HELLO, reqId, data)
+    }
+
+    /**
+     * 握手失败该不该一次就放弃，放弃的话按哪种原因抛给宿主。返回 `null` = 照常退避重连。
+     *
+     * **不可重试 ≠ 参数不对**，三类的处置完全不同，合成一类就等于给宿主一条错的建议：
+     *
+     * | 码 | 抛什么 | 宿主该做什么 |
+     * |---|---|---|
+     * | 1101 `token_invalid` | [IMKickedOutReason.AUTH_EXPIRED] | **换一枚票再来**。签名密钥轮换、票被吊销都长这样，而换票正好救得了——类注释第 1 条那次 Web 事故就是它 |
+     * | 1104 `kicked_out` | [IMKickedOutReason.TAKEN_OVER] | 回登录页。服务端的吊销名单走的就是「`sys.error{1104}` + 4403」这一对 |
+     * | 1004 / 1006 / 1106 … | [IMKickedOutReason.CONFIG_REJECTED] | 去改配置。换票和重试都救不了——`device_id` 里那个空格不会因为再来一次就没了 |
+     *
+     * 两条边界：
+     *
+     * 1. **local 组的码不是服务端的裁决。** [stop] 会拿 `2007 not_logged_in` 把在飞的握手
+     *    结掉，那是宿主自己按的退出；不挡掉的话，一次正常的 `logout()` 会报成
+     *    「服务端拒了你的参数」，而 `relogin()` 正是先 `logout()` 再换票的——
+     *    静默续期会当场变成把人踹回登录页。
+     * 2. **本端不认识的码信帧上自带的 `retryable`。** 本端这张表是上次同步时的快照，
+     *    漏一个新码就退回「无限重连」——本仓漏过 1106 一次，症状正是这里要根治的那个。
+     */
+    private fun giveUpReason(code: IMErrorCode?, payload: Map<String, IMJson>): IMKickedOutReason? {
+        if (code != null && !code.isWire) return null
+        val retryable = code?.retryable
+            ?: (payload["retryable"] as? IMJson.Bool)?.value
+            // 连码带标志都读不出来：当可重试处理，维持「不认识就先退避着」的老行为。
+            ?: true
+        if (retryable) return null
+        return when (code) {
+            IMErrorCode.TOKEN_INVALID -> IMKickedOutReason.AUTH_EXPIRED
+            IMErrorCode.KICKED_OUT -> IMKickedOutReason.TAKEN_OVER
+            else -> IMKickedOutReason.CONFIG_REJECTED
+        }
     }
 
     private fun onHelloOk(data: Map<String, IMJson>) {
@@ -255,12 +289,21 @@ internal class IMSignalConnection(
 
         if (stopped) return
 
+        // 握手应答里已经判过「这个错重连一万次也还是这个错」（见 [giveUpReason]）。
+        // 排在关闭码之前：那一帧比关闭码具体得多——4401 只说「鉴权没过」，
+        // 而 1101/1102 分得出「票不合法」与「票刚过期」。
+        pendingGiveUp?.let { reason ->
+            pendingGiveUp = null
+            IMRTCLog.e("signal", "握手被拒（$reason），不再重连")
+            giveUp(reason)
+            return
+        }
+
         when (code) {
             IMCloseCode.KICKED.code -> {
                 // 被踢：重连没有意义——那等于跟另一台设备打架。
                 IMRTCLog.w("signal", "被踢下线（4403），不再重连")
-                stopped = true
-                events.onKickedOut(IMKickedOutReason.TAKEN_OVER)
+                giveUp(IMKickedOutReason.TAKEN_OVER)
                 return
             }
             IMCloseCode.UNAUTHORIZED.code -> {
@@ -269,8 +312,7 @@ internal class IMSignalConnection(
                 if (authFailures >= MAX_AUTH_FAILURES) {
                     // 四端同一个数：3。到顶就别再敲了，让宿主回登录页换票。
                     IMRTCLog.e("signal", "连续 $MAX_AUTH_FAILURES 次鉴权失败，放弃")
-                    stopped = true
-                    events.onKickedOut(IMKickedOutReason.AUTH_EXPIRED)
+                    giveUp(IMKickedOutReason.AUTH_EXPIRED)
                     return
                 }
             }
@@ -279,6 +321,19 @@ internal class IMSignalConnection(
             }
         }
         scheduleReconnect()
+    }
+
+    /**
+     * 放弃这条连接：**闩上、把票期定时器也停掉，再把原因抛给宿主**。
+     *
+     * 定时器不停的症状：几分钟后它照样喊 `onTokenWillExpire`，宿主老老实实去后台换一枚
+     * 新票、`updateToken` 塞回来——而 [stopped] 已经闩上了，这条连接不会因此重连一次。
+     * 宿主以为自己救回来了，实际上 Engine 已经哑了，而且一声不吭。
+     */
+    private fun giveUp(reason: IMKickedOutReason) {
+        stopped = true
+        tokenExpiry.disarm()
+        events.onKickedOut(reason)
     }
 
     private fun scheduleReconnect() {
@@ -303,9 +358,16 @@ internal class IMSignalConnection(
             // 应答没回来——三种情况要查的地方完全不同。
             //
             // 信令帧一秒最多几帧，不是媒体那种每帧每包的热路径（CONVENTIONS §6
-            // 禁的是后者）。级别用 debug，宿主默认不装 sink 也就不产生任何开销。
-            IMRTCLog.d("signal", "↑ $type${reqSuffix(reqId)}${idSuffix(data)}")
+            // 禁的是后者）。级别用 debug，并且**先问一句有没有人要**——
+            // `d()` 收的是拼好的 String，不问就等于「装没装 sink 都照拼」。
+            //
+            // **写在 send 之后**：`encode()` 会为超过 64 KiB 的帧抛 FRAME_TOO_LARGE，
+            // 写在前面就会记下一条根本没发出去的 `↑`——而时间轴上「客户端有 ↑、
+            // 服务端没有」恰恰是「发了服务端没收到」的判据，正好把结论指反。
             transport.send(envelope.encode())
+            if (IMRTCLog.isLoggable(IMRTCLog.Level.DEBUG)) {
+                IMRTCLog.d("signal", "↑ $type${reqSuffix(reqId)}${idSuffix(data)}")
+            }
         } catch (e: IMRtcException) {
             IMRTCLog.e("signal", "发送失败 $type：${e.detail}")
             events.onError(e.errorCode, e.detail)
@@ -337,24 +399,36 @@ internal class IMSignalConnection(
             return
         }
 
-        IMRTCLog.d(
-            "signal",
-            "↓ ${envelope.type}${reqSuffix(envelope.reqId)}${idSuffix(envelope.decodedDataOrEmpty())}",
-        )
+        // **整帧只解一次。** `decodedData()` 什么都不缓存——每调一次就重跑一遍注册表查找
+        // 与字段解码，未知/留位帧还要**构造并抛一个异常**（异常带栈回填）。
+        // 原先日志一次、下面的分支再一次，等于每条下行帧的解码都做了两遍，
+        // room.offer / room.answer 那种带 SDP 的也不例外。
+        var decodeError: IMRtcException? = null
+        val data = try {
+            envelope.decodedData()
+        } catch (e: IMRtcException) {
+            decodeError = e
+            envelope.data
+        }
+
+        if (IMRTCLog.isLoggable(IMRTCLog.Level.DEBUG)) {
+            IMRTCLog.d("signal", "↓ ${envelope.type}${reqSuffix(envelope.reqId)}${idSuffix(data)}")
+        }
 
         // sys.error 也是应答：它带着 req_id 回到发起方（§7）。
         if (envelope.type == IMFrameType.ERROR && envelope.reqId.isNotEmpty()) {
-            val data = envelope.decodedDataOrEmpty()
             val code = IMErrorCode.fromCode(((data["code"] as? IMJson.Num)?.value ?: 0L).toInt())
             val message = (data["msg"] as? IMJson.Str)?.value ?: ""
-            if (!pending.reject(envelope.reqId, code ?: IMErrorCode.INTERNAL, message)) {
+            // **code 与 data 都原样带过去**：本端不认识这个码时 code 是 null，
+            // 而只有帧上的 retryable 说得准。在这儿兜底成 INTERNAL 会把两者一起弄丢。
+            if (!pending.reject(envelope.reqId, code, message, data)) {
                 IMRTCLog.d("signal", "迟到的错误应答，丢弃：${envelope.reqId}")
             }
             return
         }
 
         if (envelope.reqId.isNotEmpty() && envelope.type.endsWith(IMEnvelope.OK_SUFFIX)) {
-            if (!pending.resolve(envelope.reqId, envelope.decodedDataOrEmpty())) {
+            if (!pending.resolve(envelope.reqId, data)) {
                 // 迟到的应答：丢掉即可，**不得崩溃**（§2.2）。
                 IMRTCLog.d("signal", "迟到的应答，丢弃：${envelope.type}")
             }
@@ -362,9 +436,7 @@ internal class IMSignalConnection(
         }
 
         // 未知帧类型：客户端**必须静默忽略**（§2.3 的前向兼容）。
-        val data = try {
-            envelope.decodedData()
-        } catch (e: IMRtcException) {
+        decodeError?.let { e ->
             if (e.errorCode == IMErrorCode.UNKNOWN_TYPE || e.errorCode == IMErrorCode.NOT_IMPLEMENTED) {
                 IMRTCLog.d("signal", "忽略未知帧 ${envelope.type}")
             } else {
@@ -374,12 +446,6 @@ internal class IMSignalConnection(
             return
         }
         events.onFrame(envelope.type, data)
-    }
-
-    private fun IMEnvelope.decodedDataOrEmpty(): Map<String, IMJson> = try {
-        decodedData()
-    } catch (e: IMRtcException) {
-        data
     }
 
     /** transport 的回调可能在任意线程，这里统一 post 回 engine 线程。 */

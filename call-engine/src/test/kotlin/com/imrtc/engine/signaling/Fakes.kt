@@ -113,7 +113,19 @@ internal class FakeTransport : IMTransport {
         deliver(requestType + IMEnvelope.OK_SUFFIX, request.reqId, data)
     }
 
-    fun replyError(requestType: String, code: Long, name: String, msg: String = "") {
+    /**
+     * 应答一条 `sys.error`。
+     *
+     * [retryable] 是**帧上那个字段**，不是本端错误码表里的值——两者会分家：
+     * 服务端加了新码而客户端还没同步时，本端 `fromCode` 返回 null，只有帧上这个说得准。
+     */
+    fun replyError(
+        requestType: String,
+        code: Long,
+        name: String,
+        msg: String = "",
+        retryable: Boolean = false,
+    ) {
         val request = lastOf(requestType) ?: error("还没发过 $requestType")
         deliver(
             "sys.error",
@@ -123,7 +135,7 @@ internal class FakeTransport : IMTransport {
                 "name" to IMJson.Str(name),
                 "msg" to IMJson.Str(msg),
                 "for_type" to IMJson.Str(requestType),
-                "retryable" to IMJson.Bool(false),
+                "retryable" to IMJson.Bool(retryable),
             ),
         )
     }

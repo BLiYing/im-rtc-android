@@ -53,6 +53,10 @@ final class JavaApiCheck {
                     // 取新票重登
                 } else if (reason == IMKickedOutReason.TAKEN_OVER) {
                     // 回登录页
+                } else if (reason == IMKickedOutReason.CONFIG_REJECTED) {
+                    // 去改配置：换票和重试都救不了（device_id 不合规、协议版本不支持、应用被停用）。
+                    // Java 侧没有穷尽性检查，加枚举值时**必须手动补这一支**——
+                    // 漏了的症状是宿主什么都不做，而 Engine 已经不再重连了，界面就那么挂着。
                 }
             }
 

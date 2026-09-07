@@ -68,18 +68,9 @@ internal object DemoSession {
      *
      * 这个 bug 之前没暴露，是因为验收用的 OPPO PKD130 型号里恰好没有空格。
      */
-    val deviceId: String get() = "android-" + sanitizeDeviceId(Build.MODEL)
-
-    /** 非法字符一律换成 `-`，并压掉连续与首尾的 `-`；空了就退回 `unknown`。 */
-    private fun sanitizeDeviceId(raw: String): String {
-        val cleaned = raw.map { ch ->
-            if (ch.isLetterOrDigit() && ch.code < 128 || ch == '_' || ch == '-') ch else '-'
-        }.joinToString("")
-            .replace(Regex("-+"), "-")
-            .trim('-')
-        // 整个 device_id 还要 ≤64 字节，前缀占了 8 个。
-        return cleaned.ifEmpty { "unknown" }.take(56)
-    }
+    // 算一次就够：`Build.MODEL` 不会变，而**房票与握手必须拿到同一个值**。
+    // `Build.MODEL` 是平台类型（`String!`），个别刷机 ROM 上 `ro.product.model` 是空的。
+    val deviceId: String by lazy { "android-" + sanitizeDeviceId(Build.MODEL.orEmpty()) }
 
     var records: List<Record> = emptyList()
         private set
@@ -94,7 +85,8 @@ internal object DemoSession {
      * 记住的地址后来失效（隧道断了、Mac 换了网段）时，用户只看见一个不动的登录页，
      * 而真正的原因（`Failed to connect to /127.0.0.1:8787`）只躺在 logcat 里。
      *
-     * 登录成功与主动退出都会清掉它。
+     * 登录成功、以及用户**自己点的**那次退出会清掉它。被动退出（被踢、参数被拒、
+     * 静默重登失败）**不清**——那几种情况下这句原因正是唯一说得清发生了什么的东西。
      */
     var lastLoginError: String? = null
         private set
@@ -302,7 +294,10 @@ internal object DemoSession {
         engine?.logout()
         login(currentServer, currentUser) {
             IMRTCLog.w("demo", "静默重登失败：$it")
-            main.post { logout() }
+            // **带上说明**：不带的话 logout() 会把 lastLoginError 一并清掉，
+            // 于是「票过期 → 换票也失败」最后落在一个什么都不说的登录页上——
+            // 正是 lastLoginError 这个字段存在的理由被它自己抹掉了。
+            main.post { logout("登录态过期，重登也失败了") }
         }
     }
 
@@ -344,12 +339,24 @@ internal object DemoSession {
         notifyChanged()
     }
 
-    fun logout() {
-        // 主动退出就别再自动重登了——那是用户的明确意思。
+    /**
+     * 退出登录。
+     *
+     * [note] 是留在身份卡上的说明。**传了就说明这次退出是被动的**（被踢、参数被拒、
+     * 静默重登失败），话要说清楚、上一次的失败原因也要留着给人看；不传才是用户自己
+     * 点的「退出」，那才该清干净回到「未登录」。
+     *
+     * 没有这个参数时的症状：被动退出的那几处都是先写 `connectionText` 再
+     * `main.post { logout() }`，而 `notifyChanged()` 自己也是 post 的、排在 `logout()`
+     * **后面**——于是界面读到的永远是 `logout()` 写的「未登录」，那句解释一次都没露过面。
+     */
+    fun logout(note: String? = null) {
+        // 主动退出就别再自动重登了——那是用户的明确意思。被动退出同理：
+        // 参数不对/被踢的情况下自动重登只会每次启动都撞回同一个死胡同。
         prefs.edit().putBoolean(KEY_AUTO, false).apply()
         teardownEngine()
-        lastLoginError = null
-        connectionText = "未登录"
+        if (note == null) lastLoginError = null
+        connectionText = note ?: "未登录"
         notifyChanged()
     }
 
@@ -441,12 +448,9 @@ internal object DemoSession {
             if (stale) return
             when (reason) {
                 // 账号在别处登录，或被宿主后台吊销（封号 / 注销设备）。换票救不了。
-                IMKickedOutReason.TAKEN_OVER -> {
-                    connectionText = "账号在其它设备登录"
-                    // 被踢之后别再自动重登，否则重启就撞回同一个死胡同。
-                    main.post { logout() }
-                }
-                // 票不好使且三次没换上：取一枚新票重登即可，不必打扰用户。
+                // **说明交给 logout(note)**：它是最后落地的那一步，写在这里会被它盖掉。
+                IMKickedOutReason.TAKEN_OVER -> main.post { logout("账号在其它设备登录") }
+                // 票不好使：取一枚新票重登即可，不必打扰用户。
                 IMKickedOutReason.AUTH_EXPIRED -> {
                     connectionText = "登录态过期，正在重新获取…"
                     main.post { relogin() }
@@ -454,10 +458,7 @@ internal object DemoSession {
                 // 参数被服务端拒了（device_id 不合规、协议版本不支持、应用被停用）。
                 // **换票和重试都没用**——参数不会因为再来一次而变对，所以既不 relogin
                 // 也不自动重连，只把话说清楚，等人去改配置。
-                IMKickedOutReason.CONFIG_REJECTED -> {
-                    connectionText = "接入参数被拒，请看日志"
-                    main.post { logout() }
-                }
+                IMKickedOutReason.CONFIG_REJECTED -> main.post { logout("接入参数被拒，请看日志") }
             }
             notifyChanged()
         }

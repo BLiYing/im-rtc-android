@@ -35,6 +35,17 @@ object IMRTCLog {
         minLevel = level
     }
 
+    /**
+     * 这条级别现在有没有人要。**拼字符串之前先问一句。**
+     *
+     * `d/i/w/e` 收的是**已经拼好的** `String`，级别与 sink 的判断在那之后才做——
+     * 所以「默认不装 sink 就没开销」这句话只对函数体成立，不对参数成立
+     * （CONVENTIONS §6 里「参数字符串照样拼」说的就是这件事）。
+     * 每帧都要走的地方拿它挡一道，别的地方不必。
+     */
+    @JvmStatic
+    fun isLoggable(level: Level): Boolean = level.ordinal >= minLevel.ordinal && sink != null
+
     @JvmStatic
     fun d(tag: String, message: String) = log(Level.DEBUG, tag, message)
 
