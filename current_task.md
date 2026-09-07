@@ -10,6 +10,84 @@
 
 ## 当前焦点
 
+**Pixel 上「carol 登录不了」查清了：不是 device_id，是地址与链路（2026-09-07）**。
+`./scripts/test.sh` 六步全绿。**SDK 与 Demo 一行没错**——`android-Pixel-2-XL` 已在
+服务端日志里坐实，`sanitizeDeviceId` 那条修复是好的。
+
+真正的原因是两件叠在一起，而且都在代码之外：
+
+| | |
+|---|---|
+| Demo 记着的地址是 `http://127.0.0.1:8787` | 上一轮真机验收就是**靠 `adb reverse tcp:8787 tcp:8787` 打的隧道**，所以那个地址当时是通的、于是被 `onLoggedIn` 记进了 prefs |
+| 隧道没了 | `adb reverse` **不过夜**：拔线、重插、`adb kill-server`、手机重启，任意一件都会把它抹掉，而 prefs 里那行地址还在。于是每次启动都是 `Failed to connect to /127.0.0.1:8787` |
+
+**这台 Pixel 填局域网 IP 也没用，但原因不是「AP 客户端隔离」**（第一版这么写，测细了才发现下错了）。
+Pixel `192.168.1.11` **ping 得通路由器 `.1`，也 ping 得通 iOS 真机 `.10`**——不是隔离所有客户端。
+坏掉的是 **Pixel ↔ Mac 这一对**，且两个方向都坏：Mac 上 `arp -n 192.168.1.11` 是 `incomplete`，
+Pixel 上是 `Destination Host Unreachable`，**互相 ARP 不到**。
+Pixel 无 VPN（`NOT_VPN`、无 tun 口），Mac 防火墙关着，两台还是**同一个 SSID 同一频段**
+（`SLT-Fiber-2.4G_0878`）。对不上的是 BSSID：Pixel 挂 `b4:0f:3b:04:08:7d`，
+Mac 的网关 ARP 是 `…:08:78`——**同一 SSID 下的两个 AP（主路由 + 扩展器）**，
+这两个之间的客户端互访没打通。把 Pixel 的 WiFi 关了再开强制重关联**没用**，它还是回 `:7d`。
+所以本机环境那节写的「真机必须填 Mac 的局域网 IP」对 PKD130 成立，**对这台 Pixel 不成立**，
+它只能走 `adb reverse` + `127.0.0.1`。
+
+**PKD130 一直没事，就是因为它走的是另一条路**：服务端日志里它的连接来自
+`192.168.1.17` / `192.168.1.9`（`read tcp 192.168.1.12:8787->192.168.1.17:…`），
+是真的局域网直连。那个地址不依赖任何隧道，拔线重启都还在，所以它记在 prefs 里永远有效。
+
+### 顺手补的一行日志
+
+`DialerScreen.onLogin` 原先是 `DemoSession.login(server, user) { errorLabel.text = it }`——
+失败原因**只进那个 label**，而 label 在拨号页底部要滚动才看得见。症状是：
+**手动登录失败在 logcat 里一片空白**（自动重登反而有 `IMRTCLog.i` 记录），
+于是「连不上」与「人压根没点那一下」分不出来 —— 这次排查就卡在这儿。
+现在同时 `IMRTCLog.w("demo", "手动登录失败：…")`。真机复验过：
+拆掉隧道点登录，logcat 里如实出现 `手动登录失败：登录失败：Failed to connect to /127.0.0.1:8787`。
+
+### 失败原因搬到身份卡上（同轮拍板并落地）
+
+原先「登录失败」四个字在身份卡上，**原因**却在拨号页最底部、要滚屏才看得见。
+四个字分不出是地址不通、服务端没起、还是账号不对，而这三种要查的地方完全不同。
+
+关键是**存在哪**：原因记在 `DemoSession.lastLoginError`（Session 层）而不是页面里，
+因为**自动重登也要能显示**——那条路的失败发生在 `onCreate`，页面还没建好，
+回调塞不进任何 label。而它恰恰是最需要说话的一条：这次的故障就是「记住的地址后来失效」，
+用户只看见一个不动的登录页。登录成功与主动退出都会清掉它。
+
+页面上是新的 `loginErrorLabel`，夹在连接态那行与登录按钮之间；
+**与底部的 `errorLabel` 分开**（那个管通话/房间的报错）。空的时候 `GONE`，不留空行。
+表单校验（字段没填）走页面自己的 `formError`，不进 Session——它跟换票请求没关系。
+
+真机复验（Pixel 2 XL）：拆掉隧道启动 → 身份卡上直接是
+`登录失败：Failed to connect to /127.0.0.1:8787`，**没点任何按钮**；
+补回隧道点登录 → 红字消失、绿点亮起、无残留空行。
+
+### 回环地址连不上时，直接给出补救命令（`LoginHint`）
+
+**「自动重登失败就把地址退回可编辑态」这个方案被否了。** 因为这台 Pixel
+**没有**能填的局域网 IP（见上），而隧道断掉时 prefs 里那行 `127.0.0.1:8787`
+**本身是对的**——补上隧道立刻能用。把它清掉或标成可编辑，等于提示「换一个地址」，
+而根本无可换：人会去填局域网 IP → 失败 → 翻服务端日志 → 那边一条请求都没有，
+正是最难查的那类。**该改的是话术，不是输入框。**
+
+新增 `LoginHint.explain(server, error)`：**回环地址**且**根本没连上**时，
+在原因后面附上 `adb reverse tcp:8787 tcp:8787`。两个条件缺一不可——
+判据按**异常类型**（`ConnectException` / `SocketTimeoutException` / `UnknownHostException` /
+`NoRouteToHostException`，含 `cause` 链）而不是 message 里的字样，因为
+`DemoApi` 的 HTTP 错误是**裸 `IOException`**，401/500 落不进这几个子类。
+提示错了比不提示更糟，会把人往错方向带一整轮：填局域网 IP 的 PKD130 绝不能看到这句。
+
+8 条单测（`LoginHintTest`）。**先把 `isUnreachable` 那半个判据摘掉，看「401 不提隧道」那条红过**。
+真机复验（PKD130，它没有隧道）：地址改回环 → 提示带命令完整显示（`maxLines` 提到 8，
+4 行会截掉命令那行）；地址改 `192.168.1.99`（局域网、没人应）→ **只有原因，不提隧道**；
+改回 `192.168.1.12` → 正常登录。
+
+**没做**：`defaultServer` 的取值策略仍然没动，「失败的地址不记住」保持原样。
+路由器那边两个 AP 互不通的问题也没碰——那要进路由器后台，命令行够不着。
+
+## 上一轮
+
 **SDK 层挡住不合规的 device_id + 握手错误按 retryable 分流（2026-09-07）**，
 `./scripts/test.sh` 六步全绿。都是上一轮真机验收暴露出来的。
 
@@ -26,8 +104,7 @@
 目前**只有 Android 有**。iOS / Web / 桌面收到 1004 仍会无限重连——同样的 device_id 问题
 在那三端上还是老样子。见 `../im-rtc-server/docs/CLIENT_PARITY.md` 的对应行。
 
-## 上一轮
-
+## 更早
 
 **日志回传真机验收 + 修掉一个只在带空格机型上炸的登录 bug（2026-09-07）**，
 `./scripts/test.sh` 六步全绿。在 **Google Pixel 2 XL（Android 11）** 上验的。
@@ -64,7 +141,6 @@
 
 ## 更早
 
-
 **日志回传服务端（2026-09-07）**，`./scripts/test.sh` 六步全绿（新增 9 条单测）。
 
 此前 Android 只有 logcat，而 logcat 要人接着线、还要在出问题的那一刻正好开着。
@@ -91,7 +167,6 @@
 
 ## 更早
 
-
 **会话恢复之后重新协商上行 + 红按钮永不静默（2026-09-07）**，`./scripts/test.sh` 全绿。
 
 | 改动 | 为什么 |
@@ -106,30 +181,6 @@
 **没做 / 已知限制**：本轮**没有任何真机复验**——ICE 那条尤其要真的拔网线才验得了。
 Android「无法挂断」的**根因未定**（Android 不上报日志到 logsink，只有 logcat），
 只做了「红按钮永不静默」的兜底；服务端补发一落地，那个僵尸态本身就不该再出现了。
-
-## 更早
-
-**发起群通话当场闪退（2026-09-07 修）**，`./scripts/test.sh` 六步全绿。
-
-`IMCallGridView.apply` 在「同一批格子、只是尺寸变了」那条路上直接改 `columnCount`，
-撞上 GridLayout 的一条隐藏约定：格子是不写行列的（`spec(UNDEFINED)`），
-**但它每次 measure 都会在 `validateLayoutParams()` 里把它们改写成具体下标**
-（`columnSpec` 变成 `[2,3)`）。于是「在场子视图的最大下标」= 上一版的列数，
-下一次把列数**调小**，`Axis.setCount` 当场抛 `IllegalArgumentException`。
-
-**不用转屏就能撞上**：第一轮 `render` 早于第一次 layout，只能按默认 `aspect = 0.7` 估
-（9 人 → 3×3）；量到真尺寸那一轮是 0.48（控制条的下 padding 还没生效）→ 2×5。
-`columnCount = 2` 而在场最大下标是 3 —— 发起群通话就是这么炸的。
-
-修法是**先把每个格子的 spec 退回 `spec(UNDEFINED)` 再改行列数**（`setLayoutParams`
-会让 GridLayout 重算最大下标），一个 `SurfaceView` 都不摘、不闪。
-
-顺带修掉同一函数里的第二个洞：「没变就不重挂」的判据原先比的是**上一次记下的 `tiles`**，
-而格子会被 `pinFull` / `mountInPip` 从格子里摘走挂到全屏画面或小窗。改成比**在场的子视图**
-（`childrenAre`），否则视频版式切回九宫格时会认成「什么都没变」，格子再也回不来——一屏空网格。
-
-**没做**：真机复验。这条要在 OPPO PKD130 上真的发起一次 9 人群通话才算数，
-单测只钉住了前提（`同一批人列数也会变小`，纯 JVM）。
 
 ## 下一步
 
@@ -153,6 +204,14 @@ Android「无法挂断」的**根因未定**（Android 不上报日志到 logsin
 - 「只引 Engine 自画 UI」的示范、日志回传汇入时间轴仍是 ⬜（见 CLIENT_PARITY）。
 
 ## 已知坑 / 限制
+
+- **真机连不上服务端，先看链路再看代码。** 两条路二选一，且**跟机器走、不跟仓走**：
+  局域网 IP（PKD130 可用）或 `adb reverse tcp:8787 tcp:8787` + `http://127.0.0.1:8787`
+  （**Pixel 2 XL 只有这条**：它与 Mac 挂在同一 SSID 的两个不同 AP 上，互相 ARP 不到；
+  它 ping 得通路由器和 iOS 真机，所以**不是**「隔离所有客户端」）。
+  `adb reverse` **拔线/重插/`adb kill-server`/手机重启就没了**，而 Demo 记在 prefs 里的地址还在——
+  症状是启动即 `Failed to connect to /127.0.0.1:8787`，**看着像登录 bug，其实是隧道掉了**。
+  判据：手机 `ping` 得通 Mac 且 Mac 上 `arp -n <手机 IP>` 有表项 → 局域网可用；否则老实打隧道。
 
 - 日志回传已在 Pixel 2 XL（Android 11）上验收：登录 → 拨号 → 终局的完整链路
   都进了 `client-android-carol.log`，与服务端日志在 `timeline.py` 上合得起来。
@@ -209,14 +268,14 @@ Android「无法挂断」的**根因未定**（Android 不上报日志到 logsin
 ## 本机环境（2026-09-05 实测）
 
 JDK 17（`/usr/libexec/java_home -v 17`）· SDK 到 android-36 / build-tools 36.0.0 · `adb` 在
-`~/Library/Android/sdk/platform-tools/`（不在 PATH）· 真机 **OPPO PKD130 / Android 15 / arm64-v8a** ·
+`~/Library/Android/sdk/platform-tools/`（不在 PATH）· 两台真机：**OPPO PKD130 / Android 15**（局域网直连）与 **Google Pixel 2 XL / Android 11**（`903KPED2067148`，**只能走 `adb reverse`**）·
 本机 Intel Mac（模拟器 x86_64，真机 arm64，两个 ABI 都要能出包）。
 
 ## 关联工程 / 常用命令
 
 - **各端能力对照表：`../im-rtc-server/docs/CLIENT_PARITY.md`**（✅ 只写在那里，本文件不重复）。
 - 五仓（本地同级）：server（协议契约，只读）· ios（**本仓的对照实现**）· web · desktop · **android**（本仓）。
-- 起服务端联调：`cd ../im-rtc-server && ./scripts/dev.sh`（:8787 / UDP 7881）。**真机必须填 Mac 的局域网 IP**。
+- 起服务端联调：`cd ../im-rtc-server && ./scripts/dev.sh`（:8787 / UDP 7881）。**真机的地址二选一**，见「已知坑」第一条：局域网 IP，或 `adb reverse tcp:8787 tcp:8787` 后填 `http://127.0.0.1:8787`。
 - 常用命令：
   ```bash
   ./scripts/install-hooks.sh       # 新 clone 跑一次

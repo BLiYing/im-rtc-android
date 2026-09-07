@@ -86,6 +86,19 @@ internal object DemoSession {
     var connectionText = "未登录"
         private set
 
+    /**
+     * 上一次换票失败的原因，**给身份卡直接显示用**。
+     *
+     * 存在 Session 而不是页面里，是因为**自动重登也要能显示**：那条路的失败发生在
+     * `onCreate` 里，页面还没建好，回调塞不进任何 label。而它恰恰是最需要说话的一条——
+     * 记住的地址后来失效（隧道断了、Mac 换了网段）时，用户只看见一个不动的登录页，
+     * 而真正的原因（`Failed to connect to /127.0.0.1:8787`）只躺在 logcat 里。
+     *
+     * 登录成功与主动退出都会清掉它。
+     */
+    var lastLoginError: String? = null
+        private set
+
     val isLoggedIn: Boolean get() = engine != null
 
     /**
@@ -229,7 +242,8 @@ internal object DemoSession {
         val server = defaultServer
         val user = prefs.getString(KEY_USER, "").orEmpty()
         if (server.isEmpty() || user.isEmpty()) return
-        // 自动重登失败就安静地留在登录页——不弹错误，用户没主动做这件事。
+        // 不弹窗——用户没主动做这件事；但**原因要留在身份卡上**（[lastLoginError]）。
+        // 「安静地留在登录页」曾经等于「什么都不说」：地址失效时人只看见一个不动的页面。
         login(server, user) { IMRTCLog.i("demo", "自动重登失败：$it") }
     }
 
@@ -263,10 +277,14 @@ internal object DemoSession {
                 .onFailure { error ->
                     main.post {
                         isLoggingIn = false
-                        // 详细文案在拨号页底部，那儿要滚动才看得见；身份卡这行是**贴着按钮**的，
-                        // 至少让人知道刚才那一下有响应。
                         connectionText = "登录失败"
+                        // **原因就贴在按钮上方显示**，不再只写进拨号页底部那个要滚动才看得见的
+                        // label——「登录失败」四个字分不出是地址不通、服务端没起、还是账号不对，
+                        // 而这三种要查的地方完全不同。
+                        lastLoginError = LoginHint.explain(server, error)
                         notifyChanged()
+                        // **给 logcat 的是短的那句。** 身份卡上那段带着隧道命令、有换行，
+                        // 整段灌进 logcat 只会把一条日志撑成四行。
                         onError("登录失败：${error.message}")
                     }
                 }
@@ -289,6 +307,7 @@ internal object DemoSession {
     }
 
     private fun onLoggedIn(server: String, user: String, newToken: String) {
+        lastLoginError = null
         this.server = server
         this.username = user
         this.token = newToken
@@ -329,6 +348,7 @@ internal object DemoSession {
         // 主动退出就别再自动重登了——那是用户的明确意思。
         prefs.edit().putBoolean(KEY_AUTO, false).apply()
         teardownEngine()
+        lastLoginError = null
         connectionText = "未登录"
         notifyChanged()
     }

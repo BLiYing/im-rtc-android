@@ -409,3 +409,32 @@ iOS 用 `UIApplication` 通知、Web 用 `visibilitychange`，**没有这套记�
 四个独立根因（本端 track id 必须是 cid / 远端按 track_id 认领 / `SurfaceViewRenderer.init` 撞渲染线程 /
 `startLocalPreview` 拿不到前台 Activity）连同「只采集不发布」「切后台暂停视频」「全屏铺满」的落地，
 **已挪到 [current_task.archive.md](current_task.archive.md)**。
+
+
+---
+
+## 从 current_task.md 搬入（2026-09-07，为「Pixel 登录」那轮腾地方）
+
+### 发起群通话当场闪退
+
+**发起群通话当场闪退（2026-09-07 修）**，`./scripts/test.sh` 六步全绿。
+
+`IMCallGridView.apply` 在「同一批格子、只是尺寸变了」那条路上直接改 `columnCount`，
+撞上 GridLayout 的一条隐藏约定：格子是不写行列的（`spec(UNDEFINED)`），
+**但它每次 measure 都会在 `validateLayoutParams()` 里把它们改写成具体下标**
+（`columnSpec` 变成 `[2,3)`）。于是「在场子视图的最大下标」= 上一版的列数，
+下一次把列数**调小**，`Axis.setCount` 当场抛 `IllegalArgumentException`。
+
+**不用转屏就能撞上**：第一轮 `render` 早于第一次 layout，只能按默认 `aspect = 0.7` 估
+（9 人 → 3×3）；量到真尺寸那一轮是 0.48（控制条的下 padding 还没生效）→ 2×5。
+`columnCount = 2` 而在场最大下标是 3 —— 发起群通话就是这么炸的。
+
+修法是**先把每个格子的 spec 退回 `spec(UNDEFINED)` 再改行列数**（`setLayoutParams`
+会让 GridLayout 重算最大下标），一个 `SurfaceView` 都不摘、不闪。
+
+顺带修掉同一函数里的第二个洞：「没变就不重挂」的判据原先比的是**上一次记下的 `tiles`**，
+而格子会被 `pinFull` / `mountInPip` 从格子里摘走挂到全屏画面或小窗。改成比**在场的子视图**
+（`childrenAre`），否则视频版式切回九宫格时会认成「什么都没变」，格子再也回不来——一屏空网格。
+
+**没做**：真机复验。这条要在 OPPO PKD130 上真的发起一次 9 人群通话才算数，
+单测只钉住了前提（`同一批人列数也会变小`，纯 JVM）。

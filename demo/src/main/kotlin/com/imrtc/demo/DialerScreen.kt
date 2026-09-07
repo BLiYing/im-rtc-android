@@ -5,6 +5,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
+import com.imrtc.engine.log.IMRTCLog
 import kotlin.concurrent.thread
 
 /**
@@ -21,6 +22,17 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
     private val roomField = DemoUI.field(activity, "房间号（留空则新建）", DemoSession.defaultRoom)
 
     private val statusLabel = DemoUI.label(activity, "", 13f, DemoUI.SECONDARY)
+
+    /**
+     * 登录失败的原因，**贴在登录按钮上方**。与页面底部的 [errorLabel] 分开是有意的：
+     * 那个管通话/房间的报错，而登录报错要跟登录按钮待在一起——身份卡这块正是出事时
+     * 人盯着的地方，让人为了看一句话去滚屏，等于没显示。
+     */
+    private val loginErrorLabel = DemoUI.label(activity, "", 13f, DemoUI.RED)
+
+    /** 本地表单校验的报错（字段没填）。**不进 Session**——它跟换票请求没关系。 */
+    private var formError: String? = null
+
     private val errorLabel = DemoUI.label(activity, "", 13f, DemoUI.RED)
     private val groupLabel = DemoUI.label(activity, "", 15f, DemoUI.LABEL)
     private val dot = View(activity)
@@ -42,6 +54,8 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         callButtons = listOf(audio, video, pick, group, join)
 
         errorLabel.maxLines = 4
+        // 隧道那段提示是三行起步（见 LoginHint），4 行会被截掉命令那行。
+        loginErrorLabel.maxLines = 8
 
         view = DemoUI.scroll(
             activity,
@@ -55,6 +69,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
                             DemoUI.note(activity, DemoSession.serverNote),
                             userField,
                             identityLine(),
+                            loginErrorLabel,
                             loginButton,
                             logoutButton,
                         ),
@@ -84,6 +99,12 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
     override fun refresh() {
         val loggedIn = DemoSession.isLoggedIn
         statusLabel.text = DemoSession.connectionText
+        // 表单没填优先——那是用户刚做的动作；否则显示上一次换票失败的原因
+        // （**自动重登的失败也走这里**，见 DemoSession.lastLoginError）。
+        val loginError = formError ?: DemoSession.lastLoginError
+        loginErrorLabel.text = loginError.orEmpty()
+        // 空的时候要 GONE，不然身份卡上常年留着一条看不见的空行。
+        loginErrorLabel.visibility = if (loginError.isNullOrEmpty()) View.GONE else View.VISIBLE
         // 连接态的绿点：草图 §02-B 的身份卡就靠它一眼看出信令通没通。
         dot.background = DemoUI.circle(if (loggedIn) DemoUI.GREEN else DemoUI.SEPARATOR)
         loginButton.visibility = if (loggedIn) View.GONE else View.VISIBLE
@@ -108,13 +129,21 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
 
     private fun onLogin() {
         errorLabel.text = ""
+        formError = null
         val server = serverField.text.toString().trim()
         val user = userField.text.toString().trim()
         if (server.isEmpty() || user.isEmpty()) {
-            errorLabel.text = "服务器地址和用户 ID 都要填"
+            formError = "服务器地址和用户 ID 都要填"
+            refresh()
             return
         }
-        DemoSession.login(server, user) { errorLabel.text = it }
+        // 失败文案由 [DemoSession.lastLoginError] 经 refresh() 显示，这里只补日志：
+        // 原先失败原因**只进 label**，于是手动登录失败在 logcat 里一片空白
+        // （自动重登反而有记录），「连不上」与「人压根没点」分不出来。
+        // 地址不通时服务端一侧也没有任何请求进来，logcat 是唯一的现场。
+        DemoSession.login(server, user) { reason ->
+            IMRTCLog.w("demo", "手动登录失败：$reason")
+        }
     }
 
     private fun place(mediaType: String) {
