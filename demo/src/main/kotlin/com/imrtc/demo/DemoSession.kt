@@ -58,8 +58,28 @@ internal object DemoSession {
     var token = ""
         private set
 
-    /** **房票绑定 device_id**，所以 REST 与握手必须用同一个值。 */
-    val deviceId: String get() = "android-${Build.MODEL}"
+    /**
+     * **房票绑定 device_id**，所以 REST 与握手必须用同一个值。
+     *
+     * `Build.MODEL` **必须清洗**：协议 §2.5 规定 charset 只有 `[A-Za-z0-9_-]`，
+     * 而机型名里带空格是常态——"Pixel 2 XL"、"Redmi Note 8 Pro" 都是。
+     * 不清洗的症状是**握手一律 1004 bad_params、无限退避重连**，界面上只写着
+     * 「登录失败」，从服务端一侧也只看得见「参数不合法」，很难联想到是机型名。
+     *
+     * 这个 bug 之前没暴露，是因为验收用的 OPPO PKD130 型号里恰好没有空格。
+     */
+    val deviceId: String get() = "android-" + sanitizeDeviceId(Build.MODEL)
+
+    /** 非法字符一律换成 `-`，并压掉连续与首尾的 `-`；空了就退回 `unknown`。 */
+    private fun sanitizeDeviceId(raw: String): String {
+        val cleaned = raw.map { ch ->
+            if (ch.isLetterOrDigit() && ch.code < 128 || ch == '_' || ch == '-') ch else '-'
+        }.joinToString("")
+            .replace(Regex("-+"), "-")
+            .trim('-')
+        // 整个 device_id 还要 ≤64 字节，前缀占了 8 个。
+        return cleaned.ifEmpty { "unknown" }.take(56)
+    }
 
     var records: List<Record> = emptyList()
         private set

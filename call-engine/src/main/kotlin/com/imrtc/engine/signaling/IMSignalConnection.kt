@@ -283,11 +283,32 @@ internal class IMSignalConnection(
     private fun sendFrame(type: String, reqId: String, data: Map<String, IMJson>) {
         val envelope = IMEnvelope(type, reqId, scheduler.nowMs(), data)
         try {
+            // **上下行各留一条**。没有它们时，「按了挂断却没挂掉」这类问题在日志里
+            // 是一段空白：分不出是 Engine 压根没发、发了服务端没收到、还是收到了
+            // 应答没回来——三种情况要查的地方完全不同。
+            //
+            // 信令帧一秒最多几帧，不是媒体那种每帧每包的热路径（CONVENTIONS §6
+            // 禁的是后者）。级别用 debug，宿主默认不装 sink 也就不产生任何开销。
+            IMRTCLog.d("signal", "↑ $type${reqSuffix(reqId)}${idSuffix(data)}")
             transport.send(envelope.encode())
         } catch (e: IMRtcException) {
             IMRTCLog.e("signal", "发送失败 $type：${e.detail}")
             events.onError(e.errorCode, e.detail)
         }
+    }
+
+    /** 有 req_id 就带上——按它能把一次请求与它的应答在时间轴上串起来。 */
+    private fun reqSuffix(reqId: String): String = if (reqId.isEmpty()) "" else " req=$reqId"
+
+    /**
+     * 必带字段：call_id / room_id（有哪个带哪个，CONVENTIONS §6）。
+     *
+     * **只取这两个，不打整个 data**：帧里可能有 SDP 与 token，
+     * 整条打出来既会把前后文冲掉，也违反脱敏那条。
+     */
+    private fun idSuffix(data: Map<String, IMJson>): String = buildString {
+        (data["call_id"] as? IMJson.Str)?.let { append(" call_id=").append(it.value) }
+        (data["room_id"] as? IMJson.Str)?.let { append(" room_id=").append(it.value) }
     }
 
     private fun handleText(text: String) {
@@ -300,6 +321,11 @@ internal class IMSignalConnection(
             IMRTCLog.w("signal", "收到解不动的帧：${e.detail}")
             return
         }
+
+        IMRTCLog.d(
+            "signal",
+            "↓ ${envelope.type}${reqSuffix(envelope.reqId)}${idSuffix(envelope.decodedDataOrEmpty())}",
+        )
 
         // sys.error 也是应答：它带着 req_id 回到发起方（§7）。
         if (envelope.type == IMFrameType.ERROR && envelope.reqId.isNotEmpty()) {

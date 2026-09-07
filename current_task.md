@@ -10,6 +10,42 @@
 
 ## 当前焦点
 
+**日志回传真机验收 + 修掉一个只在带空格机型上炸的登录 bug（2026-09-07）**，
+`./scripts/test.sh` 六步全绿。在 **Google Pixel 2 XL（Android 11）** 上验的。
+
+### 验收发现的两件事
+
+**① `device_id` 带空格 → 登录一律失败。** `deviceId` 是 `"android-${Build.MODEL}"`，
+而 Pixel 2 XL 的 MODEL 就是 `Pixel 2 XL`——协议 §2.5 规定 charset 只有 `[A-Za-z0-9_-]`，
+服务端一律回 1004，客户端无限退避重连，界面上只写着「登录失败」。
+
+**这个 bug 之前没暴露，是因为验收用的 OPPO PKD130 型号里恰好没有空格。**
+「Redmi Note 8 Pro」「MI 8 Lite」「moto g(7) power」都会中招。已加 `sanitizeDeviceId`
+与 11 个真实机型名的用例。
+
+**② 信令层不打帧日志 → 回传做好了也定位不了「无法挂断」。** 原先只有连接生命周期
+（连接/握手/心跳/被踢）有日志，上下行帧一条都没有。于是「按了挂断却没挂掉」在日志里
+是一段空白：分不出是 Engine 压根没发、发了服务端没收到、还是收到了应答没回来——
+三种情况要查的地方完全不同。已在 `sendFrame` / `handleText` 各加一条 debug，
+带 `req_id` 与 `call_id` / `room_id`。
+
+### 真机上跑通的完整链路
+
+```
+15:57:26.147 server         发起通话 call_id=call-3f96… frame=call.invite
+15:57:26.151 server         通话结束 reason=offline
+15:57:26.497 android-carol  ↑ call.invite req=a-2
+15:57:26.508 android-carol  ↓ call.invite.ok req=a-2 call_id=call-3f96…
+15:57:26.510 android-carol  ↓ call.ended call_id=call-3f96…
+```
+
+**已知偏差**：客户端时间戳比服务端晚约 350ms（设备时钟），所以时间轴上
+「服务端先发起、客户端后发 invite」看着是反的。timeline 用各端自己的时间戳是有意的
+（用服务端收到的时刻就对不上端上的行为），排查时留意这个偏移。
+
+## 上一轮
+
+
 **日志回传服务端（2026-09-07）**，`./scripts/test.sh` 六步全绿（新增 9 条单测）。
 
 此前 Android 只有 logcat，而 logcat 要人接着线、还要在出问题的那一刻正好开着。
@@ -34,7 +70,7 @@
 **没做**：真机验收。只有 JVM 单测 + MockWebServer，没在真机上跑过一次完整的
 「打电话 → 看服务端日志文件」。
 
-## 上一轮
+## 更早
 
 
 **会话恢复之后重新协商上行 + 红按钮永不静默（2026-09-07）**，`./scripts/test.sh` 全绿。
@@ -99,9 +135,9 @@ Android「无法挂断」的**根因未定**（Android 不上报日志到 logsin
 
 ## 已知坑 / 限制
 
-- **日志回传只有 JVM 单测，没上过真机**：`RemoteLogSink` 的攒批、转义、失败不回队
-  都有 MockWebServer 验着，但没跑过一次完整的「真机打电话 → 服务端 `dev-logs/`
-  里出现 `client-android-<user>.log`」。按本仓规矩这不算完成。
+- 日志回传已在 Pixel 2 XL（Android 11）上验收：登录 → 拨号 → 终局的完整链路
+  都进了 `client-android-carol.log`，与服务端日志在 `timeline.py` 上合得起来。
+  **`-demo-login` 之外不存在这个接收口**，生产环境里回传是空转的。
 
 - **「人先进来、轨道后到」是常态，不是异常**：`onUserEnter` 那一刻远端视频轨道往往还没到。
   任何「摆好格子就顺手做一次」的动作（层上报、尺寸、订阅）都要能在轨道到达时再做一遍
