@@ -173,7 +173,22 @@ internal class IMSignalConnection(
             if (ok) onHelloOk(payload) else {
                 IMRTCLog.w("signal", "握手失败：${code?.wireName} $message")
                 events.onError(code ?: IMErrorCode.INTERNAL, message)
-                closeAndReconnect(0, "hello failed")
+                if (code != null && !code.retryable) {
+                    // **不可重试的握手错误一次就放弃**：device_id 不合规、协议版本不支持、
+                    // 应用被停用——这些不会因为重连而改变。
+                    //
+                    // 不这么做的症状是**无限退避重连**：真机上实测过，device_id 里带了个
+                    // 空格，于是每隔 1s→2s→4s→8s→15s→30s 敲一次，界面上只写着「登录失败」，
+                    // 日志里刷满同一条错误，而真正的原因（服务端说的「出现了 ' '」）
+                    // 从来没被人看见。
+                    //
+                    // 只有 1102 token_expired 是 retryable：那种情况重连时可能已经换到新票。
+                    IMRTCLog.e("signal", "握手参数被拒（${code.wireName}），不再重连")
+                    stopped = true
+                    events.onKickedOut(IMKickedOutReason.CONFIG_REJECTED)
+                } else {
+                    closeAndReconnect(0, "hello failed")
+                }
             }
         }
         sendFrame(IMFrameType.HELLO, reqId, data)

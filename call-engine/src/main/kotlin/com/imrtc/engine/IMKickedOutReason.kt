@@ -25,4 +25,18 @@ enum class IMKickedOutReason {
      * 宿主该做的是**重新取一枚票再 login**，不必打扰用户。
      */
     AUTH_EXPIRED,
+
+    /**
+     * 服务端拒绝了这次接入的**参数**：`device_id` 不合规、`protocol_version` 不受支持、
+     * 应用被停用之类（握手应答里 `retryable=false` 的那些错误码）。
+     *
+     * **与 [AUTH_EXPIRED] 的区别是「换票救不救得了」**：票过期换一张就好，
+     * 而 `device_id` 里有个空格这件事，重连一万次它还是有空格。
+     * 所以这一类**一次就放弃**，不像 4401 那样给三次机会——重试不会让参数变对，
+     * 只会让日志里刷满同一条错误，把真正的原因埋掉。
+     *
+     * 宿主该做的是**去改配置**，不是换票、也不是让用户重试。
+     * 具体哪里不对看同时抛出的 [IMCallEngineListener.onError] 的 code 与 message。
+     */
+    CONFIG_REJECTED,
 }

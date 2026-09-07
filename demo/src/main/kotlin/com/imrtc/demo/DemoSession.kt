@@ -415,7 +415,7 @@ internal object DemoSession {
         }
 
         /**
-         * **两种原因，两种处置。** 真实宿主照这个分岔写。
+         * **三种原因，三种处置。** 真实宿主照这个分岔写。
          */
         override fun onKickedOut(reason: IMKickedOutReason) {
             if (stale) return
@@ -430,6 +430,13 @@ internal object DemoSession {
                 IMKickedOutReason.AUTH_EXPIRED -> {
                     connectionText = "登录态过期，正在重新获取…"
                     main.post { relogin() }
+                }
+                // 参数被服务端拒了（device_id 不合规、协议版本不支持、应用被停用）。
+                // **换票和重试都没用**——参数不会因为再来一次而变对，所以既不 relogin
+                // 也不自动重连，只把话说清楚，等人去改配置。
+                IMKickedOutReason.CONFIG_REJECTED -> {
+                    connectionText = "接入参数被拒，请看日志"
+                    main.post { logout() }
                 }
             }
             notifyChanged()

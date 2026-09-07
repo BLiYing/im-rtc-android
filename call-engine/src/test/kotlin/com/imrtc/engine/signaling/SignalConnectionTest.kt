@@ -212,6 +212,73 @@ class SignalConnectionTest {
         assertEquals(listOf(IMKickedOutReason.AUTH_EXPIRED), events.kickReasons)
     }
 
+    // ── 握手失败的分流：可重试的重连，不可重试的一次就放弃 ────────────────
+
+    /**
+     * 不可重试的握手错误**一次就放弃**，不再重连。
+     *
+     * 真机上踩过：device_id 里带了个空格，服务端一律回 1004，而客户端按
+     * 1s→2s→4s→8s→15s→30s 无限退避重连，界面上只写着「登录失败」，
+     * 日志里刷满同一条错误，把真正的原因埋掉了。
+     *
+     * **参数不会因为重连而改变**——这是它与 4401 的根本区别。
+     */
+    @Test
+    fun `握手收到不可重试的错误：一次就放弃，不再重连`() {
+        connection.start(config, "tk-1")
+        transport.open()
+        assertEquals(1, transport.connectCount)
+
+        // 1004 bad_params：retryable=false
+        transport.replyError(IMFrameType.HELLO, 1004, "bad_params", "invalid frame parameters")
+
+        assertEquals("宿主该收到错误码", 1, events.errors.size)
+        assertEquals(IMErrorCode.BAD_PARAMS, events.errors[0].first)
+        assertEquals("该抛一次 onKickedOut", 1, events.kickedOut)
+        assertEquals(IMKickedOutReason.CONFIG_REJECTED, events.kickReasons[0])
+
+        // 关键：把所有定时器跑完，也不该再连一次。
+        scheduler.advance(60_000)
+        assertEquals("不可重试的错误却重连了", 1, transport.connectCount)
+    }
+
+    @Test
+    fun `协议版本不支持与应用停用同样一次就放弃`() {
+        for ((code, name) in listOf(
+            1006L to "protocol_version_unsupported",
+            1106L to "app_disabled",
+            1101L to "token_invalid",
+        )) {
+            val transport = FakeTransport()
+            val events = RecordingEvents()
+            val scheduler = FakeScheduler()
+            val conn = IMSignalConnection(transport, scheduler, events)
+            conn.start(config, "tk-1")
+            transport.open()
+            transport.replyError(IMFrameType.HELLO, code, name)
+
+            scheduler.advance(60_000)
+            assertEquals("$name 不该重连", 1, transport.connectCount)
+            assertEquals("$name 该放弃", 1, events.kickedOut)
+            assertEquals(IMKickedOutReason.CONFIG_REJECTED, events.kickReasons[0])
+        }
+    }
+
+    /**
+     * 1102 token_expired 是**唯一可重试**的握手错误：重连时 Engine 可能已经换到新票。
+     * 这条守住「别把可重试的也一起放弃了」。
+     */
+    @Test
+    fun `票过期是可重试的：照常退避重连，不放弃`() {
+        connection.start(config, "tk-1")
+        transport.open()
+        transport.replyError(IMFrameType.HELLO, 1102, "token_expired", "token expired")
+
+        assertEquals("可重试的错误不该放弃", 0, events.kickedOut)
+        scheduler.advance(60_000)
+        assertTrue("该继续重连，得到 ${transport.connectCount} 次", transport.connectCount > 1)
+    }
+
     private class RecordingEvents : IMSignalConnection.Events {
         val connected = mutableListOf<Pair<String, Boolean>>()
         val frames = mutableListOf<Pair<String, Map<String, IMJson>>>()

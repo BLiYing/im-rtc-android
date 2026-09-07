@@ -44,12 +44,55 @@ class IMCallEngine private constructor(
     /**
      * @param url 信令地址，`ws://` 或 `wss://`。**真机上别填 127.0.0.1**——那指的是手机自己。
      * @param deviceId 设备号。同一账号同一设备号在别处登录会把这边踢下线（4403）。
+     *   **必须满足协议 §2.5**：非空、≤64 字节、charset `[A-Za-z0-9_-]`，见下面的 init。
      */
     data class Config @JvmOverloads constructor(
         val url: String,
         val deviceId: String,
         val sdk: String = "android",
-    )
+    ) {
+        init {
+            checkDeviceId(deviceId)
+        }
+
+        companion object {
+            /** 协议 §2.5：`device_id` ≤64 **字节**（不是字符），charset `[A-Za-z0-9_-]`。 */
+            private const val MAX_DEVICE_ID_BYTES = 64
+
+            /**
+             * 校验 `device_id`，不合规就抛 `IllegalArgumentException`。
+             *
+             * **在构造 Config 时就拦下来,而不是等服务端拒绝**。不拦的症状是:
+             * 服务端回 1004、客户端无限退避重连、界面上只写着「登录失败」,
+             * 而服务端那句说得很清楚的「device_id 只允许 [A-Za-z0-9_-]，出现了 ' '」
+             * **到不了端上**。真机上实测踩过一次,查了一轮才定位到是机型名。
+             *
+             * **最常见的错法是直接用 `Build.MODEL`**：`Pixel 2 XL`、`Redmi Note 8 Pro`、
+             * `MI 8 Lite`、`moto g(7) power` 都带空格或括号。
+             * 要用它就先清洗——但**别用「删掉空格」那种做法**：`MI 8` 与 `MI8`
+             * 是两款不同的机器，删完就撞成同一个 device_id，而撞号的后果是两台设备
+             * 互相顶号、轮流把对方踢下线。换成 `-` 才不会。
+             *
+             * SDK **只校验不改写**：`device_id` 要求跨重启稳定,
+             * 悄悄替宿主改掉,宿主自己那套设备管理就对不上账了。
+             */
+            @JvmStatic
+            fun checkDeviceId(deviceId: String) {
+                require(deviceId.isNotEmpty()) { "device_id 不能为空（协议 §2.5）" }
+                val bytes = deviceId.toByteArray(Charsets.UTF_8).size
+                require(bytes <= MAX_DEVICE_ID_BYTES) {
+                    "device_id 长 $bytes 字节，上限 $MAX_DEVICE_ID_BYTES（协议 §2.5）"
+                }
+                val bad = deviceId.firstOrNull { ch ->
+                    !(ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' || ch == '_' || ch == '-')
+                }
+                require(bad == null) {
+                    "device_id 只允许 [A-Za-z0-9_-]，出现了 '$bad'（协议 §2.5）。" +
+                        "直接用 Build.MODEL 的话记得先清洗——机型名里带空格是常态"
+                }
+            }
+        }
+    }
 
     @JvmOverloads
     constructor(
