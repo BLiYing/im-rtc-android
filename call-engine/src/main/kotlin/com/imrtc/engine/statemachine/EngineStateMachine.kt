@@ -31,6 +31,7 @@ internal object IMEngineMachine {
     )
     private val ROOM_ACTS = setOf(
         "join", "leave", "publish", "unpublish", "mute", "subscribe", "unsubscribe", "update_layer",
+        "restart_pub_ice",
     )
 
     /** engine 状态的唯一入口。 */

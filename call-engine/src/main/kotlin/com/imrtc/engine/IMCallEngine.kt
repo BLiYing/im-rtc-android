@@ -414,6 +414,22 @@ class IMCallEngine private constructor(
                 "session_id" to IMJson.Str(sessionId),
                 "resumed" to IMJson.Bool(resumed),
             )))
+            /*
+             协议 §1.4：恢复之后媒体面要重新协商。服务端那侧主动下发
+             `room.offer{pc:"sub"}`，而 `pub` 这条的 offerer 是本端，只能自己重发。
+
+             **不能只靠「PC 判 FAILED 的那一刻」那条路**——网一断信令也跟着断，
+             房间立刻变成 reconnecting，而 PC 要等约 30 秒才判 FAILED：那时房间机
+             会把 restart_pub_ice 本地拒掉，而它不进 bufferedOps，于是永远丢失。
+             iOS 真机 2026-09-07 抓到的就是这一幕，三端同一条路。
+
+             **不查 PC 当前状态、无条件重启**：换了连接就等于换了网络路径，旧候选多半已废；
+             服务端那侧也是无条件重启 sub，两边对称。房间不在 joined 时状态机自会拒掉。
+            */
+            if (!resumed) return
+            IMRTCLog.i("engine", "会话已恢复，重新协商上行")
+            media?.restartPubICE()
+            input(IMMachineInput.Act("restart_pub_ice", emptyMap()))
         }
 
         override fun onDisconnected(code: Int, reason: String) {

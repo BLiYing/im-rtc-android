@@ -121,6 +121,16 @@ internal class IMPeerConnections(
     fun connection(pc: String): PeerConnection? = if (pc == "sub") sub else pub
 
     /**
+     * 只置「下一个 offer 要重启 ICE」这一位，**不自己发 offer**。
+     *
+     * 会话恢复（§1.4）之后由 Engine 走正常的 `restart_pub_ice` 路径来发帧——
+     * 媒体层不认识信令，也不知道此刻房间在不在 joined。
+     */
+    fun markIceRestart(pc: String) {
+        pendingIceRestart += pc
+    }
+
+    /**
      * @param iceRestart 这一轮要不要**重启 ICE**（换一对新的 ufrag/pwd 重新打洞）。
      *   网抖没了、换了 Wi-Fi、锁屏久了之后，`pub` 那条 PC 会走到 `FAILED` 且**自己不会回来**；
      *   重新协商一个普通 offer 也救不了它，必须带这一位。

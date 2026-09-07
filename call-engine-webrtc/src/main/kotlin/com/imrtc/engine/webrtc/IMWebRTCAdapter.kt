@@ -208,6 +208,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
 
     override fun createOffer(pc: String) = peers.createOffer(pc)
 
+    override fun restartPubICE() = peers.markIceRestart("pub")
+
     override fun applyRemoteSdp(pc: String, type: String, sdp: String) =
         peers.applyRemoteSdp(pc, type, sdp)
 

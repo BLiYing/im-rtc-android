@@ -227,6 +227,21 @@ internal object IMRoomMachine {
             "subscribe" -> subscribeTrack(ctx, args)
             "unsubscribe" -> unsubscribeTrack(ctx, args)
             "update_layer" -> updateLayer(ctx, args)
+            /*
+             上行那条 PC 断了，重新 offer 一次把 ICE 打回来（媒体层已经把 restart 位置好了）。
+             **不进 bufferedOps**：这是「此刻网断了」的即时反应，等到重放的时候
+             那条 PC 早就换过一轮了，补发一个过期的重启只会白折腾一次协商。
+             真正的触发点在会话恢复之后（§1.4），见 IMCallEngine.onConnected。
+            */
+            "restart_pub_ice" -> out(
+                ctx,
+                send = listOf(
+                    IMOutgoingFrame(
+                        IMFrameType.ROOM_OFFER,
+                        mapOf("pc" to IMJson.Str("pub"), "sdp" to IMJson.Str("")),
+                    ),
+                ),
+            )
             else -> localReject(ctx)
         }
     }

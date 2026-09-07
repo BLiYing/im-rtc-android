@@ -10,6 +10,23 @@
 
 ## 当前焦点
 
+**会话恢复之后重新协商上行 + 红按钮永不静默（2026-09-07）**，`./scripts/test.sh` 全绿。
+
+| 改动 | 为什么 |
+|---|---|
+| `IMMediaAdapter.restartPubICE()`（新）+ `IMPeerConnections.markIceRestart()` | **本仓原先是三端里唯一不对称的**：ICE 重启只活在媒体实现内部，引擎调不到；iOS/Web 的适配器早有这个方法。补齐后三端同名 |
+| `RoomStateMachine` 新增 act `restart_pub_ice`（+ `ROOM_ACTS`） | 与 iOS/Web 对齐：发帧是 Engine 的事，媒体层不认识信令，也不知道此刻房间在不在 joined |
+| `onConnected` 里 `resumed==true` → 重协商上行 | 协议 §1.4 写着「客户端的 pub PC 若已失效则重发 `room.offer{pc:"pub"}`」，一直没实现。只挂在「PC 判 FAILED 那一刻」是不行的——网一断信令也断，房间已是 reconnecting，动作会被拒且不进缓冲 |
+| `IMCallKit.hangup()` 的 `Action.NONE` 分支不再是 `Unit` | 用户按挂断的意图没有歧义：把我弄出去。认不出该发哪种结束帧 = 本地记账已经和服务端对不上，那时唯一正确的动作是**本地收场**，不是什么都不做 |
+
+**媒体实现里那条即时重启保留**（`FAILED` → `createOffer(iceRestart=true)`）：信令还活着时它是对的。
+
+**没做 / 已知限制**：本轮**没有任何真机复验**——ICE 那条尤其要真的拔网线才验得了。
+Android「无法挂断」的**根因未定**（Android 不上报日志到 logsink，只有 logcat），
+只做了「红按钮永不静默」的兜底；服务端补发一落地，那个僵尸态本身就不该再出现了。
+
+## 上一轮
+
 **发起群通话当场闪退（2026-09-07 修）**，`./scripts/test.sh` 六步全绿。
 
 `IMCallGridView.apply` 在「同一批格子、只是尺寸变了」那条路上直接改 `columnCount`，
@@ -31,20 +48,6 @@
 
 **没做**：真机复验。这条要在 OPPO PKD130 上真的发起一次 9 人群通话才算数，
 单测只钉住了前提（`同一批人列数也会变小`，纯 JVM）。
-
-## 上一轮
-
-**上行 ICE 断了自己重连（2026-09-06 夜）**：`IMPeerConnections` 看到 `pub` 走到 `FAILED` 时
-`createOffer(iceRestart = true)` 自救（`sub` 那条由服务端救，协议 §3.3）。
-不救的后果是**静默掉队**：切网 / 进电梯 / 锁屏久了人就永久掉出通话，而界面上一切正常。
-`pendingIceRestart` 与 `pendingOffer` 刻意分开。**没做**：真机断网实测。
-
-**宿主集成那条支线已并回 main 并删掉分支（2026-09-07）**：`IMProfileResolver`（宿主把 uid
-翻成本机该显示的名字与头像）、`IMTokenExpiryTimer`（票到期前主动提醒换票）、
-`onKickedOut` 带上 `IMKickedOutReason`。**都只有单测，宿主侧还没真机联调过。**
-
-再往前的几轮（九宫格拉齐、前后台记账把摄像头 mute 了、锁屏解锁后黑格、视频通路真机跑通）
-已挪到 [current_task.archive.md](current_task.archive.md)。
 
 ## 下一步
 

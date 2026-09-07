@@ -281,7 +281,24 @@ object IMCallKit {
             IMCallViewState.Action.REJECT -> engine?.reject()
             IMCallViewState.Action.CANCEL -> engine?.cancel()
             IMCallViewState.Action.HANGUP -> engine?.hangup()
-            IMCallViewState.Action.NONE -> Unit
+            /*
+             **红按钮永远不许是静默空转。**
+
+             用户按挂断时的意图是没有歧义的：把我弄出去。如果这一刻状态机认不出
+             该发哪一种结束帧（phase 已经不是 incoming/outgoing/connecting/connected），
+             那说明本地记账已经和服务端对不上了——继续挂在这一屏只会让用户**困在
+             一个不存在的通话里**：真机 2026-09-07 就是这样，通话早在 19 秒前结束、
+             服务端只回 1203，而界面还在，点什么都没反应。
+             这时唯一正确的动作是**本地收场**，而不是什么都不做。
+            */
+            IMCallViewState.Action.NONE -> {
+                IMRTCLog.w("kit", "红按钮无对应动作（phase=${'$'}{state.phase}），本地收场")
+                update(IMCallViewReducer.ended(state, "network"))
+                main.postDelayed(
+                    { if (state.phase == IMCallViewState.Phase.ENDED) update(IMCallViewReducer.reset()) },
+                    1_500,
+                )
+            }
         }
     }
 
