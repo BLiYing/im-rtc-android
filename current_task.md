@@ -99,9 +99,9 @@ Android「无法挂断」的**根因未定**（Android 不上报日志到 logsin
 
 ## 已知坑 / 限制
 
-- **日志回传的装配那两行尚未提交**：`DemoSession` 里 `attachRemote` / `detachRemote`
-  两处要加在 `teardownEngine()` 里，而那个函数属于另一轮尚未提交的工作（登录世代），
-  在索引层面切不开。`RemoteLogSink` 本身是完整可用的，只是还没被调用。
+- **日志回传只有 JVM 单测，没上过真机**：`RemoteLogSink` 的攒批、转义、失败不回队
+  都有 MockWebServer 验着，但没跑过一次完整的「真机打电话 → 服务端 `dev-logs/`
+  里出现 `client-android-<user>.log`」。按本仓规矩这不算完成。
 
 - **「人先进来、轨道后到」是常态，不是异常**：`onUserEnter` 那一刻远端视频轨道往往还没到。
   任何「摆好格子就顺手做一次」的动作（层上报、尺寸、订阅）都要能在轨道到达时再做一遍
