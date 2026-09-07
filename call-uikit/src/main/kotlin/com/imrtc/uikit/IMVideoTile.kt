@@ -3,9 +3,11 @@ package com.imrtc.uikit
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Outline
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.SurfaceView
+import android.view.ViewOutlineProvider
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -24,6 +26,17 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
     /** 渲染器的容器。媒体层造的 View 放这里；互换 / 换版式时**只挪格子不重建渲染器**。 */
     val videoHost = FrameLayout(context)
     private val avatar = TextView(context)
+    /**
+     * 宿主给的头像图。**独立一个 ImageView，不是把 Drawable 塞进 avatar 的背景**。
+     *
+     * 塞背景的话有两个问题，真机上一眼就能看出来：
+     *  · TextView 的背景**不受任何形状裁剪**——圆形头像是靠背景 Drawable 自己是
+     *    OVAL 画出来的，宿主给一张方图就实实在在显示成方的（iOS / Web 都会裁成圆）。
+     *  · 背景会被拉伸填满，非 1:1 的图会变形；而 iOS 是 scaleAspectFill、
+     *    Web 是 object-fit:cover，都是**居中裁切**。
+     * ImageView + CENTER_CROP + clipToOutline 才和另外两端一致。
+     */
+    private val avatarPhoto = ImageView(context)
     private val namePlate = TextView(context)
     private val mutedPlate = FrameLayout(context)
     private val mutedIcon = ImageView(context)
@@ -46,6 +59,21 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         avatar.setTextColor(IMKitTheme.primaryText)
         avatar.setTypeface(null, android.graphics.Typeface.BOLD)
         addView(avatar, LayoutParams(dp(44), dp(44), Gravity.CENTER))
+
+        // 居中裁切 + 圆形裁剪，与 iOS 的 scaleAspectFill、Web 的 object-fit:cover 对齐。
+        // **加在 avatar 之后**，层级才在它上面：有图时不该看见底下的色块与首字母。
+        avatarPhoto.scaleType = ImageView.ScaleType.CENTER_CROP
+        avatarPhoto.visibility = GONE
+        avatarPhoto.clipToOutline = true
+        avatarPhoto.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                // 用 setRoundRect(半径 = 边长/2) 而不是 setOval：Outline 只有在是
+                // 圆角矩形时才 canClip()，setOval 在部分实现上会被判为不可裁剪而静默失效。
+                val side = minOf(view.width, view.height)
+                outline.setRoundRect(0, 0, side, side, side / 2f)
+            }
+        }
+        addView(avatarPhoto, LayoutParams(dp(44), dp(44), Gravity.CENTER))
 
         /*
          名字牌 + 静音角标是**左下角同一行**（v3.2 改）。
@@ -168,6 +196,9 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         if (this.avatarSizeDp != avatarSizeDp) {
             this.avatarSizeDp = avatarSizeDp
             avatar.layoutParams = LayoutParams(dp(avatarSizeDp), dp(avatarSizeDp), Gravity.CENTER)
+            avatarPhoto.layoutParams = LayoutParams(dp(avatarSizeDp), dp(avatarSizeDp), Gravity.CENTER)
+            // 尺寸变了要重算裁剪轮廓，否则还按旧边长裁，圆会偏。
+            avatarPhoto.invalidateOutline()
         }
         /*
           显示名与头像交给宿主解析（见 IMProfileResolver）。没配 resolver 时
@@ -177,20 +208,16 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         val shown = resolvedName(resolver, uid, label)
         val photo = resolvedAvatar(resolver, uid)
         avatar.textSize = (avatarSizeDp / 3f)
-        if (photo == null) {
-            /*
-              **底色按 uid 取，首字母按显示名取。**
-              底色跟 uid 走才能五端稳定（规范 §02）——同一个人在谁的屏幕上都是同一个颜色；
-              而显示名是每台设备各算各的（备注！），拿它取色会让同一个人换台设备就变个颜色。
-            */
-            avatar.text = IMAvatar.initial(shown)
-            avatar.background = IMKitTheme.avatarDrawable(uid.ifEmpty { label })
-        } else {
-            // 宿主给的是**已经加载好**的图，形状（圆形裁剪等）也由它负责——
-            // Kit 不引图片库、不下载、不裁剪。
-            avatar.text = ""
-            avatar.background = photo
-        }
+        /*
+          **底色按 uid 取，首字母按显示名取。**
+          底色跟 uid 走才能五端稳定（规范 §02）——同一个人在谁的屏幕上都是同一个颜色；
+          而显示名是每台设备各算各的（备注！），拿它取色会让同一个人换台设备就变个颜色。
+        */
+        avatar.text = IMAvatar.initial(shown)
+        avatar.background = IMKitTheme.avatarDrawable(uid.ifEmpty { label })
+        // 有图就盖上去（居中裁切 + 圆形裁剪都由 avatarPhoto 负责）；没有就露出下面的色块。
+        avatarPhoto.setImageDrawable(photo)
+        avatarPhoto.visibility = if (photo == null) GONE else VISIBLE
         // 没画面时露出头像。**用 visibility 不改层级**：层级一动，媒体层挂着的渲染器会跟着重来。
         avatar.visibility = if (hasVideo) GONE else VISIBLE
         videoHost.visibility = if (hasVideo) VISIBLE else INVISIBLE

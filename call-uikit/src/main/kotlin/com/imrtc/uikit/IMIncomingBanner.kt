@@ -1,5 +1,9 @@
 package com.imrtc.uikit
 
+import android.graphics.Outline
+import android.view.ViewOutlineProvider
+import android.view.View
+import android.widget.ImageView
 import android.content.Context
 import android.view.Gravity
 import android.widget.ImageButton
@@ -27,6 +31,8 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
     var onToggleCamera: (() -> Unit)? = null
 
     private val avatar = TextView(context)
+    /** 宿主给的头像图。独立 ImageView + 居中裁切 + 圆形裁剪，理由见 IMVideoTile 同名字段。 */
+    private val avatarPhoto = ImageView(context)
     private val title = TextView(context)
     private val subtitle = TextView(context)
     private val cameraButton = roundButton(IMKitTheme.controlOff, IMKitTheme.primaryText, IMKitIcon.VIDEO, "关摄像头")
@@ -46,6 +52,18 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
         avatar.setTextColor(IMKitTheme.primaryText)
         avatar.gravity = Gravity.CENTER
         addView(avatar, LayoutParams(dp(38), dp(38)))
+
+        avatarPhoto.scaleType = ImageView.ScaleType.CENTER_CROP
+        avatarPhoto.visibility = GONE
+        avatarPhoto.clipToOutline = true
+        avatarPhoto.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                val side = minOf(view.width, view.height)
+                outline.setRoundRect(0, 0, side, side, side / 2f)
+            }
+        }
+        // 加在 avatar 之后，层级才在它上面。
+        addView(avatarPhoto, LayoutParams(dp(38), dp(38)))
 
         title.textSize = 16f
         title.setTypeface(null, android.graphics.Typeface.BOLD)
@@ -86,9 +104,14 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
             // 底色按 uid、首字母按显示名——同 IMVideoTile，理由见那边的注释。
             avatar.text = IMAvatar.initial(callerName)
             avatar.background = IMKitTheme.avatarDrawable(caller)
+            avatarPhoto.setImageDrawable(null)
+            avatarPhoto.visibility = GONE
         } else {
-            avatar.text = ""
-            avatar.background = photo
+            // 色块留在底下，图盖上去——切回无图时不用重建背景。
+            avatar.text = IMAvatar.initial(callerName)
+            avatar.background = IMKitTheme.avatarDrawable(caller)
+            avatarPhoto.setImageDrawable(photo)
+            avatarPhoto.visibility = VISIBLE
         }
         title.text = callerName
         subtitle.text = state.statusText
