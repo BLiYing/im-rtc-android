@@ -294,6 +294,61 @@ class EngineLoopTest {
         assertEquals(1, transport.countOf(IMFrameType.ROOM_ICE_CANDIDATE))
     }
 
+    /**
+     * **会话恢复之后必须重新协商上行**（协议 §1.4：客户端的 pub PC 若已失效则重发
+     * `room.offer{pc:"pub"}`）。
+     *
+     * 这条不能只挂在「PC 判 FAILED 的那一刻」：网一断信令也跟着断，房间立刻变成
+     * reconnecting，而 PC 要等约 30 秒才判 FAILED——那时 `restart_pub_ice` 会被房间机
+     * 本地拒掉，且它不进 BUFFERABLE_OPS，于是永远丢失。iOS 真机 2026-09-07 抓到过
+     * `动作被状态机本地拒绝 op=restart_pub_ice room_state=reconnecting`，
+     * ICE 自愈在它唯一该生效的场景里等于不存在。
+     */
+    @Test
+    fun `会话恢复之后要重新协商上行`() {
+        loginAndConnect()
+        joinConferenceRoom()
+        val offersAfterJoin = media.offersAsked.size
+        val restartsAfterJoin = media.pubIceRestarts
+
+        transport.closed(1006, "network")
+        scheduler.advance(5_000)
+        transport.open()
+        transport.replyOk(
+            IMFrameType.HELLO,
+            mapOf("session_id" to IMJson.Str("s-1"), "resumed" to IMJson.Bool(true)),
+        )
+
+        assertEquals(
+            "恢复后要让下一个上行 offer 带上 ICE restart",
+            restartsAfterJoin + 1,
+            media.pubIceRestarts,
+        )
+        // 光置位不发帧等于没做。Android 的 room.offer 是「先向媒体层现取 SDP、
+        // 异步回来才真发」，所以这里断言的是**引擎确实去要了一个 pub offer**。
+        assertEquals(offersAfterJoin + 1, media.offersAsked.size)
+        assertEquals("pub", media.offersAsked.last())
+    }
+
+    /** 没恢复成功就不该重协商：那时房间已归零，发上去只会换回 1203。 */
+    @Test
+    fun `恢复失败不重新协商上行`() {
+        loginAndConnect()
+        joinConferenceRoom()
+        val offersAfterJoin = media.offersAsked.size
+
+        transport.closed(1006, "network")
+        scheduler.advance(5_000)
+        transport.open()
+        transport.replyOk(
+            IMFrameType.HELLO,
+            mapOf("session_id" to IMJson.Str("s-9"), "resumed" to IMJson.Bool(false)),
+        )
+
+        assertEquals(0, media.pubIceRestarts)
+        assertEquals(offersAfterJoin, media.offersAsked.size)
+    }
+
     @Test
     fun `没有媒体适配器时，推流失败但信令一切正常`() {
         val bare = IMCallEngine.forTest(
@@ -373,7 +428,12 @@ class EngineLoopTest {
         override fun publish(cid: String, kind: String, simulcast: Boolean) { published += kind }
         override fun unpublish(cid: String) = Unit
         override fun setMuted(kind: String, muted: Boolean) = Unit
-        override fun createOffer(pc: String) = Unit
+        /** 状态机每决定「该协商了」，引擎就向这里现取一次 SDP。 */
+        var offersAsked = mutableListOf<String>()
+        override fun createOffer(pc: String) { offersAsked += pc }
+        /** 被要求重启上行 ICE 的次数。 */
+        var pubIceRestarts = 0
+        override fun restartPubICE() { pubIceRestarts += 1 }
         override fun applyRemoteSdp(pc: String, type: String, sdp: String) = Unit
         override fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) = Unit
         override fun createVideoView(context: android.content.Context): android.view.View? = null

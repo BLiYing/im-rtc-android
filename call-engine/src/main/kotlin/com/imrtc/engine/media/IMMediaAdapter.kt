@@ -62,6 +62,14 @@ interface IMMediaAdapter {
      */
     fun createOffer(pc: String)
 
+    /**
+     * 让**下一个**上行 offer 带上 ICE restart（换一对新的 ufrag/pwd 重新打洞）。
+     *
+     * 只置一位、不自己发帧：发帧是 Engine 的事，媒体层不认识信令（§7.5）。
+     * iOS 的 `restartPubICE()`、Web 的 `restartPubICE()` 是同一个方法，三端同名。
+     */
+    fun restartPubICE()
+
     /** 收到对端 SDP。 */
     fun applyRemoteSdp(pc: String, type: String, sdp: String)
 
