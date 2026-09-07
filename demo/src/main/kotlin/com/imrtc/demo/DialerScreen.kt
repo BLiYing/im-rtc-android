@@ -87,6 +87,12 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         // 连接态的绿点：草图 §02-B 的身份卡就靠它一眼看出信令通没通。
         dot.background = DemoUI.circle(if (loggedIn) DemoUI.GREEN else DemoUI.SEPARATOR)
         loginButton.visibility = if (loggedIn) View.GONE else View.VISIBLE
+        // 换票是网络往返，慢的时候按钮看着像没反应，人就会再点一下——而**第二次点击正是
+        // 那个「登录反被清空」故障的扳机**（见 DemoSession.login）。按钮自己说话，就没人补刀了。
+        val busy = DemoSession.isLoggingIn
+        loginButton.text = if (busy) "登录中…" else "登录"
+        loginButton.isEnabled = !busy
+        loginButton.alpha = if (busy) 0.4f else 1f
         logoutButton.visibility = if (loggedIn) View.VISIBLE else View.GONE
         serverField.isEnabled = !loggedIn
         userField.isEnabled = !loggedIn

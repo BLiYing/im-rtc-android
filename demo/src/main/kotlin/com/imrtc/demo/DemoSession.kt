@@ -68,6 +68,18 @@ internal object DemoSession {
 
     val isLoggedIn: Boolean get() = engine != null
 
+    /**
+     * 登录世代。**每拆一次 Engine 就 +1**，回调里拿它跟自己出生时的号对一下，
+     * 对不上就说明这条回调来自一个已经被换掉的 Engine，一律不算数。
+     *
+     * 没有它的症状见 [login] 里那段注释：旧 Engine 被踢时会把**新** Engine 一起清掉。
+     */
+    private var loginGeneration = 0L
+
+    /** 换票请求在途。UI 靠它把按钮变成「登录中…」，[login] 靠它挡住第二次点击。 */
+    var isLoggingIn = false
+        private set
+
     /** 状态变了通知界面。三个 tab 各自订阅。 */
     var onChange: (() -> Unit)? = null
 
@@ -203,11 +215,41 @@ internal object DemoSession {
 
     // ── 登录 / 退出 ───────────────────────────────────────────────────
 
+    /**
+     * 换一枚 token，然后拿它起一个新 Engine。
+     *
+     * **一次只许一个请求在飞。** 没有这道闸时的真实故障（真机日志可见）：
+     * `onCreate` 里的 [autoLogin] 与用户点的那一下各起了一个 Engine，两个 Engine 拿着
+     * **同一对 (uid, device_id)** 去握手，服务端按「顶号」把先连上的那个踢下线（4403）。
+     * 被踢的是旧的，可 [HostListener] 是全局的、`logout()` 关的是**当前**那个——
+     * 于是刚连上的新 Engine 被自己人清掉，界面弹回未登录。
+     * 用户看到的就是「点了登录没反应」，再点一次反而好了。
+     *
+     * 三道防线各修一层：这里挡住并发换票，[onLoggedIn] 换 Engine 前先拆旧的，
+     * [loginGeneration] 让漏网的旧回调彻底失效。
+     */
     fun login(server: String, user: String, onError: (String) -> Unit) {
+        if (isLoggingIn) return
+        isLoggingIn = true
+        notifyChanged()
         thread {
             runCatching { DemoApi(server).demoLogin(user) }
-                .onSuccess { result -> main.post { onLoggedIn(server, user, result.token) } }
-                .onFailure { error -> main.post { onError("登录失败：${error.message}") } }
+                .onSuccess { result ->
+                    main.post {
+                        isLoggingIn = false
+                        onLoggedIn(server, user, result.token)
+                    }
+                }
+                .onFailure { error ->
+                    main.post {
+                        isLoggingIn = false
+                        // 详细文案在拨号页底部，那儿要滚动才看得见；身份卡这行是**贴着按钮**的，
+                        // 至少让人知道刚才那一下有响应。
+                        connectionText = "登录失败"
+                        notifyChanged()
+                        onError("登录失败：${error.message}")
+                    }
+                }
         }
     }
 
@@ -239,11 +281,19 @@ internal object DemoSession {
             .apply()
         setGroupPick(groupPick)
 
+        // **旧 Engine 必须先拆。** 留着它就是留着第二条握手连接，服务端会把其中一条踢掉。
+        teardownEngine()
+
+        // 日志回传（仅开发）：登录之后才知道往哪台服务器发、以谁的身份发。
+        // **与 logcat 并联**，不替换——现场排查靠的还是 logcat（见 DemoLogSink）。
+        // `android-` 前缀是跨端约定：timeline.py 按它把三端的日志染成不同颜色。
+        DemoLogSink.attachRemote(RemoteLogSink(server, "android-$user"))
+
         val wsUrl = server.replaceFirst("http", "ws").trimEnd('/') + "/v1/ws"
         val instance = IMCallEngine(
             IMCallEngine.Config(url = wsUrl, deviceId = deviceId),
             // **Kit 包一层**：宿主自己的 listener 照常收到全部回调，Kit 只是搭个便车。
-            IMCallKit.wrap(HostListener),
+            IMCallKit.wrap(HostListener(loginGeneration)),
             IMWebRTCAdapter(applicationContext, videoProfile),
         )
         engine = instance
@@ -258,11 +308,25 @@ internal object DemoSession {
     fun logout() {
         // 主动退出就别再自动重登了——那是用户的明确意思。
         prefs.edit().putBoolean(KEY_AUTO, false).apply()
+        teardownEngine()
+        connectionText = "未登录"
+        notifyChanged()
+    }
+
+    /**
+     * 拆掉当前 Engine + Kit。
+     *
+     * **先让这一代作废再拆**：`destroy()` 会顺手吐出 `onDisconnected`，
+     * 世代号先加上去，那条回调落地时就已经是旧世代、不会再改动登录态。
+     */
+    private fun teardownEngine() {
+        loginGeneration++
         engine?.destroy()
         engine = null
         IMCallKit.stop()
-        connectionText = "未登录"
-        notifyChanged()
+        // 摘掉日志回传并把手里剩下的发出去。**放在这里而不是只在 logout**：
+        // 换服务器重登也要走这条路，否则旧 sink 会继续往上一台服务器发。
+        DemoLogSink.detachRemote()
     }
 
     // ── 拨号：记下这通电话是打给谁的 ──────────────────────────────────
@@ -305,13 +369,27 @@ internal object DemoSession {
 
     // ── 回调 → 连接态 + 通话记录 ──────────────────────────────────────
 
-    private object HostListener : IMCallEngineListener {
+    /**
+     * 宿主的回调落点。**按登录世代造，一个 Engine 一个**。
+     *
+     * 它不是 `object` 是有原因的：回调签名里**没有「是哪个 Engine 发的」**，
+     * 一个全局实例分不清自己伺候的 Engine 是不是还在岗。旧 Engine 断线、被踢时照样会喊，
+     * 而处理函数动的是 `DemoSession` 的全局登录态——就把新 Engine 误伤了。
+     * 出生时记下世代号，每条回调先跟当下的对一下，这个歧义就没了。
+     */
+    private class HostListener(private val generation: Long) : IMCallEngineListener {
+
+        /** 这条回调来自已经被换掉的 Engine——它说什么都不算数了。 */
+        private val stale: Boolean get() = generation != loginGeneration
+
         override fun onConnected(sessionId: String, resumed: Boolean) {
+            if (stale) return
             connectionText = "已连接 · " + server.removePrefix("http://").removePrefix("https://")
             notifyChanged()
         }
 
         override fun onDisconnected(code: Int, reason: String) {
+            if (stale) return
             connectionText = "已断开（$code $reason）"
             notifyChanged()
         }
@@ -320,6 +398,7 @@ internal object DemoSession {
          * **两种原因，两种处置。** 真实宿主照这个分岔写。
          */
         override fun onKickedOut(reason: IMKickedOutReason) {
+            if (stale) return
             when (reason) {
                 // 账号在别处登录，或被宿主后台吊销（封号 / 注销设备）。换票救不了。
                 IMKickedOutReason.TAKEN_OVER -> {
@@ -343,6 +422,7 @@ internal object DemoSession {
          * 它不认识那套东西（协议 §1.5 的 push 不 pull）。
          */
         override fun onTokenWillExpire(expiresAtMs: Long) {
+            if (stale) return
             val instance = engine ?: return
             val currentServer = server
             val currentUser = username
@@ -365,6 +445,7 @@ internal object DemoSession {
         }
 
         override fun onError(code: Int, message: String) {
+            if (stale) return
             IMRTCLog.w("demo", "错误 $code $message")
         }
 
@@ -375,16 +456,19 @@ internal object DemoSession {
             mediaType: String,
             isGroup: Boolean,
         ) {
+            if (stale) return
             pending = Meta(caller, mediaType, isGroup, "callee")
         }
 
         override fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {
+            if (stale) return
             // 主叫这边 onCallReceived 不会来；正常路径上 placeCall 已经填好了 pending，
             // 但多端登录时这通电话可能是**在别的设备上发起、这台设备接进来的**（joinCall）。
             if (pending == null) pending = Meta("", mediaType, false, role)
         }
 
         override fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {
+            if (stale) return
             val meta = pending ?: Meta("", "audio", false, "caller")
             records = listOf(
                 Record(
