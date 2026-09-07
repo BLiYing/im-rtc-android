@@ -39,6 +39,10 @@
 不救的后果是**静默掉队**：切网 / 进电梯 / 锁屏久了人就永久掉出通话，而界面上一切正常。
 `pendingIceRestart` 与 `pendingOffer` 刻意分开。**没做**：真机断网实测。
 
+**宿主集成那条支线已并回 main 并删掉分支（2026-09-07）**：`IMProfileResolver`（宿主把 uid
+翻成本机该显示的名字与头像）、`IMTokenExpiryTimer`（票到期前主动提醒换票）、
+`onKickedOut` 带上 `IMKickedOutReason`。**都只有单测，宿主侧还没真机联调过。**
+
 再往前的几轮（九宫格拉齐、前后台记账把摄像头 mute 了、锁屏解锁后黑格、视频通路真机跑通）
 已挪到 [current_task.archive.md](current_task.archive.md)。
 
