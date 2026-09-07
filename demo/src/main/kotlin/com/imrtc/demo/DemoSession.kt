@@ -1,5 +1,6 @@
 package com.imrtc.demo
 
+import com.imrtc.engine.IMKickedOutReason
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
@@ -210,6 +211,21 @@ internal object DemoSession {
         }
     }
 
+    /** 票过期后的静默重登：不回登录页，直接用记住的账号再换一枚票。 */
+    private fun relogin() {
+        val currentServer = server
+        val currentUser = username
+        if (currentServer.isEmpty() || currentUser.isEmpty()) {
+            logout()
+            return
+        }
+        engine?.logout()
+        login(currentServer, currentUser) {
+            IMRTCLog.w("demo", "静默重登失败：$it")
+            main.post { logout() }
+        }
+    }
+
     private fun onLoggedIn(server: String, user: String, newToken: String) {
         this.server = server
         this.username = user
@@ -300,10 +316,52 @@ internal object DemoSession {
             notifyChanged()
         }
 
-        override fun onKickedOut() {
-            connectionText = "登录态失效，请重新登录"
-            // 被踢之后别再自动重登，否则重启就撞回同一个死胡同。
-            main.post { logout() }
+        /**
+         * **两种原因，两种处置。** 真实宿主照这个分岔写。
+         */
+        override fun onKickedOut(reason: IMKickedOutReason) {
+            when (reason) {
+                // 账号在别处登录，或被宿主后台吊销（封号 / 注销设备）。换票救不了。
+                IMKickedOutReason.TAKEN_OVER -> {
+                    connectionText = "账号在其它设备登录"
+                    // 被踢之后别再自动重登，否则重启就撞回同一个死胡同。
+                    main.post { logout() }
+                }
+                // 票不好使且三次没换上：取一枚新票重登即可，不必打扰用户。
+                IMKickedOutReason.AUTH_EXPIRED -> {
+                    connectionText = "登录态过期，正在重新获取…"
+                    main.post { relogin() }
+                }
+            }
+            notifyChanged()
+        }
+
+        /**
+         * 票快到期了：**去自己的后台换一枚新的塞回来**，用户全程无感。
+         *
+         * 这就是宿主要做的全部事情。Engine 不会替你去要票——票从你的账号体系来，
+         * 它不认识那套东西（协议 §1.5 的 push 不 pull）。
+         */
+        override fun onTokenWillExpire(expiresAtMs: Long) {
+            val instance = engine ?: return
+            val currentServer = server
+            val currentUser = username
+            if (currentServer.isEmpty() || currentUser.isEmpty()) return
+            thread {
+                runCatching { DemoApi(currentServer).demoLogin(currentUser) }
+                    .onSuccess { result ->
+                        main.post {
+                            // 下一次重连生效，不打断当前通话。
+                            instance.updateToken(result.token, result.expiresAtMs)
+                            token = result.token
+                            IMRTCLog.i("demo", "票已续期")
+                        }
+                    }
+                    .onFailure { error ->
+                        // 换票失败不是致命的：当前连接照旧活着，下次重连时再按 4401 那条路走。
+                        IMRTCLog.w("demo", "续期失败：${error.message}")
+                    }
+            }
         }
 
         override fun onError(code: Int, message: String) {

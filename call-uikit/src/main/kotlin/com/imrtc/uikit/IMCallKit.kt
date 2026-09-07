@@ -408,6 +408,21 @@ object IMCallKit {
         update(state)
     }
 
+    /**
+     * 宿主的身份解析回来了，重画用到这些 uid 的地方（见 [IMProfileResolver]）。
+     *
+     * 宿主的解析器多半是「命中就返回、没命中攒一批去拉」，第一帧解析不到是正常路径；
+     * 拉回来之后调这个方法，界面上的名字与头像才会跟上。
+     *
+     * **参数目前只用于日志**：Kit 一次通话最多 9 个格子，整屏重画比按 uid 精细失效便宜得多，
+     * 也少一类「漏刷某一格」的 bug。签名保留 uids 是为了将来真需要精细化时不破坏调用方。
+     */
+    @JvmStatic
+    fun reloadProfiles(uids: List<String>) {
+        IMRTCLog.d("kit", "身份解析更新，重画 ${uids.size} 个 uid")
+        update(state)
+    }
+
     internal fun update(next: IMCallViewState) {
         state = next
         main.post {

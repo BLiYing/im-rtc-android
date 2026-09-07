@@ -41,4 +41,12 @@ class IMCallKitConfig {
      * 自己不要放进来——呼叫名单里含主叫会被服务端拒掉。
      */
     var inviteCandidates: List<IMInviteCandidate> = emptyList()
+
+    /**
+     * uid → 本机该显示的名字与头像（见 [IMProfileResolver]）。
+     *
+     * **不设就退化成显示 uid**，与没有这个钩子时行为一致。
+     * 宿主异步解析回来后调 [IMCallKit.reloadProfiles] 重画。
+     */
+    var profileResolver: IMProfileResolver? = null
 }

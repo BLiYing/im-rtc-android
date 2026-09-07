@@ -169,13 +169,32 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
             this.avatarSizeDp = avatarSizeDp
             avatar.layoutParams = LayoutParams(dp(avatarSizeDp), dp(avatarSizeDp), Gravity.CENTER)
         }
-        avatar.text = IMAvatar.initial(label)
+        /*
+          显示名与头像交给宿主解析（见 IMProfileResolver）。没配 resolver 时
+          resolvedName 原样返回 label，行为与加这个钩子之前完全一致。
+        */
+        val resolver = IMCallKit.config.profileResolver
+        val shown = resolvedName(resolver, uid, label)
+        val photo = resolvedAvatar(resolver, uid)
         avatar.textSize = (avatarSizeDp / 3f)
-        avatar.background = IMKitTheme.avatarDrawable(uid.ifEmpty { label })
+        if (photo == null) {
+            /*
+              **底色按 uid 取，首字母按显示名取。**
+              底色跟 uid 走才能五端稳定（规范 §02）——同一个人在谁的屏幕上都是同一个颜色；
+              而显示名是每台设备各算各的（备注！），拿它取色会让同一个人换台设备就变个颜色。
+            */
+            avatar.text = IMAvatar.initial(shown)
+            avatar.background = IMKitTheme.avatarDrawable(uid.ifEmpty { label })
+        } else {
+            // 宿主给的是**已经加载好**的图，形状（圆形裁剪等）也由它负责——
+            // Kit 不引图片库、不下载、不裁剪。
+            avatar.text = ""
+            avatar.background = photo
+        }
         // 没画面时露出头像。**用 visibility 不改层级**：层级一动，媒体层挂着的渲染器会跟着重来。
         avatar.visibility = if (hasVideo) GONE else VISIBLE
         videoHost.visibility = if (hasVideo) VISIBLE else INVISIBLE
-        namePlate.text = label
+        namePlate.text = shown
         // 正在说话：名字标签底变绿、字变深（规范 §06）。
         namePlate.background = IMKitTheme.roundedDrawable(if (isSpeaking) IMKitTheme.speaking else IMKitTheme.scrim, dp(6))
         namePlate.setTextColor(if (isSpeaking) IMKitTheme.answerIcon else IMKitTheme.primaryText)
