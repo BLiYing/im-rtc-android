@@ -24,6 +24,17 @@ import android.widget.GridLayout
  * 所以分三档：什么都没变 → 直接返回；只有格子大小变了（转屏、控制条高度变化）→
  * 就地改 LayoutParams；只有格子集合变了才重挂。
  * iOS 的 `IMCallGridView.layout` 是同一条判据（`guard wanted != tiles`）。
+ *
+ * # 改行列数之前，先把 spec 退回 UNDEFINED
+ *
+ * 格子是不写行列的（`spec(UNDEFINED)`），**但 GridLayout 每次 measure 都会在
+ * `validateLayoutParams()` 里把它们改写成具体的行列下标**（`columnSpec` 变成 `[2,3)` 这种）。
+ * 于是「在场子视图算出来的最大下标」= 上一版的列数；下一次把 `columnCount` 调**小**，
+ * `Axis.setCount` 拿它一比就当场抛 `IllegalArgumentException`。
+ *
+ * 而列数**同一批人也会变**：第一轮 `render` 早于第一次 layout，只能按默认 `aspect = 0.7`
+ * 估（9 个人 → 3×3）；量到真尺寸那一轮 `aspect` 是 0.48（控制条的下 padding 还没生效），
+ * 9 个人变成 2×5——**发起群通话就是这么闪退的**，一次转屏也是同一条路。
  */
 internal class IMCallGridView(context: Context) : GridLayout(context) {
 
@@ -65,7 +76,13 @@ internal class IMCallGridView(context: Context) : GridLayout(context) {
             }
         }
 
-        val sameTiles = wanted == tiles
+        /*
+         判据看的是**在场的子视图**，不是上一次记下的 `tiles`：格子会被
+         `IMCallView.pinFull` / `mountInPip` 从这里摘走挂到别处（全屏画面、小窗），
+         那之后 `tiles` 与实际在场的就对不上了。只比 `tiles` 的话，
+         视频版式切回九宫格时会认成「什么都没变」，格子再也回不来——**一屏空的九宫格**。
+        */
+        val sameTiles = childrenAre(wanted)
         val sameCells = wantedWidth == cellWidth && wantedHeight == cellHeight &&
             columns == columnCount && rows == rowCount
         if (sameTiles && sameCells) return
@@ -74,15 +91,19 @@ internal class IMCallGridView(context: Context) : GridLayout(context) {
         cellHeight = wantedHeight
 
         if (sameTiles) {
-            // 只是尺寸变了：**就地改**，一个 SurfaceView 都不摘。
-            columnCount = columns
-            rowCount = rows
+            // 只是尺寸 / 行列变了：**就地改**，一个 SurfaceView 都不摘。
+            // **必须先退 spec 再改行列数**（见类注释）：退完 `setLayoutParams` 会让
+            // GridLayout 重算最大下标，这时列数往小改才不会抛。
             for (view in wanted) {
                 val params = view.layoutParams as? LayoutParams ?: continue
                 params.width = wantedWidth
                 params.height = wantedHeight
+                params.columnSpec = spec(UNDEFINED)
+                params.rowSpec = spec(UNDEFINED)
                 view.layoutParams = params
             }
+            columnCount = columns
+            rowCount = rows
             return
         }
 
@@ -104,6 +125,13 @@ internal class IMCallGridView(context: Context) : GridLayout(context) {
                 },
             )
         }
+    }
+
+    /** 在场的子视图是不是**正好**是这一批、且顺序一致。 */
+    private fun childrenAre(wanted: List<View>): Boolean {
+        if (childCount != wanted.size) return false
+        for (i in wanted.indices) if (getChildAt(i) !== wanted[i]) return false
+        return true
     }
 
     private companion object {

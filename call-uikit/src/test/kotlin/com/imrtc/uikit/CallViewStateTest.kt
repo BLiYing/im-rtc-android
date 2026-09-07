@@ -136,6 +136,23 @@ class CallViewStateTest {
         assertEquals(3 to 1, IMGrid.dimensions(3, aspect = 2.0))
     }
 
+    /**
+     * **同一批人，列数会往小走**——这一条是 [IMCallGridView] 那个「改行列数之前先退 spec」的前提。
+     *
+     * GridLayout 每次 measure 都会把不写行列的格子改写成具体下标，于是「在场子视图的最大下标」
+     * 就是上一版的列数；这时把 `columnCount` 调小，`Axis.setCount` 当场抛 IllegalArgumentException。
+     * 触发路径不用转屏就有：第一轮 `render` 早于第一次 layout，只能按默认 `aspect = 0.7` 估
+     * （9 个人 3×3），量到真尺寸那一轮是 0.48（控制条的下 padding 还没生效）→ 2×5。
+     * **发起群通话闪退就是这么来的。**
+     */
+    @Test
+    fun `同一批人列数也会变小`() {
+        assertEquals("第一轮按默认形状估", 3 to 3, IMGrid.dimensions(9, aspect = 0.7))
+        assertEquals("量到真尺寸这一轮", 2 to 5, IMGrid.dimensions(9, aspect = 0.48))
+        // 转屏是同一条路，只是方向反过来：行数从 5 掉到 2。
+        assertEquals(5 to 2, IMGrid.dimensions(9, aspect = 1.8))
+    }
+
     @Test
     fun `接通之前不许收进悬浮球`() {
         // 拨出中收起来，剩一个不会动的小球挂在那儿：既不知道对方接没接，
