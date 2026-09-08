@@ -37,14 +37,14 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
      * ImageView + CENTER_CROP + clipToOutline 才和另外两端一致。
      */
     private val avatarPhoto = ImageView(context)
-    private val namePlate = TextView(context)
-    private val mutedPlate = FrameLayout(context)
-    private val mutedIcon = ImageView(context)
+    /** 名牌气泡：名字 + 说话/静音图标同住一格（2026-09-09 改版，见 [IMSpeechIconView]）。 */
+    private val namePlate = LinearLayout(context)
+    private val nameText = TextView(context)
+    private val speechIcon = IMSpeechIconView(context)
     private val bottomRow = LinearLayout(context)
     private val netPlate = FrameLayout(context)
     private val netBars = IMNetworkBarsView(context)
     private val ringingLabel = TextView(context)
-    private val border = GradientDrawable()
     private var avatarSizeDp = 44
 
     var uid = ""
@@ -84,19 +84,32 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
          离左边与下边都留 `PLATE_INSET_DP`（12，比原来的 8 大）：格子有圆角，
          贴到 8 的话名字在圆角上会被切掉一截，有的机型上直接看不全。
         */
-        namePlate.textSize = 12f
-        namePlate.setTextColor(IMKitTheme.primaryText)
-        namePlate.maxLines = 1
-        namePlate.ellipsize = android.text.TextUtils.TruncateAt.END
-        namePlate.setPadding(dp(8), 0, dp(8), 0)
-        namePlate.gravity = Gravity.CENTER_VERTICAL
-        namePlate.background = IMKitTheme.roundedDrawable(IMKitTheme.scrim, dp(6))
+        nameText.textSize = 12f
+        nameText.setTextColor(IMKitTheme.primaryText)
+        nameText.maxLines = 1
+        nameText.ellipsize = android.text.TextUtils.TruncateAt.END
 
-        mutedIcon.setImageResource(IMKitIcon.MIC_SLASH.resId)
-        mutedIcon.setColorFilter(IMKitTheme.mutedBadge)
-        mutedPlate.background = IMKitTheme.circleDrawable(IMKitTheme.scrim)
-        mutedPlate.addView(mutedIcon, LayoutParams(dp(14), dp(14), Gravity.CENTER))
-        mutedPlate.contentDescription = "已静音"
+        // **底色恒为 scrim**：说话不再改名牌底色，也不再给整格描边——
+        // 那两处大面积色块同时变，三个人轮流说话时整屏在闪（2026-09-09 改版）。
+        namePlate.orientation = LinearLayout.HORIZONTAL
+        namePlate.gravity = Gravity.CENTER_VERTICAL
+        namePlate.setPadding(dp(8), 0, dp(8), 0)
+        namePlate.background = IMKitTheme.roundedDrawable(IMKitTheme.scrim, dp(6))
+        namePlate.addView(
+            nameText,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        // 图标**永远占位**（拍板：留位），所以名字不会随说话左右跳。
+        namePlate.addView(
+            speechIcon,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { leftMargin = dp(5) },
+        )
 
         bottomRow.orientation = LinearLayout.HORIZONTAL
         bottomRow.gravity = Gravity.CENTER_VERTICAL
@@ -104,10 +117,6 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         // 横贯整格的深色底板（与 iOS 的名字牌完全不是一个样子）。太长时靠
         // onSizeChanged 里算出来的 maxWidth 截断，不会把静音角标顶出格子。
         bottomRow.addView(namePlate, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(20)))
-        bottomRow.addView(
-            mutedPlate,
-            LinearLayout.LayoutParams(dp(20), dp(20)).apply { leftMargin = dp(4) },
-        )
         addView(
             bottomRow,
             LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
@@ -130,11 +139,6 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         ringingLabel.gravity = Gravity.CENTER_HORIZONTAL
         addView(ringingLabel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.TOP).apply { topMargin = dp(10) })
 
-        // 发言描边是**内描边**（规范 §06：2.5 内缩，不撑大格子）。
-        border.shape = GradientDrawable.RECTANGLE
-        border.cornerRadius = dp(IMKitTheme.TILE_RADIUS_DP).toFloat()
-        border.setStroke(dp(3), IMKitTheme.speaking)
-        border.setColor(android.graphics.Color.TRANSPARENT)
     }
 
     /** 当前挂着的渲染器是不是「压在别人上面」那一层。换角色时要重挂一次，见 [setVideoView]。 */
@@ -187,6 +191,8 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         hasVideo: Boolean,
         hasAudio: Boolean,
         isSpeaking: Boolean,
+        /** 0~100，服务端给的音量，映射到条高。见 [IMSpeechIconView]。 */
+        volume: Int = 0,
         isRinging: Boolean = false,
         settled: IMCallViewState.Settled = IMCallViewState.Settled.NONE,
         networkLevel: Int = 0,
@@ -221,12 +227,18 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         // 没画面时露出头像。**用 visibility 不改层级**：层级一动，媒体层挂着的渲染器会跟着重来。
         avatar.visibility = if (hasVideo) GONE else VISIBLE
         videoHost.visibility = if (hasVideo) VISIBLE else INVISIBLE
-        namePlate.text = shown
-        // 正在说话：名字标签底变绿、字变深（规范 §06）。
-        namePlate.background = IMKitTheme.roundedDrawable(if (isSpeaking) IMKitTheme.speaking else IMKitTheme.scrim, dp(6))
-        namePlate.setTextColor(if (isSpeaking) IMKitTheme.answerIcon else IMKitTheme.primaryText)
-        foreground = if (isSpeaking) border else null
-        mutedPlate.visibility = if (hasAudio) GONE else VISIBLE
+        nameText.text = shown
+        /*
+          说话 / 静音都收进名牌气泡里那一枚图标（2026-09-09 改版）。
+          **静音优先**：静音的人不可能在说话，两者互斥。
+          描边与绿名牌一并删掉——留着就是三处同时表达同一件事。
+        */
+        speechIcon.set(speaking = isSpeaking, muted = !hasAudio, volume = volume)
+        namePlate.contentDescription = when {
+            !hasAudio -> "$shown，已静音"
+            isSpeaking -> "$shown，正在说话"
+            else -> shown
+        }
         netPlate.visibility = if (IMCallViewState.isNetworkPoor(networkLevel)) VISIBLE else GONE
         netBars.level = networkLevel
         // 邀请中的占位格：整格 55% 不透明 + 顶部一行终局（规范 §06）。
@@ -238,12 +250,16 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
     /**
      * 名字最多占多宽。
      *
-     * 格子多宽只有量出来才知道，所以在这里算：整格宽减掉两侧留白、静音角标与那 4dp 间隙。
-     * 不设上限的话，长名字会把静音角标一路顶出格子外。
+     * 格子多宽只有量出来才知道，所以在这里算：整格宽减掉两侧留白、气泡左右内边距、
+     * 说话图标与它前面那 5dp 间隙。不设上限的话，长名字会把图标一路顶出格子外。
+     *
+     * **限的是 nameText 不是 namePlate**：`maxWidth` 是 TextView 的属性，
+     * 而名牌现在是个 LinearLayout（里头装着名字与图标），设在它身上不起任何作用。
      */
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        namePlate.maxWidth = (w - dp(PLATE_INSET_DP) * 2 - dp(20) - dp(4)).coerceAtLeast(dp(24))
+        val chrome = dp(PLATE_INSET_DP) * 2 + dp(8) * 2 + dp(9) + dp(5)
+        nameText.maxWidth = (w - chrome).coerceAtLeast(dp(24))
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

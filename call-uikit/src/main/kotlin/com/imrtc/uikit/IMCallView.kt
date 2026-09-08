@@ -451,7 +451,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
              对端一开摄像头就得重建 Surface 再等一个关键帧——白等半秒还闪一下。
             */
             tile.setVideoView(actions?.videoViewFor(m.uid))
-            tile.apply(m.uid, m.uid, m.video, m.audio, state.speakingUid == m.uid,
+            tile.apply(m.uid, m.uid, m.video, m.audio, m.speaking, m.volume,
                 isRinging = !m.accepted, settled = m.settled, networkLevel = m.networkLevel)
             actions?.reportLayer(m.uid, layer)
             ordered += tile
@@ -481,7 +481,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private fun applySelf(state: IMCallViewState, hasLocalVideo: Boolean, avatarDp: Int) {
         val showVideo = state.cameraOn && hasLocalVideo
         selfTile.setVideoView(if (showVideo) actions?.localPreviewView() else null, overlay = !state.isSwapped)
-        selfTile.apply("", "我", showVideo, state.micOn, false, avatarSizeDp = avatarDp)
+        // 本端那格也显示（2026-09-09 拍板）：uid 为空串，说话状态按本端音量判。
+        selfTile.apply("", "我", showVideo, state.micOn, state.selfSpeaking, state.selfVolume,
+            avatarSizeDp = avatarDp)
     }
 
     private fun mountInPip(tile: IMVideoTile) {
