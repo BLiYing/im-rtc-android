@@ -61,17 +61,10 @@ internal class IMPeerConnections(
      * 状态已经是 stable，native 层直接报 `Called in wrong state: stable`，
      * 那条轨道就再也协商不上了。
      *
-     * 真机上一跑就撞到：发布 audio 与 video 两条轨道 → 两次 publish.ok → 两次 offer。
+     * 闸门的状态与并发规则见 [IMNegotiationGate]——**它必须是线程安全的**，
+     * 原先那三个裸 `mutableSetOf` 被三个线程并发读写，竞态下会永久卡死。
      */
-    private val negotiating = mutableSetOf<String>()
-    private val pendingOffer = mutableSetOf<String>()
-    /**
-     * 「要重启 ICE，但那一刻有 offer 在飞」。
-     *
-     * **不能和 [pendingOffer] 合并**：补协商补的是一个普通 offer，
-     * 丢了 ICE restart 这一位，网断了这条 PC 就永远重连不上，而日志里一切正常。
-     */
-    private val pendingIceRestart = mutableSetOf<String>()
+    private val gate = IMNegotiationGate()
 
     fun factory(): PeerConnectionFactory = factory
 
@@ -101,9 +94,7 @@ internal class IMPeerConnections(
      * （见 `IMCallEngine.driveMedia`）。别把这段注释当成那个 bug 的成因。
      */
     fun stop() {
-        negotiating.clear()
-        pendingOffer.clear()
-        pendingIceRestart.clear()
+        gate.clear()
         pub?.apply {
             close()
             dispose()
@@ -127,7 +118,16 @@ internal class IMPeerConnections(
      * 媒体层不认识信令，也不知道此刻房间在不在 joined。
      */
     fun markIceRestart(pc: String) {
-        pendingIceRestart += pc
+        gate.markIceRestart(pc)
+        /*
+         **同时把在飞状态清掉。** 这个方法只在会话恢复（§1.4）之后被调用，
+         而换了一条连接就意味着：之前那个 offer 的 answer 永远不会回来了——
+         它是从旧 socket 上发出去的。不清的话闸门一直关着，
+         紧随其后的重新协商只会排队，那条 PC 就此永久沉默：
+         信令恢复了、下行也恢复了，**上行再也没协商过一次**，
+         对端全程看不到画面而日志里一条错误都没有（真机 2026-09-08）。
+        */
+        gate.resetInFlight(pc)
     }
 
     /**
@@ -137,16 +137,11 @@ internal class IMPeerConnections(
      */
     fun createOffer(pc: String, iceRestart: Boolean = false) {
         val connection = connection(pc) ?: return
-        if (pc in negotiating) {
-            // 已经有一个 offer 在飞：记下来，等这一轮的 answer 落地再补一次。
-            pendingOffer += pc
-            if (iceRestart) pendingIceRestart += pc
+        // 已经有一个 offer 在飞：闸门记下待补，等这一轮收工再来。
+        val restart = gate.beginOffer(pc, iceRestart) ?: run {
             IMRTCLog.d("media", "$pc 协商进行中，offer 排队（iceRestart=$iceRestart）")
             return
         }
-        negotiating += pc
-        // 上一轮想重启但当时有 offer 在飞，这一轮补上。
-        val restart = iceRestart || pendingIceRestart.remove(pc)
         val constraints = MediaConstraints().apply {
             if (restart) mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
         }
@@ -154,8 +149,14 @@ internal class IMPeerConnections(
         connection.createOffer(
             object : SimpleSdpObserver("createOffer/$pc") {
                 override fun onCreateSuccess(description: SessionDescription) {
-                    connection.setLocalDescription(SimpleSdpObserver("setLocal/$pc"), description)
+                    connection.setLocalDescription(LocalSdpObserver(pc), description)
                     events.onLocalSdp(pc, "offer", description.description)
+                }
+
+                // 造不出 offer 就没有后续的 answer 来放闸——不在这里放，闸门永久关死。
+                override fun onCreateFailure(error: String) {
+                    super.onCreateFailure(error)
+                    gate.abortOffer(pc)
                 }
             },
             constraints,
@@ -171,6 +172,8 @@ internal class IMPeerConnections(
             connection.signalingState() != PeerConnection.SignalingState.HAVE_LOCAL_OFFER
         ) {
             IMRTCLog.d("media", "$pc 当前状态 ${connection.signalingState()}，忽略这条 answer")
+            // **丢掉应答也要放闸**：这一轮不会再有别的东西来收尾了。
+            gate.abortOffer(pc)
             return
         }
         connection.setRemoteDescription(
@@ -182,9 +185,14 @@ internal class IMPeerConnections(
                         createAnswer(pc, connection)
                     } else {
                         // 这一轮协商收工，把排队的 offer 补上。
-                        negotiating -= pc
-                        if (pendingOffer.remove(pc)) createOffer(pc)
+                        if (gate.finishOffer(pc)) createOffer(pc)
                     }
+                }
+
+                // setRemote 失败同样是终局：不放闸的话这条 PC 从此不再协商。
+                override fun onSetFailure(error: String) {
+                    super.onSetFailure(error)
+                    if (kind == SessionDescription.Type.ANSWER) gate.abortOffer(pc)
                 }
             },
             SessionDescription(kind, sdp),
@@ -275,6 +283,19 @@ internal class IMPeerConnections(
     }
 
     /** 四个方法只关心其中一两个，其余给个默认，省得每次写一堆空实现。 */
+    /**
+     * 给 `setLocalDescription` 用：失败时**放闸**。
+     *
+     * 本端描述设不上，服务端那条 answer 回来也会在 `applyRemoteSdp` 的状态判断里被丢掉，
+     * 于是没有任何人来收尾——闸门永久关死，那条 PC 再也协商不了。
+     */
+    private inner class LocalSdpObserver(private val pc: String) : SimpleSdpObserver("setLocal/$pc") {
+        override fun onSetFailure(error: String) {
+            super.onSetFailure(error)
+            gate.abortOffer(pc)
+        }
+    }
+
     private open inner class SimpleSdpObserver(private val what: String) : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription) = Unit
         override fun onSetSuccess() = Unit
