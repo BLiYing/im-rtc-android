@@ -119,6 +119,9 @@ class IMCallEngine private constructor(
     /** 本端已发布的 Track：cid → kind。挂断时要按它去停采集。 */
     private val localTracks = LinkedHashMap<String, String>()
 
+    /** 发布之前按下的静音，攒在这儿等 track_id 回来再补做。见 [IMMuteBook]。 */
+    private val muteBook = IMMuteBook()
+
     init {
         media?.attachEvents(MediaEvents())
     }
@@ -154,6 +157,7 @@ class IMCallEngine private constructor(
     fun logout() = scheduler.post {
         media?.stop()
         localTracks.clear()
+        muteBook.clear()
         ctx = IMEngineContext()
         connection.stop()
     }
@@ -277,20 +281,54 @@ class IMCallEngine private constructor(
         }
     }
 
+    /**
+     * 开关本端某一类轨道。
+     *
+     * **本地静音与那条 `room.mute` 帧是两件事，不能绑死**：关掉本端轨道根本不需要
+     * `track_id`（那是服务端分配的），只有帧需要。原先两者绑在一起，拿不到 track_id
+     * 就连本端也不关——而「拿不到」恰恰发生在最该静音的时候（还没发布）。见 [desiredMuted]。
+     */
     private fun setMuted(kind: String, muted: Boolean) = scheduler.post {
+        // 意图先记下：轨道还没发布时，这是唯一留得住它的地方。
+        muteBook.want(kind, muted)
+        // **无条件应用到本端**。轨道还不存在时它是空操作，随后 [flushPendingMutes] 会补。
+        media?.setMuted(kind, muted)
+
         val cid = localTracks.entries.firstOrNull { it.value == kind }?.key
         val trackId = cid?.let { ctx.room.publishTrackIds[it] }
         if (trackId == null) {
-            IMRTCLog.w("engine", "没有 $kind Track 可以开关")
+            // 不是错误，是「来早了」：帧等发布完再补发。
+            IMRTCLog.d("engine", "$kind 轨道还没发布，静音意图先记下（muted=$muted）")
             return@post
         }
-        media?.setMuted(kind, muted)
-        input(
-            IMMachineInput.Act(
-                "mute",
-                mapOf("track_id" to IMJson.Str(trackId), "muted" to IMJson.Bool(muted)),
-            ),
+        sendMute(trackId, muted)
+    }
+
+    private fun sendMute(trackId: String, muted: Boolean) = input(
+        IMMachineInput.Act(
+            "mute",
+            mapOf("track_id" to IMJson.Str(trackId), "muted" to IMJson.Bool(muted)),
+        ),
+    )
+
+    /**
+     * 拿到 `track_id` 的那一刻，把攒下的静音意图补做一遍。
+     *
+     * **两件事都要补**：一是再 `media.setMuted` 一次——轨道是刚才 `publishDefaults`
+     * 现造的，造出来默认是开着的，之前那次调用落在了一个还不存在的轨道上；
+     * 二是补发 `room.mute`，让服务端与对端的界面也对上。
+     */
+    private fun flushPendingMutes(before: IMEngineContext, after: IMEngineContext) {
+        val pending = muteBook.pending(
+            localTracks,
+            before.room.publishTrackIds,
+            after.room.publishTrackIds,
         )
+        for ((kind, trackId, muted) in pending) {
+            IMRTCLog.i("engine", "补做发布前攒下的静音 kind=$kind muted=$muted")
+            media?.setMuted(kind, muted)
+            sendMute(trackId, muted)
+        }
     }
 
     // ── 内部：核心循环 ────────────────────────────────────────────────
@@ -316,6 +354,9 @@ class IMCallEngine private constructor(
         for (frame in output.send) sendFrame(frame)
         dispatcher.dispatchAll(output.emit)
         driveMedia(before, output.state)
+        // **排在 driveMedia 之后**：新进房那一步正是在它里面发布轨道的，
+        // 而要补的静音得等那些轨道的 track_id 回来（下一轮 input）才做得成。
+        flushPendingMutes(before, output.state)
     }
 
     private fun sendFrame(frame: IMOutgoingFrame) {
@@ -401,6 +442,9 @@ class IMCallEngine private constructor(
         if (mediaWanted(before) && !mediaWanted(after)) {
             adapter.stop()
             localTracks.clear()
+            // 意图跟着这一轮媒体一起作废：下一通电话的开关由界面重新决定，
+            // 留着的话会变成「上一通静音过，这一通莫名其妙也是静音的」。
+            muteBook.clear()
         }
     }
 
@@ -482,7 +526,7 @@ class IMCallEngine private constructor(
         }
 
         override fun onFrame(type: String, data: Map<String, IMJson>) {
-            forwardToMedia(type, data)
+            media?.applyNegotiationFrame(type, data)
             input(IMMachineInput.Recv(type, data))
         }
 
@@ -501,25 +545,6 @@ class IMCallEngine private constructor(
 
         override fun onError(code: IMErrorCode, message: String) =
             dispatcher.error(code.code, message)
-    }
-
-    /** 协商类下行帧要原样喂给媒体层——状态机不认识 SDP。 */
-    private fun forwardToMedia(type: String, data: Map<String, IMJson>) {
-        val adapter = media ?: return
-        when (type) {
-            IMFrameType.ROOM_OFFER -> adapter.applyRemoteSdp(
-                data.text("pc"), "offer", data.text("sdp"),
-            )
-            IMFrameType.ROOM_ANSWER -> adapter.applyRemoteSdp(
-                data.text("pc"), "answer", data.text("sdp"),
-            )
-            IMFrameType.ROOM_ICE_CANDIDATE -> adapter.applyRemoteCandidate(
-                data.text("pc"),
-                data.text("candidate"),
-                data.text("sdp_mid"),
-                ((data["sdp_mline_index"] as? IMJson.Num)?.value ?: 0L).toInt(),
-            )
-        }
     }
 
     private inner class MediaEvents : IMMediaAdapter.Events {
@@ -559,5 +584,3 @@ class IMCallEngine private constructor(
         override fun onMediaError(code: Int, message: String) = dispatcher.error(code, message)
     }
 }
-
-private fun Map<String, IMJson>.text(key: String) = (this[key] as? IMJson.Str)?.value ?: ""

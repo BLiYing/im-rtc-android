@@ -413,7 +413,9 @@ class EngineLoopTest {
 
     // ── 记录用的假实现 ────────────────────────────────────────────────
 
-    private class RecordingListener : IMCallEngineListener {
+    /** internal 而不是 private：`MuteBeforePublishTest` 也要一个只收不看的 listener，
+     *  28 个空方法抄第二遍纯属噪声。 */
+    internal class RecordingListener : IMCallEngineListener {
         val connected = mutableListOf<String>()
         val incoming = mutableListOf<String>()
         val callBegins = mutableListOf<String>()
@@ -470,7 +472,14 @@ class EngineLoopTest {
         override fun stop() { stopped = true }
         override fun publish(cid: String, kind: String, simulcast: Boolean) { published += kind }
         override fun unpublish(cid: String) = Unit
-        override fun setMuted(kind: String, muted: Boolean) = Unit
+        /** 记下每一次本端开关：`kind to muted`。**验静音必须看这个**——
+         *  只看 `room.mute` 帧的话，「帧发了但本端轨道其实没关」正好被漏掉，
+         *  而那恰恰是对端还听得见你的原因。 */
+        val mutes = mutableListOf<Pair<String, Boolean>>()
+
+        override fun setMuted(kind: String, muted: Boolean) {
+            mutes += kind to muted
+        }
         /** 状态机每决定「该协商了」，引擎就向这里现取一次 SDP。 */
         var offersAsked = mutableListOf<String>()
         override fun createOffer(pc: String) { offersAsked += pc }
