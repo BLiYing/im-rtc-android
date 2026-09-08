@@ -46,7 +46,7 @@ internal object IMEngineMachine {
             } else {
                 routeFrame(ctx, input.type, input.data)
             }
-        is IMMachineInput.Internal -> handleInternal(ctx, input.name)
+        is IMMachineInput.Internal -> handleInternal(ctx, input.name, nowMs)
         is IMMachineInput.Act -> routeAct(ctx, input.op, input.args)
     }
 
@@ -83,7 +83,11 @@ internal object IMEngineMachine {
         return IMMachineOutput(ctx.copy(room = room.state, call = call), send = room.send, emit = emit)
     }
 
-    private fun handleInternal(ctx: IMEngineContext, name: String): IMMachineOutput<IMEngineContext> {
+    private fun handleInternal(
+        ctx: IMEngineContext,
+        name: String,
+        nowMs: Long,
+    ): IMMachineOutput<IMEngineContext> {
         if (name == "ws_closed_4403") {
             // 被踢：什么都不留。重连没有意义——那等于跟另一台设备打架。
             //
@@ -102,6 +106,29 @@ internal object IMEngineMachine {
         if (name == "call_failed") {
             // 交给通话机回 idle；它抛的 onCallEnd 会顺带把房间也清掉（见 liftCall）。
             return liftCall(ctx, IMCallMachine.reduce(ctx.call, IMMachineInput.Internal(name)))
+        }
+        /*
+         **服务端那一侧已经不可能再恢复这条会话了**（§1.4 的恢复窗口过了）。
+
+         语义与「重连上了但 `resumed=false`」完全一样，所以走同一段代码：房间归零、
+         通话本地合成一条 `ended{network}`。差别只在**不必等重连成功** ——
+         网络一直不回来的话那一刻永远不会到，界面就永远停在「正在重连」、
+         连挂断都点不动（真机 2026-09-08，iOS carol 那一幕）。
+
+         「什么时候算过了窗口」由连接层算（只有它知道心跳周期），见
+         `IMSignalConnection` 的 giveUpDelayMs。
+        */
+        if (name == "session_unrecoverable") {
+            val room = IMRoomMachine.resume(ctx.room, resumed = false)
+            var call = ctx.call
+            val emit = mutableListOf<IMEmittedEvent>()
+            emit += room.emit
+            if (ctx.call.state != IMCallState.IDLE) {
+                val synthesized = IMCallMachine.synthesizeNetworkEnd(ctx.call, nowMs)
+                call = synthesized.state
+                emit += synthesized.emit
+            }
+            return IMMachineOutput(ctx.copy(room = room.state, call = call), send = room.send, emit = emit)
         }
         if (name == "disconnected") {
             val room = IMRoomMachine.reduce(ctx.room, IMMachineInput.Internal(name))

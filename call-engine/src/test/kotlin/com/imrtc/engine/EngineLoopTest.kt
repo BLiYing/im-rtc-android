@@ -188,6 +188,49 @@ class EngineLoopTest {
         assertTrue("必须本地合成一条 onCallEnd(network)", listener.callEnds.any { it.startsWith("network:") })
     }
 
+    /*
+      **网络一直不回来时也要收场。**
+
+      上面那条走的是「重连上了但 resumed=false」——它要求先连回来。
+      真机 2026-09-08：iOS carol 断网后不接网，那一刻永远不会到，
+      于是界面永远停在「正在重连」，**连挂断都点不动**（挂断只产出一帧发不出去的
+      call.hangup，本地状态一动不动，这是 §4.2 铁律 1 的直接后果）。
+
+      所以断开超过恢复窗口的上界之后，客户端自己收场，判据与服务端算的是同一笔账。
+    */
+    @Test
+    fun `断开一直连不上：超过恢复窗口也要本地收场`() {
+        loginAndConnect()
+        engine.call(listOf("bob"), "audio")
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("c-1"), "room_id" to IMJson.Str("r-1")),
+        )
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("c-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "room_token" to IMJson.Str("tk"),
+                "connected_at_ms" to IMJson.Num(scheduler.nowMs()),
+            ),
+        )
+        listener.callEnds.clear()
+
+        transport.closed(1006, "network")
+        // 网络一直不回来：每次重连都失败，一次 hello.ok 都没有。
+        repeat(20) {
+            scheduler.advance(5_000)
+            transport.failure(RuntimeException("连不上"))
+        }
+
+        assertTrue(
+            "网络不回来就永远不收场，界面停在「正在重连」、挂断也点不动",
+            listener.callEnds.any { it.startsWith("network:") },
+        )
+    }
+
     /**
      * 会议房离房**走的是两步**：`joined →(leave)→ leaving →(leave.ok)→ idle`。
      *

@@ -52,6 +52,15 @@ internal class IMSignalConnection(
         /** 票快到期了，宿主该去取新票并 updateToken。见 [IMTokenExpiryTimer]。 */
         fun onTokenWillExpire(expiresAtMs: Long)
 
+        /**
+         * 断得太久了，**服务端那一侧的会话已经不可能再恢复**（§1.4 的恢复窗口过了）。
+         *
+         * 与「重连上了但 `resumed=false`」是同一件事，只是**不必等重连成功**——
+         * 网络一直不回来的话那一刻永远不会到。少了它，界面就永远停在「正在重连」、
+         * 连挂断都点不动（真机 2026-09-08）。
+         */
+        fun onSessionUnrecoverable()
+
         /** 连接层自己的错误（解析失败等）。 */
         fun onError(code: IMErrorCode, message: String)
     }
@@ -94,6 +103,12 @@ internal class IMSignalConnection(
     private var connected = false
     private var reconnectTimer: IMScheduler.Cancellable? = null
     private var heartbeatTimer: IMScheduler.Cancellable? = null
+
+    /** 服务端最近一次告知的心跳周期。[giveUpDelayMs] 要用它推算服务端何时判死。 */
+    private var pingSec = DEFAULT_PING_SEC
+
+    /** 「服务端已经彻底放弃这条会话」的定时器。见 [giveUpDelayMs]。 */
+    private var unrecoverableTimer: IMScheduler.Cancellable? = null
     private var authFailures = 0
     private var lastInboundMs = 0L
     private val tokenExpiry = IMTokenExpiryTimer(scheduler) { expiresAtMs ->
@@ -236,9 +251,13 @@ internal class IMSignalConnection(
         sessionId = (data["session_id"] as? IMJson.Str)?.value ?: ""
         uid = (data["uid"] as? IMJson.Str)?.value ?: uid
         val resumed = (data["resumed"] as? IMJson.Bool)?.value ?: false
-        val pingSec = (data["ping_interval_sec"] as? IMJson.Num)?.value ?: DEFAULT_PING_SEC
+        pingSec = ((data["ping_interval_sec"] as? IMJson.Num)?.value ?: DEFAULT_PING_SEC)
+            .coerceIn(MIN_PING_SEC, MAX_PING_SEC)
+        // 连上了就别再倒计时了——不管 resumed 是真是假，服务端都已经给出裁决。
+        unrecoverableTimer?.cancel()
+        unrecoverableTimer = null
         IMRTCLog.i("signal", "已连接 session=$sessionId resumed=$resumed ping=${pingSec}s")
-        startHeartbeat(pingSec.coerceIn(MIN_PING_SEC, MAX_PING_SEC))
+        startHeartbeat(pingSec)
         tokenExpiry.arm((data["token_expires_at_ms"] as? IMJson.Num)?.value ?: 0L)
         events.onConnected(sessionId, resumed)
     }
@@ -269,7 +288,32 @@ internal class IMSignalConnection(
         reconnectTimer = null
         heartbeatTimer?.cancel()
         heartbeatTimer = null
+        unrecoverableTimer?.cancel()
+        unrecoverableTimer = null
     }
+
+    /*
+     断开多久之后可以断定「服务端那一侧的会话没了」。
+
+     # 为什么不是恢复窗口那 30 秒
+
+     服务端的 30 秒**不是从我们断开的那一刻算起的**，是从**它自己察觉**的那一刻算起。
+     而它靠读超时察觉：连续 3 个心跳周期收不到任何东西才判死（§1.3）。
+     我们断开时距离上一帧最多一个心跳周期，所以：
+
+         服务端察觉    = 断开后 (3 × ping − 上一帧到断开的间隔) ∈ [2×ping, 3×ping]
+         它的窗口到期  = 察觉 + 30s，最晚 = 断开后 3×ping + 30s
+
+     按默认 15 秒心跳就是 **45 + 30 = 75 秒**，再加一点余量避开「同一秒」的竞争。
+
+     # 为什么必须取上界，不能取更短
+
+     取短了就会撒谎：真机 2026-09-08 那通，断开 14 秒后重连**成功恢复**，通话好端端地继续。
+     在那之前宣布「通话已结束」是把一通还能救回来的电话杀掉，而且服务端还认为我们在房里，
+     房间里会挂着一个幽灵成员。**宁可让用户多看几十秒「正在重连」，也不能提前下结论。**
+     */
+    private fun giveUpDelayMs(): Long =
+        (SERVER_DEATH_PINGS * pingSec + RESUME_WINDOW_SEC + GIVE_UP_GRACE_SEC) * 1000
 
     private fun closeAndReconnect(code: Int, reason: String) {
         transport.close(IMCloseCode.NORMAL.code, reason)
@@ -288,6 +332,25 @@ internal class IMSignalConnection(
         if (wasConnected || code != 0) events.onDisconnected(code, reason)
 
         if (stopped) return
+
+        /*
+         起「服务端已经彻底放弃」的倒计时。
+
+         **只在第一次断开时起**：`handleClosed` 每一次重连失败都会走到这里，
+         每次都重排的话截止时刻就一直往后挪，永远不会到（而那正是它要治的病）。
+         起点是第一次断开的那一刻，与服务端算的是同一笔账。
+        */
+        if (unrecoverableTimer == null) {
+            val delay = giveUpDelayMs()
+            IMRTCLog.i("signal", "${delay}ms 内若还连不上，服务端那一侧的会话就没了")
+            unrecoverableTimer = scheduler.postDelayed(delay) {
+                unrecoverableTimer = null
+                // 服务端已经丢掉这个会话，再拿它去要 resume 只会白跑一趟。
+                sessionId = ""
+                IMRTCLog.w("signal", "断开已超过恢复窗口，会话不可恢复")
+                events.onSessionUnrecoverable()
+            }
+        }
 
         // 握手应答里已经判过「这个错重连一万次也还是这个错」（见 [giveUpReason]）。
         // 排在关闭码之前：那一帧比关闭码具体得多——4401 只说「鉴权没过」，
@@ -468,6 +531,15 @@ internal class IMSignalConnection(
         /** 四端同一个数。见类注释第 1 条。 */
         const val MAX_AUTH_FAILURES = 3
         private const val DEFAULT_PING_SEC = 15L
+
+        /** 协议 §1.4 的恢复窗口：30 秒。**四端同一个值**，服务端的 `ResumeWindow` 也是它。 */
+        private const val RESUME_WINDOW_SEC = 30L
+
+        /** 服务端判一条连接死掉要连续几个心跳周期收不到东西（§1.3）。 */
+        private const val SERVER_DEATH_PINGS = 3L
+
+        /** 余量：跨过服务端窗口到期那一刻再收场，别跟它抢同一秒。 */
+        private const val GIVE_UP_GRACE_SEC = 5L
         private const val MIN_PING_SEC = 5L
         private const val MAX_PING_SEC = 60L
     }

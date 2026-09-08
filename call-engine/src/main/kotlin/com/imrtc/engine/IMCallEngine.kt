@@ -493,6 +493,9 @@ class IMCallEngine private constructor(
             dispatcher.kickedOut(reason)
         }
 
+        override fun onSessionUnrecoverable() =
+            input(IMMachineInput.Internal("session_unrecoverable"))
+
         override fun onTokenWillExpire(expiresAtMs: Long) =
             dispatcher.tokenWillExpire(expiresAtMs)
 

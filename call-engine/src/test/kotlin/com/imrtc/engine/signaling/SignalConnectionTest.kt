@@ -374,6 +374,81 @@ class SignalConnectionTest {
         assertTrue("放弃之后还在喊换票：${events.tokenWarnings}", events.tokenWarnings.isEmpty())
     }
 
+    /*
+      「断得太久 → 服务端那一侧的会话已经没了」这条倒计时。
+
+      守的是真机 2026-09-08 的一幕：iOS carol 断网后停在「正在重连」，
+      **不接网就永远停在通话界面，连挂断都点不动**——本地放弃的唯一入口是
+      「重连上了但 resumed=false」，而网络不回来那一刻永远不会到。
+
+      时刻取的是**上界**：3×ping（服务端读超时）+ 30s（恢复窗口）+ 5s 余量 = 80s。
+      下面四条分别钉住：会到、不早到、连上就撤、以及重连失败不许把它往后推。
+    */
+
+    @Test
+    fun `断开超过恢复窗口就报会话不可恢复`() {
+        connect()
+        transport.closed(IMCloseCode.NORMAL.code, "网断了")
+
+        scheduler.advance(80_000)
+        assertEquals("断了 80 秒还不放弃，界面就永远停在「正在重连」", 1, events.unrecoverable)
+    }
+
+    /*
+      **不许早到。** 真机上断开 14 秒后重连成功恢复、通话好端端继续；
+      在那之前宣布「通话已结束」是把一通还能救回来的电话杀掉，
+      而且服务端还认为我们在房里，房间会挂着一个幽灵成员。
+    */
+    @Test
+    fun `恢复窗口没过就不许报不可恢复`() {
+        connect()
+        transport.closed(IMCloseCode.NORMAL.code, "网断了")
+
+        // 服务端最快也要 2×ping 才察觉，再加 30 秒窗口——60 秒时它一定还没放弃。
+        scheduler.advance(59_000)
+        assertEquals("提前放弃会杀掉一通还能恢复的通话", 0, events.unrecoverable)
+    }
+
+    @Test
+    fun `重连成功就把倒计时撤掉`() {
+        connect()
+        transport.closed(IMCloseCode.NORMAL.code, "网断了")
+
+        scheduler.advance(2_000) // 让退避把重连排出去
+        transport.open()
+        transport.replyOk(
+            IMFrameType.HELLO,
+            mapOf("session_id" to IMJson.Str("s-1"), "resumed" to IMJson.Bool(true)),
+        )
+        /*
+         走过原来那个截止时刻（80 秒）还得再多走一段。
+         **中途要喂下行帧**：不喂的话心跳自己会判超时、主动断开重连，
+         于是倒计时被重新排上、80 秒后照样响——那时红的是心跳，不是这条闸。
+        */
+        repeat(12) {
+            scheduler.advance(10_000)
+            transport.deliver(IMFrameType.PONG, "")
+        }
+        assertEquals("已经连回来了还报不可恢复，会把正在进行的通话杀掉", 0, events.unrecoverable)
+    }
+
+    /*
+      **每次重连失败都重排的话，截止时刻就一直往后挪、永远不会到**——
+      而那正是这条倒计时要治的病。起点必须是第一次断开的那一刻。
+    */
+    @Test
+    fun `重连一直失败不许把截止时刻往后推`() {
+        connect()
+        transport.closed(IMCloseCode.NORMAL.code, "网断了")
+
+        // 断断续续地失败重连：每 5 秒撞一次墙，总时长仍然只走到 80 秒。
+        repeat(16) {
+            scheduler.advance(5_000)
+            transport.failure(RuntimeException("连不上"))
+        }
+        assertEquals("截止时刻被重连失败一路推后，等于这条闸从来不会合上", 1, events.unrecoverable)
+    }
+
     private class RecordingEvents : IMSignalConnection.Events {
         val connected = mutableListOf<Pair<String, Boolean>>()
         val frames = mutableListOf<Pair<String, Map<String, IMJson>>>()
@@ -382,6 +457,7 @@ class SignalConnectionTest {
         val kickReasons = mutableListOf<IMKickedOutReason>()
         val tokenWarnings = mutableListOf<Long>()
         var disconnects = 0
+        var unrecoverable = 0
 
         override fun onConnected(sessionId: String, resumed: Boolean) {
             connected += sessionId to resumed
@@ -389,6 +465,10 @@ class SignalConnectionTest {
 
         override fun onDisconnected(code: Int, reason: String) {
             disconnects++
+        }
+
+        override fun onSessionUnrecoverable() {
+            unrecoverable++
         }
 
         override fun onFrame(type: String, data: Map<String, IMJson>) {
