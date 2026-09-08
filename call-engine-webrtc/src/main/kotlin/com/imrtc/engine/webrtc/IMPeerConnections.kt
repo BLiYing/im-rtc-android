@@ -148,9 +148,36 @@ internal class IMPeerConnections(
         if (restart) IMRTCLog.i("media", "$pc 重启 ICE")
         connection.createOffer(
             object : SimpleSdpObserver("createOffer/$pc") {
+                /*
+                 **offer 必须等 setLocalDescription 落地之后才上线路。**
+
+                 `setLocalDescription` 是异步的（回调跑在 WebRTC 的 signaling 线程上）。
+                 原先这里紧挨着就 `events.onLocalSdp(...)` 把 offer 发出去了——
+                 局域网 / 本地 SFU 下服务端的 `room.answer` 几毫秒就能回来，
+                 而那时本端描述可能还没设上：`applyRemoteSdp` 看到 `signalingState()`
+                 是 STABLE 而不是 HAVE_LOCAL_OFFER，就把它当成重复应答丢掉并 `abortOffer`。
+                 **这一路发布就此协商不出去**：对端看得见人、收不到流，一条报错都没有，
+                 而且没有任何东西会重新驱动它（要等 ICE 进 FAILED 才有下一次机会）。
+
+                 iOS 与 Web 都是 await 完 `setLocalDescription` 才把 SDP 交给发送层的
+                 （`IMWebRTCAdapter.createPubOffer` / `webrtcAdapter.ts`），这里对齐它们。
+                */
                 override fun onCreateSuccess(description: SessionDescription) {
-                    connection.setLocalDescription(LocalSdpObserver(pc), description)
-                    events.onLocalSdp(pc, "offer", description.description)
+                    connection.setLocalDescription(
+                        object : SimpleSdpObserver("setLocal/$pc") {
+                            override fun onSetSuccess() {
+                                events.onLocalSdp(pc, "offer", description.description)
+                            }
+
+                            // 本端描述设不上，服务端那条 answer 回来也会在 applyRemoteSdp 的
+                            // 状态判断里被丢掉，于是没有任何人来收尾——闸门永久关死。
+                            override fun onSetFailure(error: String) {
+                                super.onSetFailure(error)
+                                gate.abortOffer(pc)
+                            }
+                        },
+                        description,
+                    )
                 }
 
                 // 造不出 offer 就没有后续的 answer 来放闸——不在这里放，闸门永久关死。
@@ -283,19 +310,6 @@ internal class IMPeerConnections(
     }
 
     /** 四个方法只关心其中一两个，其余给个默认，省得每次写一堆空实现。 */
-    /**
-     * 给 `setLocalDescription` 用：失败时**放闸**。
-     *
-     * 本端描述设不上，服务端那条 answer 回来也会在 `applyRemoteSdp` 的状态判断里被丢掉，
-     * 于是没有任何人来收尾——闸门永久关死，那条 PC 再也协商不了。
-     */
-    private inner class LocalSdpObserver(private val pc: String) : SimpleSdpObserver("setLocal/$pc") {
-        override fun onSetFailure(error: String) {
-            super.onSetFailure(error)
-            gate.abortOffer(pc)
-        }
-    }
-
     private open inner class SimpleSdpObserver(private val what: String) : SdpObserver {
         override fun onCreateSuccess(description: SessionDescription) = Unit
         override fun onSetSuccess() = Unit

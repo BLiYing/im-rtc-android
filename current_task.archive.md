@@ -619,3 +619,116 @@ Mac 的网关 ARP 是 `…:08:78`——**同一 SSID 下的两个 AP（主路由
 **没做**：真机验收。只有 JVM 单测 + MockWebServer，没在真机上跑过一次完整的
 「打电话 → 看服务端日志文件」。
 
+
+
+## 2026-09-08 之前的「当前焦点」（review 修复那一刀挤下来的）
+
+**网络一直不回来时通话再也退不出去，已修（2026-09-08）**，`./scripts/test.sh` 六步全绿。
+**未真机复验。**
+
+真机现场是 iOS 那一侧：断网后停在「正在重连」，**不接网就一直停在通话界面，挂断也无效**。
+Android 同形，四端都一样 —— 本地放弃的**唯一**入口是「重连上了但 `resumed=false`」时的
+`synthesizeNetworkEnd`，它要求先连回来；网络不回来那一刻永远不会到。
+而挂断只产出一帧发不出去的 `call.hangup`，本地状态按 §4.2 铁律 1 一动不动，所以点了没反应。
+
+改法：连接层起一条倒计时，断开超过**上界**就抛 `onSessionUnrecoverable`，
+状态机走与 `resumed=false` 完全相同的那段（房间归零 + 本地合成 `ended{network}`）。
+
+**上界怎么来的（不能拍脑袋取 30 秒）**：服务端那 30 秒不是从我们断开算起，
+是从**它自己察觉**算起，而它要连续 3 个心跳周期收不到东西才察觉（§1.3）。
+所以最晚是 `断开 + 3×ping + 30s`，默认心跳 15 秒即 75 秒，再加 5 秒余量。
+**取短了会杀掉一通还能恢复的电话** —— 真机 11:37 那次断开 14 秒后重连成功、通话照常继续。
+
+三条规矩各有用例守着，都验过回退即红：会到 / 不早到 / 重连一直失败不许把截止时刻往后推
+（最后这条尤其要紧：每次失败都重排的话，退避封顶 30 秒 < 80 秒，它**永远不会响**）。
+
+**没做**：「离线时按挂断也立即收场」这一半**按拍板延期**。它要额外处理「网络在窗口内
+回来了、而本地已经退出」那种幽灵成员，得在重连后补发一帧 `call.hangup`。
+
+**关 Wi-Fi 再打开的两个故障，都已修（2026-09-08）**，`./scripts/test.sh` 六步全绿。
+
+真机现场：alice(Android) 呼 carol(iOS) 视频，Android 关 Wi-Fi 再连上。
+
+### ① 上行永远协商不回来 —— 已修并**真机复验通过**
+
+信令恢复了、下行也恢复了，**上行再也没协商过一次**，carol 全程看不到 alice。
+根因在 `IMPeerConnections` 的**协商闸门**：`negotiating` / `pendingOffer` /
+`pendingIceRestart` 是三个裸 `mutableSetOf`，被三个线程并发读写 ——
+信令线程（`restart_pub_ice`）、WebRTC 信令线程（`onSetSuccess` 里放闸）、
+PC observer 线程（ICE 进 FAILED 时重启）。闸门一旦卡住，那条 PC
+**从此永远「协商进行中」**，后续任何 offer 只排队、永不发出，而且一条错误都没有。
+
+改动：抽出 `IMNegotiationGate`（一把锁包住三个集合，顺带能纯 JVM 单测）·
+**每一个终局都放闸**（原先只有成功路径）· **恢复时重置在飞状态**（`resetInFlight`）。
+最后这条是**构造上正确**的，不依赖竞态诊断是否准确。
+
+真机复验（09:45 那通）：`会话已恢复，重新协商上行` → `pub 重启 ICE` → `↑ room.offer`
+→ `pub ICE 状态：CONNECTED`，iOS 那侧画面恢复。修复前这里只会打印「offer 排队」。
+
+**竞态本身仍是推断**：并发用例能在无锁时抓到「两个 offer 同时放行」，
+抓不到「`negotiating -= pc` 丢失」那一种。
+
+### ② 「正在重连」橙条永远撤不掉 —— 已修并**真机复验通过**
+
+上一轮没能复现，这一轮从代码里找到了，与信令层无关：`IMCallView.renderBanner` 的
+`if (text.isNotEmpty() || connection != OK) banner.apply(text)` **恰好漏掉了
+「恢复成 OK」这一格** —— 那一刻文案是空串、connection 又正好是 OK，条件为假，
+`apply("")` 一次都不会调。于是橙条停在「正在重连…」，而且**怎么操作都撤不掉**
+（每次重渲染都落到同一个假条件上）。
+
+日志坐实这跟连接层无关：09:45:14.754 `已连接 resumed=true`，之后 `sys.ping` 每 15 秒
+一路到 09:52 从没断过，`onConnected` 抛过、没有任何后续 `onDisconnected`。
+
+判断挪出 View 成了纯函数 `IMBannerRules.next`（`BannerRulesTest` 覆盖，回退即红）。
+**iOS 与 Web 在同一处都是对的**（iOS 的 `else if !poor`、Web 的声明式渲染），只有 Android 有这个洞。
+
+真机复验（PKD130，`cmd wifi set-wifi-enabled` 关 45s 再开）：断网期间截图有「正在重连…」，
+开 Wi-Fi 40 秒后（`resumed=true`）截图**橙条已消失**，再等 25 秒仍然没有。修复前这一格永远撤不掉。
+
+### ③ 小窗视频时不时黑一下 —— 已修，**未真机复验**
+
+`room.active_speakers` **包含本端自己**，而本端音量往往就是最大的那个
+（真机 10:50 那一通：alice 45 / carol 36，两人交替领先，一秒好几次）。
+悬浮球原先写 `speakingUid.ifEmpty { members.keys.first() }`，跳到本端 uid 时
+就拿它去要一块远端画面：渲染器照样造得出来、`attachView("alice", …)` 也挂得上，
+**可本端根本没有远端轨道，那块画面永远是黑的**；而且每跳一次就换一个 view，
+`videoHost` 摘一次挂一次，`SurfaceView` 的 surface 跟着销毁重建 —— 就是那一下下的黑。
+
+`ifEmpty` 挡不住这一类：uid 不是空的，只是**不该拿来找远端画面**。
+改成 `IMCallViewState.videoSpeakerUid()`，只在 members（不含自己）里挑。
+九宫格拿 `speakingUid` 画绿描边是安全的（描边只画在 members 的格子上），所以只改悬浮球这一处。
+
+### ④ **仍未解决**：收小窗再展开，远端视频回不来
+
+同一通里按返回键收成悬浮球：**悬浮球是纯黑**（计时器在走、挂断键正常）；
+点开回全屏，carol 那一路**仍然全黑**，本端小窗正常，顶部没有橙条。
+这期间服务端一直在转发（5 秒 1873 包），所以是**客户端渲染侧**，不是媒体面。
+
+这一条本来就在下面「七项默认已验、没实机走过」名单里（「返回键收小窗」）——
+**那个「默认通过」的假设被证伪了**。
+
+**③ 的修复有没有连带修掉它，不知道**：如果当时球里挂的是那块「本端 uid 的黑渲染器」，
+carol 的渲染器就是无父状态，展开时按理该能挂回格子去。**读代码没读出必然的因果**，
+`IMVideoTile.setVideoView` 的摘父 / z-order 顺序都是对的。**需要一次带日志的新复现**。
+
+**1v1 视频里点小窗必崩，已修 + 真机复验（2026-09-07）**，`./scripts/test.sh` 六步全绿。
+
+崩在 `IMFloatingBubble.setVideoView`：`java.lang.IllegalStateException: The specified
+child already has a parent`（`adb logcat -b crash`，同一条栈两次）。
+
+远端渲染器是**一个 uid 一份、整通复用**的（`IMCallKit.videoViewFor` 缓存在 `remoteViews`），
+点小窗那一刻它还挂在全屏页的格子上，而小窗直接 `addView`——**没先从原父容器上摘下来**。
+旁边两个容器都做了这件事（`IMVideoTile.setVideoView`、`IMCallGridView`），只有小窗漏了。
+
+顺手补的第二个洞：`mountBubble` 挂在 `applyPresentation` 上，**每次状态更新都会跑**，
+而时长每秒走一格——原先每秒把渲染器摘一次挂一次，`SurfaceView` 的 surface 跟着销毁重建。
+判重那行（`IMVideoTile` 早就有）就是防这个的。
+
+**真机复验（OPPO PKD130 + web demo 的 dave 当对端，合成音视频源）**：接通 → 点小窗 →
+小窗里画面正常 → 展开回全屏 → 再收起，`crash` 缓冲区全程为空、进程号不变；
+小窗稳态 8 秒内 surface 创建/销毁 **0 次**（不判重的话这里该是每秒一轮）。
+
+**没加单测，是拍板不加**：这条是纯视图层行为，本仓只有纯 JVM 单测，钉不住
+「addView 前先摘父」这类断言，而引 Robolectric 会把「一条命令、无设备、秒级」磨掉。
+**结论是视图层也走真机**，规则改写进 `CONVENTIONS.md` §10 那条红线里（含判重那半）——
+下次再有人想加容器，照抄现有三个即可，别再重新讨论一遍要不要 Robolectric。

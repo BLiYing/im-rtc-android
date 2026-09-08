@@ -86,6 +86,17 @@ internal data class IMRoomContext(
     val layers: Map<String, String> = emptyMap(),
     /** joining / reconnecting 期间缓存的用户意图（不变量 R2）。 */
     val buffered: List<IMBufferedIntent> = emptyList(),
+    /**
+     * 这个房间**真的收到过 `room.join.ok`** 吗。
+     *
+     * 只有它能区分 RECONNECTING 的两种来路：从 JOINED 断的（服务端那边成员关系还在，
+     * 恢复后直接回 JOINED），还是从 JOINING 断的（`room.join` 还在飞，服务端从没受理过）。
+     * 少了它，[IMRoomMachine.resume] 会把后者也宣布成 JOINED。
+     *
+     * 不进一致性向量：向量只断言 `room` / `publish` / `subscribe` 那几个键，
+     * 这是本端为了分辨来路自己记的账。
+     */
+    val didJoin: Boolean = false,
 )
 
 internal object IMRoomMachine {
@@ -174,7 +185,42 @@ internal object IMRoomMachine {
     fun resume(ctx: IMRoomContext, resumed: Boolean): IMMachineOutput<IMRoomContext> {
         if (!resumed) return out(cleared(IMRoomState.IDLE))
         if (ctx.state != IMRoomState.RECONNECTING) return out(ctx)
+        if (!ctx.didJoin) return rejoin(ctx)
         return replayBuffered(ctx.copy(state = IMRoomState.JOINED))
+    }
+
+    /**
+     * 「进房还没落地就断了」的那一轮，恢复后**重发一次 `room.join`**。
+     *
+     * `disconnected` 会把任何非 IDLE 状态推进 RECONNECTING，JOINING 也在内。
+     * 而从 JOINING 断的那一种，`room.join` 当时还在飞：服务端从没受理过我们，
+     * 恢复的只是那条 WS 会话，**不是房间成员关系**。无条件宣布 JOINED 的话，
+     * 本端以为自己在房里，之后每一帧都换回 1201/1203，
+     * 而重新 join 又因为「不在 idle」被本地拒成 2005——一个哑掉的死局。
+     *
+     * 本端目前靠 `onRequestFailed` 的 `join_failed` 也能兜住（[IMPendingRequests.failAll]
+     * 是同步回调，排在 `onDisconnected` 前面），但那是**时序凑巧**：
+     * iOS 那边同一段代码就因为多两跳 actor 而翻车过。所以这里改成认 [didJoin] 这笔账，
+     * 三端同一份，不依赖谁先谁后。
+     *
+     * 房号与房票都还在手上，攒下的意图也照旧留着等进房后重放。
+     */
+    private fun rejoin(ctx: IMRoomContext): IMMachineOutput<IMRoomContext> {
+        // 连房号都没有（`join` 的帧还没产出就断了）：没得重发，干净地回 IDLE。
+        if (ctx.roomId.isEmpty()) return out(cleared(IMRoomState.IDLE))
+        return out(
+            ctx.copy(state = IMRoomState.JOINING),
+            send = listOf(
+                IMOutgoingFrame(
+                    IMFrameType.ROOM_JOIN,
+                    mapOf(
+                        "room_id" to s(ctx.roomId),
+                        "room_token" to s(ctx.roomToken),
+                        "auto_subscribe" to b(ctx.autoSubscribe),
+                    ),
+                ),
+            ),
+        )
     }
 
     /**

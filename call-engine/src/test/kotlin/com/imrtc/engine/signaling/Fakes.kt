@@ -67,9 +67,18 @@ internal class FakeTransport : IMTransport {
     val sent = mutableListOf<IMEnvelope>()
     private var listener: IMTransport.Listener? = null
 
+    /**
+     * **每一条 socket 的 listener 都留着**，按开出的先后排。
+     *
+     * 「上一条 socket 的关闭事件迟到了」这一幕只有拿得到旧 listener 才测得出来，
+     * 而那正是 `closeAndReconnect` 双重收场那个 bug 的现场（见 [IMSignalConnection.generation]）。
+     */
+    val listeners = mutableListOf<IMTransport.Listener>()
+
     override fun connect(url: String, listener: IMTransport.Listener) {
         connectCount++
         this.listener = listener
+        listeners += listener
     }
 
     override fun send(text: String) {

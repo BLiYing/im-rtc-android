@@ -101,6 +101,27 @@ internal class IMSignalConnection(
     private var pendingGiveUp: IMKickedOutReason? = null
     private var connecting = false
     private var connected = false
+
+    /**
+     * 当前这条 socket 的代际。**每开一条 +1**，[handleClosed] 拿它认「这条关闭事件是谁的」。
+     *
+     * 少了它就会出这一幕：[closeAndReconnect] 自己先调一次 [handleClosed]，
+     * 而 transport 的 `onClosed` / `onFailure` 随后**还会再调一次**（OkHttp 一定会回调，
+     * `transport.close()` 只是发个关闭帧）。网络假活时——也就是心跳超时那条路——
+     * 第二次回调可能晚到好几分钟，那时新连接早已 `connected=true`：
+     * 于是多抛一条假的 onDisconnected（界面写「正在重连」而连接好好的）、
+     * `failAll` 把在飞请求全掐掉、`connected/connecting` 被清零，
+     * 接着 `scheduleReconnect → openSocket` 开出**第二条 socket**——
+     * 同 uid 同 device_id，服务端按顶号踢掉一条，宿主收到一个**假的
+     * `onKickedOut(TAKEN_OVER)`**，用户被踹回登录页。
+     *
+     * （iOS 不会：`IMURLSessionWebSocket` 有个 `closed` 标志，
+     * 保证每条 socket 只回一次 onClose。这里等价的做法就是认代际。）
+     */
+    private var generation = 0
+
+    /** 已经为哪一代收过场了。同一代的第二条关闭事件一律丢掉。 */
+    private var closedGeneration = -1
     private var reconnectTimer: IMScheduler.Cancellable? = null
     private var heartbeatTimer: IMScheduler.Cancellable? = null
 
@@ -146,6 +167,9 @@ internal class IMSignalConnection(
 
     fun stop(code: Int = IMCloseCode.NORMAL.code, reason: String = "logout") {
         stopped = true
+        // 当前这一代就此收场：logout 之后 transport 还会回一次 onClosed，
+        // 那条不该再走一遍 failAll 与 onDisconnected。
+        closedGeneration = generation
         pendingGiveUp = null
         connecting = false
         connected = false
@@ -179,8 +203,9 @@ internal class IMSignalConnection(
         val cfg = config ?: return
         if (stopped || connecting || connected) return
         connecting = true
-        IMRTCLog.i("signal", "连接 ${cfg.url}（第 ${backoff.attempts} 次尝试）")
-        transport.connect(cfg.url, TransportListener())
+        generation += 1
+        IMRTCLog.i("signal", "连接 ${cfg.url}（第 ${backoff.attempts} 次尝试，gen=$generation）")
+        transport.connect(cfg.url, TransportListener(generation))
     }
 
     private fun sendHello() {
@@ -317,10 +342,22 @@ internal class IMSignalConnection(
 
     private fun closeAndReconnect(code: Int, reason: String) {
         transport.close(IMCloseCode.NORMAL.code, reason)
-        handleClosed(code, reason)
+        // 就地收场，并把这一代闩上——transport 随后一定还会回一次 onClosed/onFailure，
+        // 那一条必须被 [handleClosed] 的代际判断挡掉（见 [generation]）。
+        handleClosed(code, reason, generation)
     }
 
-    private fun handleClosed(code: Int, reason: String) {
+    /**
+     * 收场。`from` 是这条关闭事件属于哪一代 socket。
+     *
+     * **同一代只收一次场，旧代的一律丢掉**——理由见 [generation]。
+     */
+    private fun handleClosed(code: Int, reason: String, from: Int) {
+        if (from <= closedGeneration) {
+            IMRTCLog.d("signal", "重复/过期的关闭事件（gen=$from，已收到 $closedGeneration），丢弃")
+            return
+        }
+        closedGeneration = from
         val wasConnected = connected
         connected = false
         connecting = false
@@ -511,19 +548,29 @@ internal class IMSignalConnection(
         events.onFrame(envelope.type, data)
     }
 
-    /** transport 的回调可能在任意线程，这里统一 post 回 engine 线程。 */
-    private inner class TransportListener : IMTransport.Listener {
+    /**
+     * transport 的回调可能在任意线程，这里统一 post 回 engine 线程。
+     *
+     * **每条 socket 一个 listener，带着自己那一代**：迟到的回调靠它认出来
+     * （见 [generation]），不然它会把一条好端端的新连接拆掉。
+     */
+    private inner class TransportListener(private val gen: Int) : IMTransport.Listener {
         override fun onOpen() = scheduler.post {
-            if (stopped) return@post
+            // 这条 socket 已经被换掉了（重连排在它前面开出了新的一条）：它开出来也没用。
+            if (stopped || gen != generation) return@post
             sendHello()
         }
 
-        override fun onText(text: String) = scheduler.post { handleText(text) }
+        override fun onText(text: String) = scheduler.post {
+            // 旧 socket 上迟到的帧不能喂进状态机——那是上一条会话的东西。
+            if (gen != generation) return@post
+            handleText(text)
+        }
 
-        override fun onClosed(code: Int, reason: String) = scheduler.post { handleClosed(code, reason) }
+        override fun onClosed(code: Int, reason: String) = scheduler.post { handleClosed(code, reason, gen) }
 
         override fun onFailure(error: Throwable) = scheduler.post {
-            handleClosed(0, error.message ?: error.javaClass.simpleName)
+            handleClosed(0, error.message ?: error.javaClass.simpleName, gen)
         }
     }
 

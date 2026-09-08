@@ -101,6 +101,9 @@ private fun handleJoinOk(ctx: IMRoomContext, data: Map<String, IMJson>): IMMachi
     val emit = mutableListOf(IMEmittedEvent("onRoomJoined", mapOf("room_id" to s(Wire.str(data, "room_id")))))
     var next = ctx.copy(
         state = IMRoomState.JOINED,
+        // **这一笔账只在这里记**：它是「服务端真的受理了我们」的唯一证据，
+        // resume 靠它分辨 RECONNECTING 的两种来路（见 IMRoomMachine.resume）。
+        didJoin = true,
         roomId = Wire.str(data, "room_id"),
         participantId = Wire.str(data, "participant_id"),
     )
