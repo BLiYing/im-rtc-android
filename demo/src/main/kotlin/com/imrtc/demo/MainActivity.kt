@@ -1,8 +1,6 @@
 package com.imrtc.demo
 
-import android.Manifest
 import android.app.Activity
-import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -35,7 +33,12 @@ class MainActivity : Activity() {
         setContentView(buildRoot())
         DemoSession.onChange = { refresh() }
         showTab(0)
-        requestCallPermissions()
+        // 这里**故意不申请任何权限**：麦克风与摄像头由 Kit 在三个闸口自己要
+        // （发起 / 开摄像头 / 接听），而且它的结果有业务语义——麦克风被拒＝取消整通话，
+        // 摄像头被拒＝降级语音继续，这判断宿主做不了。Demo 抢在前面要一次，
+        // 只会烧掉「第一次」：用户在这里拒绝之后，真打电话时 Kit 的说明卡被跳过，
+        // 直接落到「永久拒绝 → 去设置」。**这个 Demo 要证明的正是「宿主只管调 call()」。**
+        // POST_NOTIFICATIONS 是唯一留给宿主的一条，见 README「宿主要自己申请的权限」。
         // 上次登录过就自动重登——**杀掉 app 再打开不该回到登录页**。
         DemoSession.autoLogin()
     }
@@ -136,15 +139,4 @@ class MainActivity : Activity() {
         // 标题栏上的动作绑的是当前屏，切屏时才会重建，这里不用动。
     }
 
-    /**
-     * 运行时权限。**清单里声明只是第一步**，麦克风、摄像头、以及 Android 13 起的通知
-     * 都要在这里再要一次；没有通知权限的话前台服务的「通话中」用户看不见。
-     */
-    private fun requestCallPermissions() {
-        val wanted = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            wanted += Manifest.permission.POST_NOTIFICATIONS
-        }
-        requestPermissions(wanted.toTypedArray(), 1)
-    }
 }

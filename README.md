@@ -16,6 +16,33 @@
 
 **UIKit 不是特权组件**——它只消费公开回调表，没有私有通道。
 
+## 权限：宿主要自己申请的只有一条
+
+**麦克风与摄像头不用宿主管。** `IMCallKit` 在三个闸口自己申请（发起通话 / 开摄像头 / 接听），
+走的是三段式：说明卡 → 系统框 → 拒一次再劝 → 第二次才给「去设置」。弹框由一个透明的
+`IMPermissionActivity` 负责，所以**拨出前 Kit 不在前台也能问**。
+权限与前台服务类型都在 `call-engine-webrtc` 的清单里声明，靠 manifest merger 合进宿主，
+**宿主一行都不用加**。
+
+**别抢在前面替它申请。** 进 App 就问权限是拒绝率最高的问法，而且会**烧掉「第一次」**：
+用户在那里拒绝之后 `shouldShowRequestPermissionRationale` 的状态就变了，真打电话时
+Kit 的说明卡被跳过，直接落到「永久拒绝 → 去设置」那一屏。更要紧的是，被拒的**处置有业务语义**
+——麦克风被拒＝取消整通话，摄像头被拒＝降级语音继续——只有 Kit 知道这次通话要哪些设备
+（`IMPermissionGate.devicesFor`），宿主替它问，就把这个判断丢了。
+
+**唯一留给宿主的是 `POST_NOTIFICATIONS`**（Android 13+）：
+
+```kotlin
+// 通话中会起前台服务，没有这条权限用户看不见「通话中」那条通知。
+// 清单里已经替你声明了，缺的只是运行时这一次询问——**挑个与通话无关的时机问**，
+// 比如设置页或首次进入某个功能，别放在通话链路上。
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+}
+```
+
+不给也不会影响通话本身——只是「通话中」那条通知不显示。
+
 ## 升级须知：`device_id` 现在是构造时校验（**破坏性变更**）
 
 `IMCallEngine.Config` 的构造函数会校验 `device_id`，不合规**当场抛
