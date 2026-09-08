@@ -16,10 +16,10 @@ import kotlin.concurrent.thread
  */
 internal class DialerScreen(private val activity: Activity) : DemoScreen {
 
-    private val serverField = DemoUI.field(activity, DemoSession.serverHint, DemoSession.defaultServer)
-    private val userField = DemoUI.field(activity, "用户 ID", DemoSession.defaultUsername)
-    private val calleeField = DemoUI.field(activity, "对方 ID", DemoSession.defaultCallee)
-    private val roomField = DemoUI.field(activity, "房间号（留空则新建）", DemoSession.defaultRoom)
+    private val serverField = DemoUI.field(activity, DemoSession.form.serverHint, DemoSession.form.defaultServer)
+    private val userField = DemoUI.field(activity, "用户 ID", DemoSession.form.defaultUsername)
+    private val calleeField = DemoUI.field(activity, "对方 ID", DemoSession.form.defaultCallee)
+    private val roomField = DemoUI.field(activity, "房间号（留空则新建）", DemoSession.form.defaultRoom)
 
     private val statusLabel = DemoUI.label(activity, "", 13f, DemoUI.SECONDARY)
 
@@ -66,7 +66,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
                         activity, "身份",
                         listOf(
                             serverField,
-                            DemoUI.note(activity, DemoSession.serverNote),
+                            DemoUI.note(activity, DemoSession.form.serverNote),
                             userField,
                             identityLine(),
                             loginErrorLabel,
@@ -153,7 +153,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
             errorLabel.text = "先填对方 ID"
             return
         }
-        DemoSession.rememberCallee(callee)
+        DemoSession.form.rememberCallee(callee)
         DemoSession.placeCall(listOf(callee), mediaType, isGroup = false)
     }
 
@@ -193,7 +193,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
                 activity.runOnUiThread {
                     // 把房间号留在框里，方便复制给另一台设备。
                     roomField.setText(room.roomId)
-                    DemoSession.rememberRoom(room.roomId)
+                    DemoSession.form.rememberRoom(room.roomId)
                     DemoSession.joinMeeting(room.roomId, room.roomToken)
                 }
             }.onFailure { error ->

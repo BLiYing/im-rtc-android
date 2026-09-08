@@ -9,6 +9,26 @@
 > **两稿已升到 v3.1**，推翻了 v3 的六条，冲突时以 v3.1 为准。
 
 ## 当前焦点
+**拆 `DemoSession.kt`：598 → 490（2026-09-08）**，`./scripts/test.sh` 六步全绿。
+
+它一直卡在 598 / 上限 600，**再加一行就是 FAIL**，每次提交都报 WARN。
+拆出去的是两块与会话生命周期无关的东西：
+
+| 新文件 | 装什么 |
+|---|---|
+| `DemoRecords.kt` | `DemoRecord` + `DemoRecordStore`（通话记录的 JSON 存取）。想读「登录到底怎么走」的人，不该先翻过一整段 JSON 拼装 |
+| `DemoFormPrefs.kt` | 登录表单「上次填的东西」与默认值/提示语，一行都不碰引擎。`SharedPreferences` 的键一并移到文件级（两边都要用） |
+
+调用点：`DemoSession.defaultServer` 之类改成 `DemoSession.form.defaultServer`（7 处，
+都在 `DialerScreen`）；`DemoSession.Record` 改成顶层 `DemoRecord`（3 处，`HistoryScreen`）。
+
+**没继续拆到预警线（480）以下**：剩下最大的一块是 `HostListener`（~110 行），
+但它碰了 `DemoSession` 的 **7 个 private 成员**（`pending` / `notifyChanged` / `main` /
+`Meta` / `relogin` / `prefs` / `loginGeneration`）。搬到独立文件就得把这些全改成 `internal`
+——**拿封装换行数，不划算**。490 距硬闸还有 110 行，够用；真想清掉 WARN 再单独议。
+
+---
+
 
 **网络一直不回来时通话再也退不出去，已修（2026-09-08）**，`./scripts/test.sh` 六步全绿。
 **未真机复验。**

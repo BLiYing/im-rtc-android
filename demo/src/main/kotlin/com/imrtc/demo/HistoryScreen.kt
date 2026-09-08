@@ -47,7 +47,7 @@ internal class HistoryScreen(private val activity: Activity) : DemoScreen {
         setPadding(pad, pad, pad, pad)
     }
 
-    private fun row(record: DemoSession.Record): View = LinearLayout(activity).apply {
+    private fun row(record: DemoRecord): View = LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         val pad = DemoUI.dp(activity, 12)
@@ -79,10 +79,10 @@ internal class HistoryScreen(private val activity: Activity) : DemoScreen {
         addView(DemoUI.label(activity, time(record.endedAtMs), 13f, DemoUI.SECONDARY))
     }
 
-    private fun icon(record: DemoSession.Record) =
+    private fun icon(record: DemoRecord) =
         if (record.isGroup) "👥" else if (record.mediaType == "video") "📹" else "📞"
 
-    private fun summary(record: DemoSession.Record): String {
+    private fun summary(record: DemoRecord): String {
         val direction = if (record.role == "callee") "来电" else "呼出"
         // 协议 §2.4 规则 6：表外的值 Engine 已经折成 error 了；即便漏进来也不能把生值显给用户。
         val outcome = when (record.reason) {

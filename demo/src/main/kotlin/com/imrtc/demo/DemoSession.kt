@@ -36,18 +36,9 @@ internal object DemoSession {
     private val main = Handler(Looper.getMainLooper())
     private lateinit var prefs: SharedPreferences
 
-    /** 一条通话记录。存成 JSON 进 SharedPreferences——Demo 不引数据库。 */
-    data class Record(
-        val callId: String,
-        val peer: String,
-        val mediaType: String,
-        val isGroup: Boolean,
-        /** "caller" 或 "callee"。未接来电＝被叫且时长为 0。 */
-        val role: String,
-        val reason: String,
-        val durationSec: Long,
-        val endedAtMs: Long,
-    )
+    /** 登录表单「上次填的东西」，见 [DemoFormPrefs]。`install` 之后才可用。 */
+    lateinit var form: DemoFormPrefs
+        private set
 
     var engine: IMCallEngine? = null
         private set
@@ -72,7 +63,7 @@ internal object DemoSession {
     // `Build.MODEL` 是平台类型（`String!`），个别刷机 ROM 上 `ro.product.model` 是空的。
     val deviceId: String by lazy { "android-" + sanitizeDeviceId(Build.MODEL.orEmpty()) }
 
-    var records: List<Record> = emptyList()
+    var records: List<DemoRecord> = emptyList()
         private set
     var connectionText = "未登录"
         private set
@@ -165,7 +156,8 @@ internal object DemoSession {
         if (::prefs.isInitialized) return
         applicationContext = context.applicationContext
         prefs = applicationContext.getSharedPreferences("im-rtc-demo", Context.MODE_PRIVATE)
-        records = loadRecords()
+        form = DemoFormPrefs(prefs)
+        records = DemoRecordStore.load(prefs)
         groupPick = prefs.getString(KEY_GROUP, "alice,carol").orEmpty()
             .split(",").map { it.trim() }.filter { it.isNotEmpty() }
         videoProfile = IMVideoProfile.PRESETS
@@ -176,53 +168,6 @@ internal object DemoSession {
         DemoLogSink.install()
     }
 
-    // ── 记住上次填的东西 ──────────────────────────────────────────────
-
-    /**
-     * 上次用的服务器地址；没用过就给模拟器的默认值。
-     *
-     * **模拟器与真机的默认值必须不一样**：模拟器里 `10.0.2.2` 就是宿主机，开箱即用；
-     * 真机上 `127.0.0.1` 指的是**手机自己**，永远连不上。
-     *
-     * 真机上**留空**，靠 hint 说该填什么。不预填一个像模像样的假 IP（比如
-     * 192.168.1.100）：那种地址一眼看不出是错的，人会以为服务端挂了去查服务端日志——
-     * 而那边根本没有请求进来，最难查的一类。
-     */
-    val defaultServer: String
-        get() = prefs.getString(KEY_SERVER, null)
-            ?: if (isEmulator) "http://10.0.2.2:8787" else ""
-
-    val serverHint: String
-        get() = if (isEmulator) {
-            "服务器（模拟器用 10.0.2.2 指向 Mac）"
-        } else {
-            "http://<Mac 的局域网 IP>:8787"
-        }
-
-    val serverNote: String
-        get() = if (isEmulator) {
-            "模拟器里 10.0.2.2 就是宿主机，默认值直接可用。"
-        } else {
-            "真机请填 Mac 的局域网 IP（启动 dev.sh 时会打印）。127.0.0.1 在手机上指手机自己。"
-        }
-
-    /** 默认 **carol**：Web 默认 alice、iOS 默认 bob，三端错开，联调不用改用户名。 */
-    val defaultUsername: String get() = prefs.getString(KEY_USER, null) ?: "carol"
-
-    val defaultCallee: String
-        get() = prefs.getString(KEY_CALLEE, null) ?: if (defaultUsername == "alice") "bob" else "alice"
-
-    val defaultRoom: String get() = prefs.getString(KEY_ROOM, "").orEmpty()
-
-    fun rememberCallee(value: String) = prefs.edit().putString(KEY_CALLEE, value).apply()
-
-    fun rememberRoom(value: String) = prefs.edit().putString(KEY_ROOM, value).apply()
-
-    private val isEmulator: Boolean
-        get() = Build.FINGERPRINT.startsWith("generic") ||
-            Build.FINGERPRINT.contains("emulator") ||
-            Build.MODEL.contains("sdk_gphone")
-
     /**
      * 上次登录过就自动重登。**杀掉 app 再打开不该回到登录页。**
      *
@@ -231,7 +176,7 @@ internal object DemoSession {
      */
     fun autoLogin() {
         if (isLoggedIn || !prefs.getBoolean(KEY_AUTO, false)) return
-        val server = defaultServer
+        val server = form.defaultServer
         val user = prefs.getString(KEY_USER, "").orEmpty()
         if (server.isEmpty() || user.isEmpty()) return
         // 不弹窗——用户没主动做这件事；但**原因要留在身份卡上**（[lastLoginError]）。
@@ -410,7 +355,7 @@ internal object DemoSession {
 
     fun clearRecords() {
         records = emptyList()
-        saveRecords()
+        DemoRecordStore.save(prefs, records)
         notifyChanged()
     }
 
@@ -519,7 +464,7 @@ internal object DemoSession {
             if (stale) return
             val meta = pending ?: Meta("", "audio", false, "caller")
             records = listOf(
-                Record(
+                DemoRecord(
                     callId = callId,
                     peer = meta.peer,
                     mediaType = meta.mediaType,
@@ -531,7 +476,7 @@ internal object DemoSession {
                 ),
             ) + records
             pending = null
-            saveRecords()
+            DemoRecordStore.save(prefs, records)
             notifyChanged()
         }
     }
@@ -540,59 +485,6 @@ internal object DemoSession {
         main.post { onChange?.invoke() }
     }
 
-    // ── 持久化 ────────────────────────────────────────────────────────
-
     private lateinit var applicationContext: Context
 
-    private fun loadRecords(): List<Record> {
-        val text = prefs.getString(KEY_RECORDS, "").orEmpty()
-        if (text.isEmpty()) return emptyList()
-        return runCatching {
-            val array = JSONArray(text)
-            (0 until array.length()).map { index ->
-                val json = array.getJSONObject(index)
-                Record(
-                    callId = json.optString("call_id"),
-                    peer = json.optString("peer"),
-                    mediaType = json.optString("media_type", "audio"),
-                    isGroup = json.optBoolean("is_group"),
-                    role = json.optString("role", "caller"),
-                    reason = json.optString("reason"),
-                    durationSec = json.optLong("duration_sec"),
-                    endedAtMs = json.optLong("ended_at_ms"),
-                )
-            }
-        }.getOrDefault(emptyList())
-    }
-
-    private fun saveRecords() {
-        // 只留最近 100 条，Demo 不做翻页。
-        val array = JSONArray()
-        records.take(100).forEach { record ->
-            array.put(
-                JSONObject()
-                    .put("call_id", record.callId)
-                    .put("peer", record.peer)
-                    .put("media_type", record.mediaType)
-                    .put("is_group", record.isGroup)
-                    .put("role", record.role)
-                    .put("reason", record.reason)
-                    .put("duration_sec", record.durationSec)
-                    .put("ended_at_ms", record.endedAtMs),
-            )
-        }
-        prefs.edit().putString(KEY_RECORDS, array.toString()).apply()
-    }
-
-    private const val KEY_SERVER = "server"
-    private const val KEY_USER = "user"
-    private const val KEY_CALLEE = "callee"
-    private const val KEY_ROOM = "room"
-    private const val KEY_GROUP = "group"
-    private const val KEY_AUTO = "auto_login"
-    private const val KEY_PROFILE = "video_profile"
-    private const val KEY_VERBOSE = "verbose_log"
-    private const val KEY_BANNER = "banner_first"
-    private const val KEY_FLOATING = "floating_window"
-    private const val KEY_RECORDS = "records"
 }
