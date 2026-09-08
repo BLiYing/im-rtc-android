@@ -62,22 +62,57 @@ internal object IMEngineMachine {
         nowMs: Long,
     ): IMMachineOutput<IMEngineContext> {
         val resumed = Wire.flag(data, "resumed")
-        val emit = mutableListOf(
-            IMEmittedEvent(
-                "onConnected",
-                mapOf("session_id" to s(Wire.str(data, "session_id")), "resumed" to b(resumed)),
-            ),
+        val connected = IMEmittedEvent(
+            "onConnected",
+            mapOf("session_id" to s(Wire.str(data, "session_id")), "resumed" to b(resumed)),
         )
 
-        val room = IMRoomMachine.resume(ctx.room, resumed)
-        emit += room.emit
+        if (!resumed) {
+            val dropped = dropLostSession(ctx, nowMs)
+            return dropped.copy(emit = listOf(connected) + dropped.emit)
+        }
 
+        val room = IMRoomMachine.resume(ctx.room, resumed = true)
+        return IMMachineOutput(
+            ctx.copy(room = room.state),
+            send = room.send,
+            emit = listOf(connected) + room.emit,
+        )
+    }
+
+    /**
+     * 收拾「服务端那侧的会话已经没了」这一件事：房间与通话都要收场。
+     *
+     * 「重连上了但 `resumed=false`」与「断得太久 `session_unrecoverable`」是同一件事的
+     * 两个到达时机，所以共用这一段。
+     *
+     * # 必须给宿主一个收场信号
+     *
+     * `IMRoomMachine.resume(ctx, false)` 只是把房间清成 idle，**一个事件都不抛**。
+     * 有 call 的场合还有 `onCallEnd(network)` 兜着，可**会议是直接 joinRoom 的、
+     * 压根没有 call**——于是房间机悄悄回了 idle，而界面还显示着「会议中」、计时器还在走，
+     * 用户完全不知道自己已经掉出去了；更糟的是一个结束类回调都没抛，
+     * 门面的 leave 那组回调不命中，`media.stop()` 永远不调用（**摄像头与前台服务一直开着**），
+     * 上一轮的 PeerConnection 还会被带进下一次进房。
+     *
+     * 所以：有通话就抛 `onCallEnd`（唯一出口，不再补 `onRoomLeft`，否则宿主记两遍账），
+     * 没通话但在房里就补一条 `onRoomLeft`——房间的收场信号就是它。
+     * **三端同源**：Web 的 `engineMachine.dropLostSession`、iOS 的
+     * `IMEngineMachine.dropLostSession` 是同一段。
+     */
+    private fun dropLostSession(ctx: IMEngineContext, nowMs: Long): IMMachineOutput<IMEngineContext> {
+        val room = IMRoomMachine.resume(ctx.room, resumed = false)
+        val emit = mutableListOf<IMEmittedEvent>()
+        emit += room.emit
         var call = ctx.call
-        if (!resumed && ctx.call.state != IMCallState.IDLE) {
+
+        if (ctx.call.state != IMCallState.IDLE) {
             // 不变量 I8 的那个唯一例外：服务端的 call.ended 送不到，本地合成一条。
             val synthesized = IMCallMachine.synthesizeNetworkEnd(ctx.call, nowMs)
             call = synthesized.state
             emit += synthesized.emit
+        } else if (ctx.room.state != IMRoomState.IDLE) {
+            emit += IMEmittedEvent("onRoomLeft", mapOf("room_id" to s(ctx.room.roomId)))
         }
 
         return IMMachineOutput(ctx.copy(room = room.state, call = call), send = room.send, emit = emit)
@@ -118,18 +153,7 @@ internal object IMEngineMachine {
          「什么时候算过了窗口」由连接层算（只有它知道心跳周期），见
          `IMSignalConnection` 的 giveUpDelayMs。
         */
-        if (name == "session_unrecoverable") {
-            val room = IMRoomMachine.resume(ctx.room, resumed = false)
-            var call = ctx.call
-            val emit = mutableListOf<IMEmittedEvent>()
-            emit += room.emit
-            if (ctx.call.state != IMCallState.IDLE) {
-                val synthesized = IMCallMachine.synthesizeNetworkEnd(ctx.call, nowMs)
-                call = synthesized.state
-                emit += synthesized.emit
-            }
-            return IMMachineOutput(ctx.copy(room = room.state, call = call), send = room.send, emit = emit)
-        }
+        if (name == "session_unrecoverable") return dropLostSession(ctx, nowMs)
         if (name == "disconnected") {
             val room = IMRoomMachine.reduce(ctx.room, IMMachineInput.Internal(name))
             return IMMachineOutput(

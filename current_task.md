@@ -10,6 +10,31 @@
 
 ## 当前焦点
 
+**会话没了却不给宿主收场信号（2026-09-08）**，`./scripts/test.sh` 六步全绿。
+分支 `fix/parity-room-left`（worktree `../wt-android-parity`，**叠在 `fix/code-review-0908` 之上**）。
+**未真机复验。**
+
+这一条是 **Web 那轮 `/code-review high` 的跨端对账**查出来的，**三端同源**，本端也中招。
+
+`IMRoomMachine.resume(ctx, resumed = false)` 只是把房间清成 IDLE，**一个事件都不抛**。
+有 call 的场合还有 `onCallEnd(network)` 兜着（不变量 I8），可**会议是直接 joinRoom 的、
+压根没有 call**：房间机悄悄回了 IDLE，而界面还显示着「会议中」、计时器还在走，
+用户完全不知道自己已经掉出去了。更要命的是一个结束类回调都没抛 → 门面的 leave 那组回调
+不命中 → `media.stop()` 永远不调用，**摄像头与前台服务一直开着**，
+上一轮的 PeerConnection 还会被带进下一次进房。
+
+改法：`IMEngineMachine` 抽出 `dropLostSession`（`handleHelloOk` 的 `resumed=false` 分支与
+`session_unrecoverable` 共用它）——有通话就抛 `onCallEnd`（**唯一出口，不再补 onRoomLeft**，
+否则宿主记两遍账），没通话但在房里就补一条 `onRoomLeft`。
+Web 的 `engineMachine.dropLostSession`、iOS 的 `IMEngineMachine.dropLostSession` 是同一段。
+
+**新增用例 5 条**（`statemachine/LostSessionTest.kt`）：会议的两条收场路径
+（`resumed=false` 与 `session_unrecoverable`）、有 call 时不重复抛、
+idle 时不凭空抛、`resumed=true` 一个字不变（一致性向量
+`reconnect_not_resumed_synthesizes_call_end` 钉住的那条行为没动）。
+
+---
+
 **code review 的三条（2026-09-08）**，`./scripts/test.sh` 六步全绿、173 条用例
 （engine 97 / webrtc 9 / uikit 41 / demo 26）。分支 `fix/code-review-0908`
 （worktree `../wt-android-review-fixes`）。**未真机复验。**
