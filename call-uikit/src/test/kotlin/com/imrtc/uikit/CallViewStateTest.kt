@@ -193,3 +193,47 @@ class CallViewStateTest {
         assertEquals(IMGrid.MAX_TILES, state.tiles.size + 1)
     }
 }
+
+/*
+悬浮球该显示谁的画面。
+
+守的是真机 2026-09-08 的现象 1：「小窗视频时不时黑屏一下」。
+`room.active_speakers` 包含本端自己，而本端音量往往就是最大的那个
+（那一通里 alice 45 / carol 36，两人交替领先，一秒好几次）。
+悬浮球原先直接用 speakingUid，跳到本端 uid 时就拿它去要一块远端画面——
+渲染器造得出来、可本端没有远端轨道，那块画面永远是黑的；
+而且每跳一次就换一个 view，SurfaceView 的 surface 跟着销毁重建。
+*/
+class VideoSpeakerUidTest {
+
+    private fun state(members: List<String>, speaking: String) = IMCallViewState(
+        members = members.associateWith { IMCallViewState.Member(uid = it) },
+        speakingUid = speaking,
+    )
+
+    /** **这一条直接对应真机现象。** members 不含自己，所以本端 uid 必须落空。 */
+    @Test
+    fun `speakingUid 是本端自己时退回远端成员`() {
+        assertEquals(
+            "拿本端 uid 去要远端画面，只会得到一块永远黑的渲染器",
+            "carol",
+            state(listOf("carol"), speaking = "alice").videoSpeakerUid(),
+        )
+    }
+
+    @Test
+    fun `speakingUid 是远端成员时就用它`() {
+        assertEquals("dave", state(listOf("carol", "dave"), speaking = "dave").videoSpeakerUid())
+    }
+
+    @Test
+    fun `没人说话时退回第一个远端成员`() {
+        assertEquals("carol", state(listOf("carol", "dave"), speaking = "").videoSpeakerUid())
+    }
+
+    /** 一个远端成员都没有：返回空串，调用方据此不挂画面（而不是挂一块黑的）。 */
+    @Test
+    fun `没有远端成员时返回空串`() {
+        assertEquals("", state(emptyList(), speaking = "alice").videoSpeakerUid())
+    }
+}

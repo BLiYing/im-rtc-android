@@ -503,7 +503,8 @@ object IMCallKit {
         bubble?.render(current)
         // 视频通话的悬浮球放主讲人的缩略画面（规范 §06）。
         if (bubble != null && host != null && current.mediaType == "video") {
-            val speaker = current.speakingUid.ifEmpty { current.members.keys.firstOrNull().orEmpty() }
+            // **只在远端成员里挑**：speakingUid 可能是本端自己，见 [videoSpeakerUid]。
+            val speaker = current.videoSpeakerUid()
             bubble.setVideoView(if (speaker.isEmpty()) null else videoViewFor(host, speaker))
         }
     }

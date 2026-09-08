@@ -27,6 +27,15 @@ internal data class IMCallViewState(
     val cameraBlocked: Boolean = false,
     /** uid → 这个人的状态。**不含自己**。 */
     val members: Map<String, Member> = emptyMap(),
+    /**
+     * 此刻音量最大的那个人。
+     *
+     * **它可能是本端自己**，而 [members] 不含自己 —— `room.active_speakers`
+     * 把房里每个人都报上来（含本端），Kit 只是原样取音量最大的那一个。
+     * 所以**凡是拿它去找一块远端画面的地方，都必须先确认这个 uid 在 members 里**，
+     * 用 [videoSpeakerUid]，别直接用这个字段。九宫格拿它画绿描边是安全的：
+     * 描边只画在 members 的格子上，本端那格根本不参与。
+     */
     val speakingUid: String = "",
     val endReason: String = "",
     /** 通话已被收进悬浮球 / 画中画。**通话本身照常进行**——这只是呈现形态。 */
@@ -194,6 +203,28 @@ internal data class IMCallViewState(
         /** 要不要出「对方网络不佳」的提示（3 以上）。 */
         fun isNetworkPoor(level: Int): Boolean = level >= 3
     }
+}
+
+/*
+videoSpeakerUid 挑「该显示谁的画面」——**只在远端成员里挑**。
+
+# 为什么不能直接用 speakingUid
+
+`room.active_speakers` **包含本端自己**，而本端音量往往就是最大的那个
+（真机 2026-09-08 的一通 1v1：alice 45 / carol 36，两人交替领先，一秒好几次）。
+于是 `speakingUid` 在 "alice" 与 "carol" 之间来回跳。
+
+悬浮球原先写的是 `speakingUid.ifEmpty { members.keys.first() }`，
+跳到 "alice" 时就拿本端 uid 去要一块远端画面：`videoViewFor` 照样造一个渲染器、
+`attachView("alice", …)` 挂上去 —— **可本端根本没有远端轨道，那块画面永远是黑的**，
+而且每跳一次就换一个 view，`videoHost` 摘一次挂一次，`SurfaceView` 的 surface
+跟着销毁重建。用户看到的就是「小窗视频时不时黑屏一下」（2026-09-08 报的现象 1）。
+
+`ifEmpty` 挡不住这一类：uid 不是空的，只是**不该拿来找远端画面**。
+*/
+internal fun IMCallViewState.videoSpeakerUid(): String {
+    if (speakingUid.isNotEmpty() && members.containsKey(speakingUid)) return speakingUid
+    return members.keys.firstOrNull().orEmpty()
 }
 
 /** 视图模型的全部变更入口。**界面不许自己改字段**，改法都在这里。 */
