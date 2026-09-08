@@ -10,111 +10,46 @@
 
 ## 当前焦点
 
-**会话没了却不给宿主收场信号（2026-09-08）**，`./scripts/test.sh` 六步全绿。
-分支 `fix/parity-room-left`（worktree `../wt-android-parity`，**叠在 `fix/code-review-0908` 之上**）。
-**未真机复验。**
+**「呼叫中按的静音会丢」——真机 2026-09-09 抓到的隐私问题**，
+`./scripts/test.sh` 六步全绿、183 条用例。分支 `fix/mute-before-publish`。**未真机复验。**
 
-这一条是 **Web 那轮 `/code-review high` 的跨端对账**查出来的，**三端同源**，本端也中招。
-
-`IMRoomMachine.resume(ctx, resumed = false)` 只是把房间清成 IDLE，**一个事件都不抛**。
-有 call 的场合还有 `onCallEnd(network)` 兜着（不变量 I8），可**会议是直接 joinRoom 的、
-压根没有 call**：房间机悄悄回了 IDLE，而界面还显示着「会议中」、计时器还在走，
-用户完全不知道自己已经掉出去了。更要命的是一个结束类回调都没抛 → 门面的 leave 那组回调
-不命中 → `media.stop()` 永远不调用，**摄像头与前台服务一直开着**，
-上一轮的 PeerConnection 还会被带进下一次进房。
-
-改法：`IMEngineMachine` 抽出 `dropLostSession`（`handleHelloOk` 的 `resumed=false` 分支与
-`session_unrecoverable` 共用它）——有通话就抛 `onCallEnd`（**唯一出口，不再补 onRoomLeft**，
-否则宿主记两遍账），没通话但在房里就补一条 `onRoomLeft`。
-Web 的 `engineMachine.dropLostSession`、iOS 的 `IMEngineMachine.dropLostSession` 是同一段。
-
-**新增用例 5 条**（`statemachine/LostSessionTest.kt`）：会议的两条收场路径
-（`resumed=false` 与 `session_unrecoverable`）、有 call 时不重复抛、
-idle 时不凭空抛、`resumed=true` 一个字不变（一致性向量
-`reconnect_not_resumed_synthesizes_call_end` 钉住的那条行为没动）。
-
----
-
-**拆 `DemoSession.kt`：598 → 490（2026-09-08）**，`./scripts/test.sh` 六步全绿。
-
-它一直卡在 598 / 上限 600，**再加一行就是 FAIL**，每次提交都报 WARN。
-拆出去的是两块与会话生命周期无关的东西：
-
-| 新文件 | 装什么 |
-|---|---|
-| `DemoRecords.kt` | `DemoRecord` + `DemoRecordStore`（通话记录的 JSON 存取）。想读「登录到底怎么走」的人，不该先翻过一整段 JSON 拼装 |
-| `DemoFormPrefs.kt` | 登录表单「上次填的东西」与默认值/提示语，一行都不碰引擎。`SharedPreferences` 的键一并移到文件级（两边都要用） |
-
-调用点：`DemoSession.defaultServer` 之类改成 `DemoSession.form.defaultServer`（7 处，
-都在 `DialerScreen`）；`DemoSession.Record` 改成顶层 `DemoRecord`（3 处，`HistoryScreen`）。
-
-**没继续拆到预警线（480）以下**：剩下最大的一块是 `HostListener`（~110 行），
-但它碰了 `DemoSession` 的 **7 个 private 成员**（`pending` / `notifyChanged` / `main` /
-`Meta` / `relogin` / `prefs` / `loginGeneration`）。搬到独立文件就得把这些全改成 `internal`
-——**拿封装换行数，不划算**。490 距硬闸还有 110 行，够用；真想清掉 WARN 再单独议。
-
----
-
-**code review 的三条（2026-09-08）**，`./scripts/test.sh` 六步全绿、173 条用例
-（engine 97 / webrtc 9 / uikit 41 / demo 26）。分支 `fix/code-review-0908`
-（worktree `../wt-android-review-fixes`）。**未真机复验。**
-
-### 1. 迟到的关闭事件会把一条好端端的连接拆掉（最重的一条）
-
-`closeAndReconnect` **自己先调一次** `handleClosed`，而 transport 的 `onClosed` / `onFailure`
-随后**还会再调一次**——`transport.close()` 只是发个关闭帧，OkHttp 一定还会回调，
-中间没有任何「已经收过场了」的闩。
-
-网络假活时（也就是心跳超时那条路）第二次回调可能**晚到好几分钟**，那时新连接早已连上：
+alice（Android）发起群呼，在「正在呼叫…」阶段按了静音，bob 接通后**照样听得见她说话**，
+而 alice 界面上写着「已静音」。日志：
 
 ```
-心跳超时 → closeAndReconnect 就地收场 + 排重连 → 1s 后重连成功、connected=true
-   ⋯ 几分钟后 ⋯
-旧 socket 的 onFailure 终于冒出来 → handleClosed 又跑一遍：
-  wasConnected=true → 多抛一条假 onDisconnected（界面写「正在重连」而连接好好的）
-  failAll          → 把新连接上在飞的请求全掐掉
-  connected=false  → scheduleReconnect → openSocket 开出**第二条 socket**
-  同 uid 同 device_id → 服务端按顶号踢掉一条 → **假的 onKickedOut(TAKEN_OVER)** → 用户被踹回登录页
+00:09:59.7  call.invite
+00:10:01.0  WARN 没有 audio Track 可以开关   ← 按静音，被丢掉
+00:10:04.8  call.connected
+00:10:05.0  room.publish ×2                ← 这时才发布轨道，默认开着
+00:10:05.0  WARN 没有 audio Track 可以开关   ← onRoomJoined 的补救也失败
 ```
 
-改法：**认代际**。每开一条 socket `generation += 1`，`TransportListener` 带着自己那一代，
-`handleClosed(code, reason, from)` 只认没收过场的那一代（`closedGeneration` 是闩）。
-`onOpen` / `onText` 也一并挡掉旧代——旧 socket 上迟到的帧是上一条会话的东西，不能喂进状态机。
-`stop()` 顺手把当前代闩上，免得 logout 之后那条回调又排一次重连。
+**根因：`setMuted` 把两件事绑死了。** 关本端轨道不需要 `track_id`（那是服务端分配的），
+只有 `room.mute` 帧需要；而原先拿不到 track_id 就整个早退，**连本端也不关**。
+偏偏「拿不到」正发生在最该静音的时候。Kit 的 `toggleMic` 又是无条件翻界面的，于是界面撒谎。
 
-> iOS 不会踩：`IMURLSessionWebSocket` 有个 `closed` 标志，保证每条 socket 只回一次 onClose。
-> 这里等价的做法就是认代际。
+`onRoomJoined` 那道补救方向对、时机错：它跑在 `room.join.ok`（05.013），
+而 `room.publish.ok`（05.04）还没回来，`publishTrackIds` 仍是空的。
 
-### 2. offer 抢在 `setLocalDescription` 前面上线路
+**改法三条**：
 
-`createOffer` 的 `onCreateSuccess` 里，`setLocalDescription` 还是异步的（回调在 WebRTC 的
-signaling 线程上），紧挨着就 `events.onLocalSdp(...)` 把 offer 发出去了。局域网 / 本地 SFU 下
-`room.answer` 几毫秒就能回来，而本端描述可能还没设上：`applyRemoteSdp` 看到
-`signalingState()` 是 STABLE 而不是 HAVE_LOCAL_OFFER，就把它当重复应答**丢掉并 `abortOffer`**。
-**这一路发布就此协商不出去**——对端看得见人、收不到流，一条报错都没有，
-而且没有任何东西会重新驱动它（要等 ICE 进 FAILED 才有下一次机会）。
+1. `setMuted` 拆开——本端 `media.setMuted` **无条件执行**，帧只在有 track_id 时发；
+2. 意图存进 [IMMuteBook]，`room.publish.ok` 拿到 track_id 那一刻补做（本端 + 帧都补，
+   因为轨道是刚现造的、默认开着）；判据是 **track_id 从无到有**，不是「表里有」，
+   否则每帧下行都会重发一遍；
+3. 通话结束时意图跟着作废，别漏到下一通。
 
-改法：`onLocalSdp` 挪进 `setLocalDescription` 的 `onSetSuccess`，失败那支放闸。
-`LocalSdpObserver` 因此没人用了，一并删掉（别留死类）。
-**iOS 与 Web 本来就是 await 完才发的**，这里是对齐它们。
+界面撒谎那条**不用单独修**了：`setMuted` 现在总能落地意图，界面就不再是谎话。
 
-### 3. `resume` 无条件把 `reconnecting` 推成 `joined`
+**只有 Android 中招**：iOS 与 web 的 `setMuted` 都是先无条件 `media.setMuted`、
+guard 只挡信令帧，所以对端听不见你——这也正好解释了真机上的不对称
+（bob 在 web 静音生效，alice 在 Android 不生效）。
 
-`disconnected` 会把 `JOINING` 也推进 `RECONNECTING`，而那次 `room.join` 还在飞、
-服务端从没受理过我们。恢复后本端以为在房里 → 每帧换回 1201/1203，
-重新 join 又因「不在 idle」拒 2005。
+**顺带拆了两刀**（体量门禁 621 > 600，且明令不许放宽阈值）：
+静音这一摊抽成 `IMMuteBook`（纯逻辑、可单测），协商帧转发抽成
+`IMNegotiationFrames.kt` 的自由函数（它不碰门面任何状态）。`IMCallEngine.kt` 回到 587 行。
 
-本端目前靠 `onRequestFailed` 的 `join_failed` 能兜住（`failAll` 是同步回调，
-排在 `onDisconnected` 前面），**但那是时序凑巧**——iOS 同一段代码就因为多两跳 actor 翻过车。
-改法：房间上下文加 `didJoin`（只由 `room.join.ok` 置位），`resume` 据它分辨来路：
-真进过房才回 `JOINED`，否则**重发一次 `room.join`**（房号房票都在手上，攒下的意图照旧留着）。
-**三端同一份，不依赖谁先谁后**（iOS 同轮一起改）。
-
-**向量没动**：两条 reconnect 向量的初始态都是 `room: joined`，`didJoin` 不影响它们。
-向量跑法里补了一句种子——**是种子不完整，不是实现变了**。
-
-**新增 10 条用例**：`StaleSocketCloseTest`（4 条，`FakeTransport` 现在留下每一条 socket 的
-listener，才测得出「旧的迟到」）、`RoomResumeTest`（6 条）。
+**新增 5 条用例**（`MuteBeforePublishTest`）。把 `setMuted` 注回旧逻辑，其中 2 条立刻红。
 
 ## 下一步
 
