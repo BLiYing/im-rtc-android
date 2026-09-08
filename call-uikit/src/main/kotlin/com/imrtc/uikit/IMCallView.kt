@@ -289,18 +289,30 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         if (layout != IMCallViewState.Layout.VIDEO) setChrome(visible = true, arm = false) else if (chromeVisible) armAutoHide()
     }
 
+    /** 橙条：文案怎么定见 [IMBannerRules]，这里只管把它写上去、以及给「网络不佳」那条排定时器。 */
     private fun renderBanner(state: IMCallViewState) {
-        val text = when (state.connection) {
-            IMCallViewState.Connection.RECONNECTING -> "正在重连…"
-            IMCallViewState.Connection.LOST -> "连接已断开"
-            IMCallViewState.Connection.OK -> if (state.members.values.any { IMCallViewState.isNetworkPoor(it.networkLevel) } && !poorShown) {
-                poorShown = true
-                main.postDelayed({ banner.apply("") }, IMKitTheme.NETWORK_BANNER_MS)
-                "对方网络不佳"
-            } else ""
+        val poor = state.members.values.any { IMCallViewState.isNetworkPoor(it.networkLevel) }
+        if (!poor) poorShown = false
+        val next = IMBannerRules.next(state.connection, poor, poorShown, bannerText) ?: return
+        if (next == IMBannerRules.POOR) {
+            poorShown = true
+            // 定时器**只撤自己那条**：这 2s 里连接可能已经断了，那时橙条上写的是
+            // 「正在重连…」，不认一下就会把它一起抹掉。
+            main.postDelayed(
+                { if (bannerText == IMBannerRules.POOR) applyBanner("") },
+                IMKitTheme.NETWORK_BANNER_MS,
+            )
         }
-        if (state.members.values.none { IMCallViewState.isNetworkPoor(it.networkLevel) }) poorShown = false
-        if (text.isNotEmpty() || state.connection != IMCallViewState.Connection.OK) banner.apply(text)
+        applyBanner(next)
+    }
+
+    /** 橙条上此刻真正写着什么。空串 = 没有横幅。[IMBannerRules.next] 靠它判断该不该动。 */
+    private var bannerText = ""
+
+    private fun applyBanner(text: String) {
+        if (text == bannerText) return
+        bannerText = text
+        banner.apply(text)
     }
 
     /** 「对方网络不佳」只出一次、2s 后收成角标，**不一直霸占顶部**。 */

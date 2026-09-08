@@ -10,39 +10,42 @@
 
 ## 当前焦点
 
-**关 Wi-Fi 再打开，上行永远协商不回来（2026-09-08 修）**，`./scripts/test.sh` 六步全绿。
+**关 Wi-Fi 再打开的两个故障，都已修（2026-09-08）**，`./scripts/test.sh` 六步全绿。
 
 真机现场：alice(Android) 呼 carol(iOS) 视频，Android 关 Wi-Fi 再连上。
-信令恢复了、下行也恢复了，**上行再也没协商过一次** —— carol 全程看不到 alice，
-本端停在「正在重连」。关摄像头再打开，carol 收起头像却依然黑屏
-（`room.mute` 不经过协商，服务端照常广播 muted=false，可一个包都没有）。
 
+### ① 上行永远协商不回来 —— 已修并**真机复验通过**
+
+信令恢复了、下行也恢复了，**上行再也没协商过一次**，carol 全程看不到 alice。
 根因在 `IMPeerConnections` 的**协商闸门**：`negotiating` / `pendingOffer` /
 `pendingIceRestart` 是三个裸 `mutableSetOf`，被三个线程并发读写 ——
 信令线程（`restart_pub_ice`）、WebRTC 信令线程（`onSetSuccess` 里放闸）、
 PC observer 线程（ICE 进 FAILED 时重启）。闸门一旦卡住，那条 PC
 **从此永远「协商进行中」**，后续任何 offer 只排队、永不发出，而且一条错误都没有。
 
-日志坐实：`09:16:53.534 会话已恢复，重新协商上行` 紧跟
-`pub 协商进行中，offer 排队` —— 而上一次成功协商在 09:15:48.347，
-中间没有任何 createOffer。闸门就是在那之后卡住的。
+改动：抽出 `IMNegotiationGate`（一把锁包住三个集合，顺带能纯 JVM 单测）·
+**每一个终局都放闸**（原先只有成功路径）· **恢复时重置在飞状态**（`resetInFlight`）。
+最后这条是**构造上正确**的，不依赖竞态诊断是否准确。
 
-| 改动 | 为什么 |
-|---|---|
-| 抽出 `IMNegotiationGate`，一把锁包住三个集合 | 根因；顺带让它能被纯 JVM 单测覆盖（`call-engine-webrtc` 其余代码都要 libwebrtc） |
-| **每一个终局都放闸**：createOffer/setLocal/setRemote 失败、以及「answer 来晚了丢掉」那条分支 | 原先只有成功路径放闸，少放一处就是永久卡死且无报错 |
-| **恢复时重置在飞状态**（`resetInFlight`） | 换了连接，旧 offer 的 answer 永远回不来了。**这条是确定性修复**，不依赖竞态诊断是否准确 |
+真机复验（09:45 那通）：`会话已恢复，重新协商上行` → `pub 重启 ICE` → `↑ room.offer`
+→ `pub ICE 状态：CONNECTED`，iOS 那侧画面恢复。修复前这里只会打印「offer 排队」。
 
-**没做 / 已知限制**：
+**竞态本身仍是推断**：并发用例能在无锁时抓到「两个 offer 同时放行」，
+抓不到「`negotiating -= pc` 丢失」那一种。
 
-- **竞态是推断，没能证明。** 我写了并发用例，它确实能在无锁时抓到「两个 offer 同时放行」，
-  但抓不到「`negotiating -= pc` 丢失」那一种。真机上闸门到底怎么卡住的，日志答不了。
-  好在 `resetInFlight` 那条是**构造上正确**的：无论怎么卡住，恢复后都能重新协商。
-- **「正在重连」那条橙条没能复现。** `handleHelloOk` 无条件抛 `onConnected`，
-  Kit 收到就把橙条拨回 OK，代码路径看着是对的；日志也显示恢复后候选照常上报（房间已回 joined）。
-  **这一条需要一次带日志的新复现**才能定位。
-- 本轮**没有真机复验**。
+### ② 「正在重连」橙条永远撤不掉 —— 已修，**未真机复验**
 
+上一轮没能复现，这一轮从代码里找到了，与信令层无关：`IMCallView.renderBanner` 的
+`if (text.isNotEmpty() || connection != OK) banner.apply(text)` **恰好漏掉了
+「恢复成 OK」这一格** —— 那一刻文案是空串、connection 又正好是 OK，条件为假，
+`apply("")` 一次都不会调。于是橙条停在「正在重连…」，而且**怎么操作都撤不掉**
+（每次重渲染都落到同一个假条件上）。
+
+日志坐实这跟连接层无关：09:45:14.754 `已连接 resumed=true`，之后 `sys.ping` 每 15 秒
+一路到 09:52 从没断过，`onConnected` 抛过、没有任何后续 `onDisconnected`。
+
+判断挪出 View 成了纯函数 `IMBannerRules.next`（`BannerRulesTest` 覆盖，回退即红）。
+**iOS 与 Web 在同一处都是对的**（iOS 的 `else if !poor`、Web 的声明式渲染），只有 Android 有这个洞。
 
 **1v1 视频里点小窗必崩，已修 + 真机复验（2026-09-07）**，`./scripts/test.sh` 六步全绿。
 
