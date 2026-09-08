@@ -130,11 +130,22 @@ class RoomFsmVectorsTest {
             val wire = (v as IMJson.Str).value
             IMSubscribeState.entries.firstOrNull { it.wire == wire } ?: error("未知订阅状态：$wire")
         }
+        val roomState = IMRoomState.from(initial.optString("room") ?: "idle")
         return IMEngineContext(
             room = IMRoomContext(
-                state = IMRoomState.from(initial.optString("room") ?: "idle"),
+                state = roomState,
                 publish = publish,
                 subscribe = subscribe,
+                /*
+                 **向量里说「初始就在房里」的，didJoin 也要跟着置上。**
+
+                 向量断言的是 room / publish / subscribe 那几个键，didJoin 是本端为了分辨
+                 「RECONNECTING 是从 JOINED 断的还是从 JOINING 断的」自己记的账
+                 （见 IMRoomMachine.resume）。种子里漏掉它，
+                 reconnect_resumed_replays_buffered_intent 就会被当成「那次进房从未落地」
+                 而去重发 room.join——**是种子不完整，不是实现错了**。
+                */
+                didJoin = roomState != IMRoomState.IDLE && roomState != IMRoomState.JOINING,
             ),
             call = IMCallContext(state = IMCallState.from(initial.optString("call") ?: "idle")),
         )
