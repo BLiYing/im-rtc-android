@@ -301,28 +301,62 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         SurfaceViewRenderer(context)
 
     /**
-     * 按**源的实际宽高比**渲染，放不满的地方留黑边。
+     * 按 [IMVideoFit] 的判据决定这一格是裁切填满还是等比留边，并重新布局。
      *
-     * 规则与理由见 `im-rtc-server/docs/mechanism/VIDEO_RENDERING.md`（五仓统一）。
-     * 简述：手机推竖屏 720×1280、浏览器推横屏 1280×720，**两种源混在一个房间里是常态**，
-     * 而格子形状只有一种。裁切填充（`SCALE_ASPECT_FILL`，以及 libwebrtc 默认的
-     * `SCALE_ASPECT_BALANCED`）在方向不一致时会按长边匹配、把源放大两倍以上再裁掉溢出——
-     * 真机实测就是「Android 看 Web 一直糊」那一条：当时下发上界是 h、丢包 0.7%，
-     * **收到的就是最高层、链路也好，糊纯粹是渲染放大出来的**。
+     * # 为什么量的是**父容器**而不是渲染器自己
      *
-     * **两个参数都要传**：单参版只设「方向一致」那一种，方向不一致时仍然走
-     * `SCALE_ASPECT_BALANCED`——而方向不一致恰恰是出问题的那一种。
+     * 渲染器给的是 `WRAP_CONTENT`（见 `IMVideoTile`），它的尺寸**由 scalingType 反推出来**——
+     * 拿它去决定 scalingType 就成了循环。父容器（`videoHost`）是 `MATCH_PARENT`、
+     * 尺寸稳定，才是「这一格有多大」的正确来源。
      *
-     * 本端预览一并用 FIT，不开特例：它与屏幕方向天然一致，FIT 与 FILL 看起来没区别，
-     * 少一条分支就少一处漂的机会。
+     * # 为什么不能给 `MATCH_PARENT`
      *
-     * **必须在主线程**（见类注释）：调用方都在 `onMain` 里。
+     * libwebrtc 的 `RendererCommon.VideoLayoutMeasure.measure()` 里有一句
+     * 「If the measure specification is forcing a specific size, yield」——
+     * 测量规格是 `EXACTLY`（`MATCH_PARENT` 就是）时它**直接忽略 scalingType**、
+     * 占满给定尺寸再裁切填充。2026-09-10 第一版改动就栽在这里：只设了
+     * `setScalingType`、而 `IMVideoTile` 给的是 `MATCH_PARENT`，**是个空操作**，
+     * 真机上仍然满格裁切。
+     *
+     * **两个参数都要传**：单参版只设「方向一致」那一种，而方向不一致恰恰是要处理的那一种。
+     *
+     * **必须在主线程**（见类注释）。
      */
-    private fun applyAspectFit(renderer: SurfaceViewRenderer) {
-        renderer.setScalingType(
-            RendererCommon.ScalingType.SCALE_ASPECT_FIT,
-            RendererCommon.ScalingType.SCALE_ASPECT_FIT,
-        )
+    private fun applyVideoFit(renderer: SurfaceViewRenderer, frame: IntArray?) {
+        val host = renderer.parent as? android.view.View
+        val fill = frame == null ||
+            IMVideoFit.shouldFill(frame[0], frame[1], frame[2], host?.width ?: 0, host?.height ?: 0)
+        val type = if (fill) {
+            RendererCommon.ScalingType.SCALE_ASPECT_FILL
+        } else {
+            RendererCommon.ScalingType.SCALE_ASPECT_FIT
+        }
+        renderer.setScalingType(type, type)
+        renderer.requestLayout()
+    }
+
+    /** uid（或 [LOCAL]）→ 最近一帧的 `[未旋转宽, 未旋转高, 旋转角]`。布局变化时要拿它重算。 */
+    private val lastFrameSize = LinkedHashMap<String, IntArray>()
+
+    /**
+     * 记下这一路的帧尺寸并重算缩放。**在渲染线程上被调用**，所以先回主线程。
+     *
+     * 布局也要监听：第一帧到达时父容器可能还没量出来（宽高是 0），
+     * 那时 [IMVideoFit.shouldFill] 会先给 FILL，等 layout 稳定后这里再算一次。
+     */
+    private fun onFrameSize(key: String, width: Int, height: Int, rotation: Int) {
+        val frame = intArrayOf(width, height, rotation)
+        onMain {
+            lastFrameSize[key] = frame
+            renderers[key]?.let { applyVideoFit(it, frame) }
+        }
+    }
+
+    /** 父容器尺寸一变就重算（转屏、进出全屏、九宫格行列变化都会走到）。 */
+    private fun watchLayout(key: String, renderer: SurfaceViewRenderer) {
+        renderer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            applyVideoFit(renderer, lastFrameSize[key])
+        }
     }
 
     override fun attachView(uid: String, view: Any?) = onMain {
@@ -331,7 +365,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         // **这两行必须在主线程**，否则直接抛 IllegalStateException（见类注释）。
         renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(uid))
         renderer.setEnableHardwareScaler(true)
-        applyAspectFit(renderer)
+        applyVideoFit(renderer, lastFrameSize[uid])
+        watchLayout(uid, renderer)
         renderers[uid] = renderer
         bindRemoteTracks()
     }
@@ -356,9 +391,11 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             renderers.remove(LOCAL)
             return@onMain
         }
-        renderer.init(peers.eglBase.eglBaseContext, null)
+        // **本端预览也要 RendererEvents**：原先传 null，于是拿不到帧尺寸、缩放判据无从计算。
+        renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(LOCAL))
         renderer.setEnableHardwareScaler(true)
-        applyAspectFit(renderer)
+        applyVideoFit(renderer, lastFrameSize[LOCAL])
+        watchLayout(LOCAL, renderer)
         renderer.setMirror(frontCamera)
         renderers[LOCAL] = renderer
         ensurePreviewTrack()?.addSink(renderer)
@@ -480,7 +517,9 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             events?.onFirstVideoFrame(uid)
         }
 
-        override fun onFrameResolutionChanged(width: Int, height: Int, rotation: Int) = Unit
+        override fun onFrameResolutionChanged(width: Int, height: Int, rotation: Int) {
+            onFrameSize(uid, width, height, rotation)
+        }
     }
 
     private inner class PeerCallbacks : IMPeerConnections.Callbacks {
