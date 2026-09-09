@@ -71,6 +71,9 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     private val audio = IMAudioRouter(appContext)
     private val peers = IMPeerConnections(appContext, PeerCallbacks())
 
+    /** 上行每一层实际编出多少分辨率、被什么限住。见 [IMUplinkStats] 的类注释。 */
+    private val uplinkStats = IMUplinkStats(main)
+
     private var audioTrack: AudioTrack? = null
 
     /** 推上去的那条视频轨道，id = cid。 */
@@ -134,6 +137,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     override fun stop() {
         if (!running) return
         running = false
+        uplinkStats.stop()
         stopCapture()
         // 先摘轨道再 release：反了会崩在 native 层。
         // 渲染器的释放也归主线程（`release` 与 `init` 要在同一条线程上成对）。
@@ -196,6 +200,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             ),
         )
         if (simulcast) seedUplinkBudget(connection)
+        // 采样从这里起：此刻编码器才真的有活干。
+        uplinkStats.start(connection)
         // 前台服务的 camera 类型由 ensureCapture 负责升级——采集起来的那一刻才算真的在用摄像头。
     }
 
