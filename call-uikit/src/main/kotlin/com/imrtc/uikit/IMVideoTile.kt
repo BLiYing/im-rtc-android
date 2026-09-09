@@ -287,13 +287,35 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
  * 5 以上柱子变橙（规范 §02 warn）。分档在 [IMCallViewState.networkBarsLit]（纯函数，有单测）。
  */
 internal class IMNetworkBarsView(context: Context) : View(context) {
+
+    companion object {
+        /**
+         * 网络质量图标的总开关。**2026-09-09 暂时关掉。**
+         *
+         * 根因不在 UI：`room.quality` 是一条**死帧**——服务端 `internal/signal/registry.go`
+         * 注册了它、也能解析，但全仓没有任何地方发它。于是 `onNetworkQuality` 从不触发，
+         * [level] 永远停在 0，这个图标从来没在真机上出现过。
+         *
+         * 服务端开始下发之后把这里改回 `true` 即可，UI 与分档逻辑都是好的。
+         */
+        var enabled = false
+    }
+
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     var level = 0
-        set(value) { field = value; invalidate() }
+        set(value) {
+            field = value
+            visibility = if (enabled && value > 0) VISIBLE else GONE
+            invalidate()
+        }
+
+    init {
+        visibility = GONE
+    }
 
     override fun onDraw(canvas: Canvas) {
-        if (level <= 0) return
+        if (!enabled || level <= 0) return
         val lit = IMCallViewState.networkBarsLit(level)
         val unit = width / 24f
         val color = if (level >= 5) IMKitTheme.warning else IMKitTheme.primaryText

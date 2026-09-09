@@ -115,7 +115,11 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         addView(videoFull, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         column.orientation = LinearLayout.VERTICAL
         addView(column, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-        column.addView(header, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.HEADER_HEIGHT_DP)).apply { topMargin = dp(8) })
+        column.addView(
+            header,
+            LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(IMKitTheme.HEADER_HEIGHT_DP))
+                .apply { topMargin = dp(HEADER_TOP_MARGIN_DP) },
+        )
         column.addView(stage, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
 
         stage.addView(audioStage, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -136,7 +140,17 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         controlsScrim.background = IMKitTheme.controlsScrim()
         addView(controlsScrim, LayoutParams(LayoutParams.MATCH_PARENT, dp(160), Gravity.BOTTOM))
         controlsScrim.visibility = GONE
-        addView(banner, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(12) })
+        /*
+         橙条挂在根布局而不是 column 里：它要浮在画面之上，进了 column 会把 stage 顶下去。
+         代价是**系统栏留白得自己算**——[onApplyWindowInsets] 只给 column 与 controls 打了
+         padding，漏了这里，全面屏上橙条就钻到状态栏/刘海底下去了（真机 2026-09-09）。
+         位置在 [bannerTopMargin] 里统一算：标题栏下方，而不是和标题抢同一条。
+        */
+        addView(
+            banner,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+                .apply { topMargin = bannerTopMargin(0) },
+        )
         // 控制条放在最上层（它在 column 里会被 scrim 盖住），所以直接挂在根布局上。
         /*
          控制条**两排**（v3.2）：上排是三个开关（静音 / 摄像头 / 扬声器），
@@ -181,6 +195,15 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
      * 直接压在状态栏的时间和电量上，而底部的挂断键会被手势条盖掉一半。
      * **只给根容器加 padding**，版式代码一行不用改。
      */
+    /**
+     * 橙条的上边距：**标题栏下方**，不与标题和通话时长抢同一条。
+     *
+     * `padTop` 是系统栏留白（全面屏上就是状态栏/刘海的高度）；
+     * 再往下让过 header 的上边距与它自身的高度，最后留一个 [BANNER_TOP_GAP_DP] 的间隙。
+     */
+    private fun bannerTopMargin(padTop: Int): Int =
+        padTop + dp(HEADER_TOP_MARGIN_DP + IMKitTheme.HEADER_HEIGHT_DP + BANNER_TOP_GAP_DP)
+
     @Suppress("DEPRECATION")
     override fun onApplyWindowInsets(insets: android.view.WindowInsets): android.view.WindowInsets {
         val top: Int
@@ -198,6 +221,11 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         // **只让开「壳」，不让开画面**：留白打在根布局上的话，全屏画面也会被一起顶下去，
         // 顶上顶着一条黑边——那正是「没有全屏」的样子。
         (column.layoutParams as? LayoutParams)?.let { it.topMargin = padTop; column.layoutParams = it }
+        // 橙条不在 column 里，系统栏留白得单独打给它——漏了这一条它就钻进状态栏。
+        (banner.layoutParams as? LayoutParams)?.let {
+            it.topMargin = bannerTopMargin(padTop)
+            banner.layoutParams = it
+        }
         (controls.layoutParams as? LayoutParams)?.let {
             it.bottomMargin = dp(CONTROLS_BOTTOM_DP) + padBottom
             controls.layoutParams = it
@@ -553,5 +581,11 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private companion object {
         /** 控制条离屏幕底边的距离（还要再加上手势条的 inset）。 */
         const val CONTROLS_BOTTOM_DP = 26
+
+        /** 标题栏离系统栏留白的距离。橙条要算到它下面去，所以具名而不是散落的字面量。 */
+        const val HEADER_TOP_MARGIN_DP = 8
+
+        /** 橙条与标题栏之间的间隙。 */
+        const val BANNER_TOP_GAP_DP = 8
     }
 }
