@@ -11,11 +11,18 @@ import android.app.AlertDialog
  *
  * **名单要 9 个人。** 自己会被过滤掉，8 个名字只剩 7 个可选，于是最多凑出 8 格，
  * **永远看不到真正的九宫格**——而九宫格正是这一屏存在的理由。
+ *
+ * **2026-09-09 从 9 个加到 16 个**：9 个人剔掉自己剩 8 个，**恰好等于 [LIMIT]**，
+ * 于是「选到第 9 个该被挡住」这条根本走不到——上限逻辑一直没被验过。
+ * 加到 16 之后可选 15 个，能真的撞上限。九宫格该有的 9 个人依然凑得出。
  */
 internal object ContactPicker {
 
     /** 与 iOS Demo 同一份名单，双端联调时不用互相翻文档。 */
-    private val ALL = listOf("alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan")
+    private val ALL = listOf(
+        "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
+        "judy", "mallory", "niaj", "olivia", "peggy", "rupert", "sybil",
+    )
 
     const val LIMIT = 8
 
