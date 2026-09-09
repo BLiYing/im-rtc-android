@@ -429,6 +429,18 @@ class IMCallEngine private constructor(
         if (isFreshJoin(before, after)) {
             adapter.start(emptyList())
             publishDefaults(after)
+        } else if (after.room.state == IMRoomState.JOINED && before.room.state != IMRoomState.JOINED) {
+            /*
+              **刚变成 joined 却不发布，要留一条。**
+
+              这是本端唯一会跳过发布的地方（恢复回来时那边的发布关系还在，本来就不该补）。
+              但「进了房却没发布」也正是一整类静默故障的样子：web 端同一件事就因为
+              房号没被清零而一声不响地吃掉整个发布——界面正常、日志空白、
+              对端只看到首字母头像（真机 2026-09-09 14:43）。
+
+              判据取「刚变成 joined」而不是「没发布」，所以一次恢复只出现一条，不吵。
+            */
+            IMRTCLog.d("engine", "进房但不发布：从 ${before.room.state.wire} 恢复回来的，发布关系还在")
         }
 
         // 通话结束 / 离房：停掉媒体。**必须可重入**，挂断与被踢会先后到达。
