@@ -9,6 +9,7 @@ import org.webrtc.Camera1Enumerator
 import org.webrtc.Camera2Enumerator
 import org.webrtc.CameraEnumerator
 import org.webrtc.CameraVideoCapturer
+import org.webrtc.PeerConnection
 import org.webrtc.RendererCommon
 import org.webrtc.RtpParameters
 import org.webrtc.RtpTransceiver
@@ -194,7 +195,45 @@ class IMWebRTCAdapter @JvmOverloads constructor(
                 encodings,
             ),
         )
+        if (simulcast) seedUplinkBudget(connection)
         // 前台服务的 camera 类型由 ensureCapture 负责升级——采集起来的那一刻才算真的在用摄像头。
+    }
+
+    /**
+     * 把**上行真实预算**告诉 BWE，别让它从 300 kbps 起爬。
+     *
+     * # 不做这一步会怎样（真机日志复现过）
+     *
+     * libwebrtc 发送侧 BWE 的起始估计默认是 300 kbps。我们推三层，总共要
+     * [IMVideoProfile.simulcastUplinkBudgetBps]（720p 是 2.15 Mbps），
+     * 而 `SimulcastRateAllocator` 在总码率不够时**自底向上**分配、给顶层分 0 bps。
+     * 于是开局只有 `l` 层出包，`m`/`h` 要等 BWE 一路探测上来才活：
+     * 服务端日志里是 `上行层存活性变化 layer=h live=False`，订阅端看到的是糊成
+     * 320×180 的画面。实测一通 1v1 里 h 层死了 37 秒；另一通群通 27 秒全程只有 `l`。
+     *
+     * **这不是调参，是把一个本来就知道的数字填进去。** 服务端对下行做的是同一件事
+     * （`internal/sfu/bwe.go` 的 `bweInitialBitrate = 2_000_000`，注释写着
+     * 「种子给低了会在开局把所有人砸到 l」）——上行同理，只是一直没人填。
+     *
+     * 三个参数的取法：
+     *  - min = 最低那层的码率。再低就不是「糊」而是「没画面」，那不该由 BWE 替用户决定
+     *    （与 `bwe.go` 的 `capForEstimate` 「撑不住全 l 时仍然返回 l」同一条取舍）。
+     *  - start = 总预算。**只影响开局**，之后仍由 TWCC 反馈接管；
+     *    网络真的窄，BWE 第一批反馈就会把它压下去，不会一直硬灌。
+     *  - max = 总预算。再高也没用——我们一共就只要这么多，别让它白探测。
+     *
+     * 单层发布（`simulcast=false`）不需要：那时总量就等于 `maxBitrateBps`，
+     * 300 kbps 起爬也只是第一秒略糊，不会有整层拿不到码率这种事。
+     */
+    private fun seedUplinkBudget(connection: PeerConnection) {
+        val budget = videoProfile.simulcastUplinkBudgetBps
+        val floor = videoProfile.simulcastLayers.first().bitrateBps
+        // 失败不该让通话挂掉：拿不到就是退回 libwebrtc 的默认起点，画面糊一会儿而已。
+        if (connection.setBitrate(floor, budget, budget)) {
+            IMRTCLog.i("media", "上行预算已播种 min=$floor start=$budget max=$budget（档位 ${videoProfile.name}）")
+        } else {
+            IMRTCLog.w("media", "上行预算播种失败，退回 libwebrtc 默认起点（开局可能只有 l 层）")
+        }
     }
 
     override fun unpublish(cid: String) {
