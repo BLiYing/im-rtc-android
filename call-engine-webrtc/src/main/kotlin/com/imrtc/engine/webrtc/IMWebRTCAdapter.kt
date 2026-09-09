@@ -200,6 +200,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             ),
         )
         if (simulcast) seedUplinkBudget(connection)
+        preferResolutionOverFramerate(connection, cid)
         // 采样从这里起：此刻编码器才真的有活干。
         uplinkStats.start(connection)
         // 前台服务的 camera 类型由 ensureCapture 负责升级——采集起来的那一刻才算真的在用摄像头。
@@ -242,6 +243,41 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         }
     }
 
+    /**
+     * CPU / 码率吃紧时**掉帧率，不掉分辨率**。
+     *
+     * # 为什么
+     *
+     * libwebrtc 不设这一项时默认 `BALANCED`——分辨率与帧率一起降。真机实测
+     * （2026-09-10，OPPO 推三层 VP8）h 层从 720×1280 掉到 **540×960** 并标着
+     * `受限=cpu`（见 [IMUplinkStats] 打的「上行层实况」）。
+     *
+     * 而本产品最吃分辨率的场景是**看清画面里的字**（共享屏幕、对着文档拍）——
+     * 那种场景下 15fps 完全够用，**分辨率掉一档就直接看不清了**。
+     * 所以这里显式反转默认取舍。
+     *
+     * # 代价，说清楚
+     *
+     * CPU 真顶不住时帧率会掉得很低（实测见过 fps=1~4），画面变成近乎静止的幻灯片。
+     * 那仍然比「糊成一团但很流畅」好——**至少信息还在**。
+     * 如果以后有「流畅优先」的场景（比如纯聊天），该由宿主选，不该在这里写死。
+     *
+     * 只对视频生效；音频没有分辨率这回事。失败不影响通话，记一条日志就够。
+     */
+    private fun preferResolutionOverFramerate(connection: PeerConnection, cid: String) {
+        val sender = connection.senders.firstOrNull { it.track()?.id() == cid } ?: run {
+            IMRTCLog.w("media", "找不到 cid=$cid 的 sender，降级偏好没设上")
+            return
+        }
+        val params = sender.parameters ?: return
+        params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+        if (sender.setParameters(params)) {
+            IMRTCLog.i("media", "编码降级偏好=MAINTAIN_RESOLUTION（宁可掉帧率也保分辨率）")
+        } else {
+            IMRTCLog.w("media", "降级偏好没设上，退回 libwebrtc 默认的 BALANCED（分辨率会跟着降）")
+        }
+    }
+
     override fun unpublish(cid: String) {
         // v1 一通电话就一组本端 Track，停采集即可；细到单条 Track 的拆除留给会议期。
         stopCapture()
@@ -264,12 +300,38 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     override fun createVideoView(context: android.content.Context): android.view.View =
         SurfaceViewRenderer(context)
 
+    /**
+     * 按**源的实际宽高比**渲染，放不满的地方留黑边。
+     *
+     * 规则与理由见 `im-rtc-server/docs/mechanism/VIDEO_RENDERING.md`（五仓统一）。
+     * 简述：手机推竖屏 720×1280、浏览器推横屏 1280×720，**两种源混在一个房间里是常态**，
+     * 而格子形状只有一种。裁切填充（`SCALE_ASPECT_FILL`，以及 libwebrtc 默认的
+     * `SCALE_ASPECT_BALANCED`）在方向不一致时会按长边匹配、把源放大两倍以上再裁掉溢出——
+     * 真机实测就是「Android 看 Web 一直糊」那一条：当时下发上界是 h、丢包 0.7%，
+     * **收到的就是最高层、链路也好，糊纯粹是渲染放大出来的**。
+     *
+     * **两个参数都要传**：单参版只设「方向一致」那一种，方向不一致时仍然走
+     * `SCALE_ASPECT_BALANCED`——而方向不一致恰恰是出问题的那一种。
+     *
+     * 本端预览一并用 FIT，不开特例：它与屏幕方向天然一致，FIT 与 FILL 看起来没区别，
+     * 少一条分支就少一处漂的机会。
+     *
+     * **必须在主线程**（见类注释）：调用方都在 `onMain` 里。
+     */
+    private fun applyAspectFit(renderer: SurfaceViewRenderer) {
+        renderer.setScalingType(
+            RendererCommon.ScalingType.SCALE_ASPECT_FIT,
+            RendererCommon.ScalingType.SCALE_ASPECT_FIT,
+        )
+    }
+
     override fun attachView(uid: String, view: Any?) = onMain {
         detachRenderer(uid)
         val renderer = view as? SurfaceViewRenderer ?: return@onMain
         // **这两行必须在主线程**，否则直接抛 IllegalStateException（见类注释）。
         renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(uid))
         renderer.setEnableHardwareScaler(true)
+        applyAspectFit(renderer)
         renderers[uid] = renderer
         bindRemoteTracks()
     }
@@ -296,6 +358,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         }
         renderer.init(peers.eglBase.eglBaseContext, null)
         renderer.setEnableHardwareScaler(true)
+        applyAspectFit(renderer)
         renderer.setMirror(frontCamera)
         renderers[LOCAL] = renderer
         ensurePreviewTrack()?.addSink(renderer)
