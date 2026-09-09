@@ -53,6 +53,24 @@ data class IMVideoProfile(
             Layer("h", 1.0, maxBitrateBps),
         )
 
+    /**
+     * 推 simulcast 时**上行真正要的总码率** = 三层之和（720p 是 2.15 Mbps，不是 1.5）。
+     *
+     * `maxBitrateBps` 是「h 一层」的数，服务端 `bwe.go` 拿它算的是**下行**预算——
+     * 那边每个订阅者只收一层，所以 1.5M 是对的。但发布端要同时编出三层，
+     * 账面上从来没人记过这个总和，于是踩了这个坑：libwebrtc 的发送侧 BWE
+     * **默认从 300 kbps 起爬**，而 `SimulcastRateAllocator` 在总码率不够时自底向上分配、
+     * 给顶层分 0 bps —— 表现就是开局只有 `l` 层出包，`h` 要等 BWE 爬上来才活。
+     * 真机日志里 h 层死过 37 秒，有一通群通整 27 秒只发出了 `l`。
+     *
+     * 所以这个数要喂给 `PeerConnection.setBitrate` 当种子，**与服务端对下行的做法同理**
+     * （`bwe.go` 的 `bweInitialBitrate = 2_000_000`，注释：「种子给低了会在开局把所有人砸到 l」）。
+     *
+     * **这不是新的协议数据**，是 [simulcastLayers] 的和；§3.5 那张表一个数都没动。
+     */
+    val simulcastUplinkBudgetBps: Int
+        get() = simulcastLayers.sumOf { it.bitrateBps }
+
     companion object {
         @JvmField
         val P360 = IMVideoProfile("360p", 640, 360, 24, 500_000)
