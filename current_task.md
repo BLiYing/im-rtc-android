@@ -11,7 +11,7 @@
 
 ## 当前焦点
 
-**2026-09-09 夜：真机联调查出的两处，一处已验收合入 main，一处还在分支上等验收。**
+**2026-09-09 夜：真机联调查出的两处，都已合入 main；控制条那处已验收，上行那处还没有。**
 
 依据是 16:01–16:05 那三通（1v1 + 两通群通，Android=alice / iOS=carol / Web=bob）的三方日志。
 
@@ -19,7 +19,7 @@
 |---|---|---|
 | ✅ **已真机验收、已合 main** | **控制条自动隐藏后按钮还能点**。`controls.isEnabled = false` 在 Android 上既不传给子 View 也不拦触摸派发，淡到 alpha=0 后静音/摄像头/扬声器/翻转/**挂断**全都还能点；而 `controls` 压在 `stage` 上面，「点一下叫回控制条」先被看不见的按钮吃掉 | 改成置 `INVISIBLE`（不绘制也不吃触摸，等价于 iOS 的 `isUserInteractionEnabled=false`），触摸落回 `stage`。控制条那块抽成 `IMChromeGate` |
 | ✅ 同上 | 自动隐藏的守卫漏在结束画面：`render()` 在 ENDED 时提前 return，接通期排下的那一下不会被撤，会把标题栏一起淡掉 | `hideChrome` 触发时复查 layout 与 phase。**「排定时查 CONNECTED」保留**，iOS 对齐过来 |
-| ⬜ **未验收**，在分支 `worktree-fix-chrome-autohide-and-uplink` 上 | **上行 simulcast 预算没人记账**：三层要 2.15Mbps，而 BWE 从默认 300kbps 起爬，顶层被 `SimulcastRateAllocator` 分到 0 bps。实测 h 层死了 37 秒、一通群通 27 秒全程只有 `l` | 补 `IMVideoProfile.simulcastUplinkBudgetBps`（三层之和，派生值，§3.5 表没动），`publish` 时喂给 `PeerConnection.setBitrate` 当种子 |
+| ⚠️ **已合 main，但真机未验收** | **上行 simulcast 预算没人记账**：三层要 2.15Mbps，而 BWE 从默认 300kbps 起爬，顶层被 `SimulcastRateAllocator` 分到 0 bps。实测 h 层死了 37 秒、一通群通 27 秒全程只有 `l` | 补 `IMVideoProfile.simulcastUplinkBudgetBps`（三层之和，派生值，§3.5 表没动），`publish` 时喂给 `PeerConnection.setBitrate` 当种子 |
 
 上行那一刀**要配服务端 `im-rtc-server` 分支 `worktree-fix-bwe-burst-and-ratchet` 一起验**：
 那边修的是「压到 l 之后爬不回来」（升层判据数学上不可能满足），这边修的是
