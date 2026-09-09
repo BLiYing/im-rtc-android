@@ -33,15 +33,32 @@ import android.view.View
  */
 internal class IMSpeechIconView(context: Context) : View(context) {
 
-    enum class Mode { QUIET, SPEAKING, MUTED }
+    /**
+ * 四种画法。
+ *
+ * `MIC_ON` 与 `SPEAKING` 的区别是**别人的格子才有**：自己在不在说话自己知道，
+ * 本端那格只表达麦克风开关（2026-09-09 拍板）。
+ */
+enum class Mode { MIC_ON, SPEAKING, MUTED, HIDDEN }
 
     private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = IMKitTheme.speaking }
     private val rect = RectF()
     private val micSlash = context.getDrawable(IMKitIcon.MIC_SLASH.resId)?.mutate()?.apply {
         setTint(IMKitTheme.mutedBadge)
     }
+    /**
+     * 「麦克风开着、没在说话」——**常态，所以要退到背景里**。
+     *
+     * 它挂在每一个格子上、绝大多数时候都在，画得太显眼就成了新的干扰源，
+     * 而这次改版的出发点正是减少干扰。所以用低对比度的白（[MIC_ON_ALPHA]），
+     * 只有说话那枚是亮绿色。
+     */
+    private val micOn = context.getDrawable(IMKitIcon.MIC.resId)?.mutate()?.apply {
+        setTint(IMKitTheme.primaryText)
+        alpha = MIC_ON_ALPHA
+    }
 
-    private var mode = Mode.QUIET
+    private var mode = Mode.MIC_ON
     /** 0~100，服务端给的音量。映射到峰值高度 [PEAK_MIN]~1.0。 */
     private var volume = 0
     /** 动画相位起点。用开机时钟而不是帧计数——View 不可见时不掉帧就不会跳。 */
@@ -60,13 +77,20 @@ internal class IMSpeechIconView(context: Context) : View(context) {
      */
     private var reduceMotion = false
 
-    /** 设置状态。`speaking` 与 `muted` 互斥——静音的人不可能在说话，静音优先。 */
-    fun set(speaking: Boolean, muted: Boolean, volume: Int) {
+    /**
+     * 设置状态。
+     *
+     * **静音优先**：静音的人不可能在说话，两者互斥。
+     *
+     * @param showsSpeaking 这一格要不要区分「在说话」。本端那格传 false——
+     *   自己在不在说话自己知道，只需要表达麦克风开关（2026-09-09 拍板）。
+     */
+    fun set(speaking: Boolean, muted: Boolean, volume: Int, showsSpeaking: Boolean = true) {
         this.volume = volume.coerceIn(0, 100)
         val want = when {
             muted -> Mode.MUTED
-            speaking -> Mode.SPEAKING
-            else -> Mode.QUIET
+            speaking && showsSpeaking -> Mode.SPEAKING
+            else -> Mode.MIC_ON
         }
         if (want == Mode.SPEAKING) {
             quietAt = 0L
@@ -78,7 +102,7 @@ internal class IMSpeechIconView(context: Context) : View(context) {
             return
         }
         // 从「说话」退出来的那一次要拖一拍，其余状态立刻切。
-        if (mode == Mode.SPEAKING && want == Mode.QUIET) {
+        if (mode == Mode.SPEAKING && want == Mode.MIC_ON) {
             if (quietAt == 0L) quietAt = android.os.SystemClock.uptimeMillis() + HOLD_MS
             invalidate()
             return
@@ -105,17 +129,26 @@ internal class IMSpeechIconView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        if (mode == Mode.MUTED) {
-            micSlash?.setBounds(0, 0, width, height)
-            micSlash?.draw(canvas)
-            return
+        when (mode) {
+            Mode.HIDDEN -> return
+            Mode.MUTED -> {
+                micSlash?.setBounds(0, 0, width, height)
+                micSlash?.draw(canvas)
+                return
+            }
+            Mode.MIC_ON -> {
+                micOn?.setBounds(0, 0, width, height)
+                micOn?.draw(canvas)
+                return
+            }
+            Mode.SPEAKING -> Unit
         }
-        if (mode != Mode.SPEAKING) return
 
         val now = android.os.SystemClock.uptimeMillis()
         if (quietAt != 0L && now >= quietAt) {
-            mode = Mode.QUIET
+            mode = Mode.MIC_ON
             quietAt = 0L
+            invalidate() // 换成常态图标要重画一次，不然那一格就空着了
             return
         }
 
@@ -162,6 +195,8 @@ internal class IMSpeechIconView(context: Context) : View(context) {
         /** 「移除动画」下两边那两根条的相对高度，让静止图标仍有个起伏的轮廓。 */
         const val STILL_SIDE = 0.7f
         const val HOLD_MS = 400L
+        /** 常态那枚麦克风的不透明度（0~255）。见 [micOn]：它得退到背景里。 */
+        const val MIC_ON_ALPHA = 115
         /** 三根条的相位错开，不然是一起上下的一整块。 */
         val PHASES = floatArrayOf(0f, 0.45f, 0.22f)
     }
