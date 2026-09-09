@@ -11,6 +11,22 @@
 
 ## 当前焦点
 
+**2026-09-09 晚：ICE 自愈的上报改成按协议 §7.2 分两路（分支 `fix/parity-leave-failed-and-2006`）。**
+
+扫四端静默失败点时发现，**本仓其实是四端里最接近协议原意的那个**——
+`IMPeerConnections` 对 ICE FAILED 与 SDP 失败都报了 2006，而 Web / iOS 一个发射点都没有。
+问题只在**没有分路**：pub 那条我们正在自愈，头两次多半只是切网抖动，
+每次都报等于把「正在自愈」误报成「通话废了」，而且每 30 秒刷一条。
+
+改成：pub 连续 3 次重启仍 FAILED 才抛一次，之后继续重试但不再重复抛；
+sub 与 SDP 失败照旧立即抛；回 CONNECTED 清零。
+
+判定摘成了新的 `IMIceGiveUp`（`call-engine-webrtc`），**理由与 `IMNegotiationGate` 相同**：
+`IMPeerConnections` 要造 `PeerConnectionFactory`，JVM 单测里起不来，
+而这段判定恰恰是最容易写错的——差一个 `>=` 就退化成「永远不报」或「每次都报」。
+
+`./scripts/test.sh` 全绿（6 步），新增 `IMIceGiveUpTest` 6 条。
+
 **2026-09-09 一整天：说话指示器改版 + 语音判定重做 + 四个真机 bug。全部已合入 main 并推送。**
 
 > **没有一条经过真机验收**——除了下面单独标注的。真机清单见「下一步」。
