@@ -146,7 +146,20 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     }
 
     override fun onActiveSpeakers(speakers: List<IMSpeaker>) {
-        IMCallKit.update(IMCallViewReducer.speaking(state, speakers.maxByOrNull { it.volume }?.uid.orEmpty()))
+        /*
+          **整份名单都要喂进去，不能只取音量最大的那个。**
+
+          原先这里是 `maxByOrNull { it.volume }`：三个人同时说话只亮一个格子，
+          而那人若恰好是本端，远端一个都不亮——真机 2026-09-09「说话没高亮」就是它。
+          说话图标是每格各记各的（`Member.speaking`），本来就不需要先选出一个人。
+
+          `loudest` 仍然要算：悬浮球一次只放得下一路缩略画面，那儿确实只能挑一个。
+        */
+        val volumes = speakers.associate { it.uid to it.volume }
+        val loudest = speakers.maxByOrNull { it.volume }?.uid.orEmpty()
+        IMCallKit.update(
+            IMCallViewReducer.speaking(state, volumes, loudest, IMCallKit.engine?.uid.orEmpty()),
+        )
         host.onActiveSpeakers(speakers)
     }
 

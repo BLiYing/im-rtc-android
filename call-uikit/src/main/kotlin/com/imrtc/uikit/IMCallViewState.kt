@@ -33,10 +33,18 @@ internal data class IMCallViewState(
      * **它可能是本端自己**，而 [members] 不含自己 —— `room.active_speakers`
      * 把房里每个人都报上来（含本端），Kit 只是原样取音量最大的那一个。
      * 所以**凡是拿它去找一块远端画面的地方，都必须先确认这个 uid 在 members 里**，
-     * 用 [videoSpeakerUid]，别直接用这个字段。九宫格拿它画绿描边是安全的：
-     * 描边只画在 members 的格子上，本端那格根本不参与。
+     * **音量最大的那一个人**。只给悬浮球用——它一次只放得下一路缩略画面。
+     *
+     * **判断某个格子要不要显示说话图标不能用它**：服务端一次给的是一份名单
+     * （协议 §3.5 全量快照），三个人同时说话时这里只留得下一个，
+     * 而那人若恰好是本端，远端一个格子都不会亮。格子看 [Member.speaking]。
+     * 真机 2026-09-09 「说话没高亮」就是这么来的。
      */
     val speakingUid: String = "",
+    /** 本端在不在说话（本端那格没有 Member，只能单独记）。 */
+    val selfSpeaking: Boolean = false,
+    /** 本端音量 0~100。 */
+    val selfVolume: Int = 0,
     val endReason: String = "",
     /** 通话已被收进悬浮球 / 画中画。**通话本身照常进行**——这只是呈现形态。 */
     val isMinimized: Boolean = false,
@@ -70,6 +78,10 @@ internal data class IMCallViewState(
         val settled: Settled = Settled.NONE,
         /** 网络质量 0~6，0 = 未知。 */
         val networkLevel: Int = 0,
+        /** 是不是正在说话。**每个人各记各的**——见 [IMCallViewState.speakingUid] 那段。 */
+        val speaking: Boolean = false,
+        /** 0~100 的音量，映射到说话图标的条高。服务端 300ms 一次。 */
+        val volume: Int = 0,
     )
 
     /** 三种版式（规范 §03 / §04）。 */
@@ -348,7 +360,25 @@ internal object IMCallViewReducer {
         members = state.members.mapValues { (uid, m) -> levels[uid]?.let { m.copy(networkLevel = it) } ?: m },
     )
 
-    fun speaking(state: IMCallViewState, uid: String) = state.copy(speakingUid = uid)
+    /**
+     * 收下一份说话人名单。**服务端给的是全量快照**，不在名单里的人一律清成「没说话」。
+     *
+     * @param loudest 音量最大的那个 uid，只给悬浮球挑缩略画面用
+     * @param selfUid 本端 uid，用来把本端那格从名单里认出来
+     */
+    fun speaking(
+        state: IMCallViewState,
+        volumes: Map<String, Int>,
+        loudest: String,
+        selfUid: String,
+    ) = state.copy(
+        speakingUid = loudest,
+        selfSpeaking = selfUid.isNotEmpty() && volumes.containsKey(selfUid),
+        selfVolume = volumes[selfUid] ?: 0,
+        members = state.members.mapValues { (uid, m) ->
+            m.copy(speaking = volumes.containsKey(uid), volume = volumes[uid] ?: 0)
+        },
+    )
 
     fun connection(state: IMCallViewState, connection: IMCallViewState.Connection) = state.copy(connection = connection)
 

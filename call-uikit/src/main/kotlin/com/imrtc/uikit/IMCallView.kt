@@ -405,7 +405,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         pip.visibility = if (showPreview) VISIBLE else GONE
         pip.liftsForControls = false
         if (showPreview) {
-            applySelf(state, hasLocalVideo, 44)
+            applySelf(state, hasLocalVideo, 44, showsSpeaking = false)
             mountInPip(selfTile)
         }
     }
@@ -419,7 +419,13 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         // 而那圈绿边压在全屏画面上只会显得像出了什么问题。九宫格里才需要它。
         remote.apply(peer.uid, peer.uid, peer.video, peer.audio, isSpeaking = false,
             networkLevel = peer.networkLevel, avatarSizeDp = if (state.isSwapped) 44 else IMKitTheme.AVATAR_LARGE_DP)
-        applySelf(state, actions?.hasLocalVideo() ?: false, if (state.isSwapped) IMKitTheme.AVATAR_LARGE_DP else 44)
+        // **1v1 不显示说话指示器**（2026-09-09 拍板）：远端那格传的就是 false，
+        // 本端这格也必须一致，否则会变成「小窗在跳、全屏的对方一直是暗的」。
+        applySelf(
+            state, actions?.hasLocalVideo() ?: false,
+            if (state.isSwapped) IMKitTheme.AVATAR_LARGE_DP else 44,
+            showsSpeaking = false,
+        )
         // 默认远端全屏、本端小窗；互换后反过来。层上界由 Kit 按 isSwapped 报。
         val (full, small) = if (state.isSwapped) selfTile to remote else remote to selfTile
         pinFull(full)
@@ -436,7 +442,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         pip.visibility = GONE
         val members = state.tiles
         retireTiles(members.map { it.uid }.toSet())
-        applySelf(state, actions?.hasLocalVideo() ?: false, 44)
+        // 九宫格是唯一显示说话指示器的版式，本端那格也在内（2026-09-09 拍板）。
+        applySelf(state, actions?.hasLocalVideo() ?: false, 44, showsSpeaking = true)
         val ordered = ArrayList<View>()
         ordered += selfTile
         selfTile.setRounded(true)
@@ -451,7 +458,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
              对端一开摄像头就得重建 Surface 再等一个关键帧——白等半秒还闪一下。
             */
             tile.setVideoView(actions?.videoViewFor(m.uid))
-            tile.apply(m.uid, m.uid, m.video, m.audio, state.speakingUid == m.uid,
+            tile.apply(m.uid, m.uid, m.video, m.audio, m.speaking, m.volume,
                 isRinging = !m.accepted, settled = m.settled, networkLevel = m.networkLevel)
             actions?.reportLayer(m.uid, layer)
             ordered += tile
@@ -478,10 +485,22 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         grid.apply(ordered, width, height, gap, fallbackCell = dp(120))
     }
 
-    private fun applySelf(state: IMCallViewState, hasLocalVideo: Boolean, avatarDp: Int) {
+    /**
+     * @param showsSpeaking 只有九宫格传 true。**这个参数不能省**——三种版式共用这一个方法，
+     *   写死的话 1v1 也会跟着亮（拍板：1v1 不改）。
+     */
+    private fun applySelf(
+        state: IMCallViewState,
+        hasLocalVideo: Boolean,
+        avatarDp: Int,
+        showsSpeaking: Boolean,
+    ) {
         val showVideo = state.cameraOn && hasLocalVideo
         selfTile.setVideoView(if (showVideo) actions?.localPreviewView() else null, overlay = !state.isSwapped)
-        selfTile.apply("", "我", showVideo, state.micOn, false, avatarSizeDp = avatarDp)
+        // 本端那格也显示（2026-09-09 拍板）：uid 为空串，说话状态按本端音量判。
+        selfTile.apply("", "我", showVideo, state.micOn,
+            showsSpeaking && state.selfSpeaking, if (showsSpeaking) state.selfVolume else 0,
+            avatarSizeDp = avatarDp)
     }
 
     private fun mountInPip(tile: IMVideoTile) {
