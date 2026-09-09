@@ -841,3 +841,47 @@ signaling 线程上），紧挨着就 `events.onLocalSdp(...)` 把 offer 发出�
 
 **新增 10 条用例**：`StaleSocketCloseTest`（4 条，`FakeTransport` 现在留下每一条 socket 的
 listener，才测得出「旧的迟到」）、`RoomResumeTest`（6 条）。
+
+
+## 2026-09-09 之前的「当前焦点」
+
+**「呼叫中按的静音会丢」——真机 2026-09-09 抓到的隐私问题**，
+`./scripts/test.sh` 六步全绿、183 条用例。分支 `fix/mute-before-publish`。**未真机复验。**
+
+alice（Android）发起群呼，在「正在呼叫…」阶段按了静音，bob 接通后**照样听得见她说话**，
+而 alice 界面上写着「已静音」。日志：
+
+```
+00:09:59.7  call.invite
+00:10:01.0  WARN 没有 audio Track 可以开关   ← 按静音，被丢掉
+00:10:04.8  call.connected
+00:10:05.0  room.publish ×2                ← 这时才发布轨道，默认开着
+00:10:05.0  WARN 没有 audio Track 可以开关   ← onRoomJoined 的补救也失败
+```
+
+**根因：`setMuted` 把两件事绑死了。** 关本端轨道不需要 `track_id`（那是服务端分配的），
+只有 `room.mute` 帧需要；而原先拿不到 track_id 就整个早退，**连本端也不关**。
+偏偏「拿不到」正发生在最该静音的时候。Kit 的 `toggleMic` 又是无条件翻界面的，于是界面撒谎。
+
+`onRoomJoined` 那道补救方向对、时机错：它跑在 `room.join.ok`（05.013），
+而 `room.publish.ok`（05.04）还没回来，`publishTrackIds` 仍是空的。
+
+**改法三条**：
+
+1. `setMuted` 拆开——本端 `media.setMuted` **无条件执行**，帧只在有 track_id 时发；
+2. 意图存进 [IMMuteBook]，`room.publish.ok` 拿到 track_id 那一刻补做（本端 + 帧都补，
+   因为轨道是刚现造的、默认开着）；判据是 **track_id 从无到有**，不是「表里有」，
+   否则每帧下行都会重发一遍；
+3. 通话结束时意图跟着作废，别漏到下一通。
+
+界面撒谎那条**不用单独修**了：`setMuted` 现在总能落地意图，界面就不再是谎话。
+
+**只有 Android 中招**：iOS 与 web 的 `setMuted` 都是先无条件 `media.setMuted`、
+guard 只挡信令帧，所以对端听不见你——这也正好解释了真机上的不对称
+（bob 在 web 静音生效，alice 在 Android 不生效）。
+
+**顺带拆了两刀**（体量门禁 621 > 600，且明令不许放宽阈值）：
+静音这一摊抽成 `IMMuteBook`（纯逻辑、可单测），协商帧转发抽成
+`IMNegotiationFrames.kt` 的自由函数（它不碰门面任何状态）。`IMCallEngine.kt` 回到 587 行。
+
+**新增 5 条用例**（`MuteBeforePublishTest`）。把 `setMuted` 注回旧逻辑，其中 2 条立刻红。
