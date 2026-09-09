@@ -164,7 +164,23 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         (view.parent as? FrameLayout)?.removeView(view)
         (view as? SurfaceView)?.setZOrderMediaOverlay(overlay)
         overlayApplied = overlay
-        videoHost.addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        /*
+         **渲染器必须是 WRAP_CONTENT + 居中，不能给 MATCH_PARENT。**
+
+         `MATCH_PARENT` 会让测量规格变成 `EXACTLY`，而 libwebrtc 的
+         `RendererCommon.VideoLayoutMeasure` 在 `EXACTLY` 下**直接忽略 scalingType**
+         （源码里那句「If the measure specification is forcing a specific size, yield」），
+         占满给定尺寸再裁切填充。于是媒体层设的「按可见比例选 FILL/FIT」全白费——
+         2026-09-10 第一版改动就栽在这里，真机上 Android 仍然满格裁切。
+
+         换成 `WRAP_CONTENT` 之后，渲染器的尺寸由 scalingType 反推：FILL 时仍然满格
+         （看起来和以前一样），FIT 时缩到源的宽高比、四周露出 [videoHost] 的底色＝黑边。
+         判据与真机依据见 `im-rtc-server/docs/mechanism/VIDEO_RENDERING.md`。
+        */
+        videoHost.addView(
+            view,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER),
+        )
     }
 
     /**
