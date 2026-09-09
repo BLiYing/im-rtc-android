@@ -48,6 +48,17 @@ internal class IMSpeechIconView(context: Context) : View(context) {
     private var phaseStart = 0L
     /** 收声后拖到这个时刻才真的灭。见类注释。 */
     private var quietAt = 0L
+    /**
+     * 系统「移除动画」开关（辅助功能 / 开发者选项把动画时长缩放调成 0）。
+     *
+     * iOS 看 `UIAccessibility.isReduceMotionEnabled`、web 有
+     * `@media (prefers-reduced-motion:reduce)`，**这一端原先什么都不看**：
+     * 明明开着「移除动画」，九个格子还是各有三根条在按屏幕刷新率逐帧重画。
+     * 那正是这个开关要挡掉的东西，顺带也是白烧的电。
+     *
+     * 挂上来的时候读一次就够：每帧去查 Settings 太贵，而通话中途改这个开关的没有。
+     */
+    private var reduceMotion = false
 
     /** 设置状态。`speaking` 与 `muted` 互斥——静音的人不可能在说话，静音优先。 */
     fun set(speaking: Boolean, muted: Boolean, volume: Int) {
@@ -79,6 +90,15 @@ internal class IMSpeechIconView(context: Context) : View(context) {
         }
     }
 
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        reduceMotion = android.provider.Settings.Global.getFloat(
+            context.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         // 固定尺寸：留位是设计的一部分，不许被父容器压扁。
         setMeasuredDimension(dp(WIDTH_DP), dp(HEIGHT_DP))
@@ -104,16 +124,29 @@ internal class IMSpeechIconView(context: Context) : View(context) {
         val barW = dp(BAR_W_DP).toFloat()
         val gap = (width - barW * BARS) / (BARS - 1)
         for (i in 0 until BARS) {
-            val phase = (now - phaseStart) / PERIOD_MS.toFloat() + PHASES[i]
-            // 三角波比正弦省一次三角函数，而且在这个尺寸下看不出区别。
-            val t = kotlin.math.abs((phase % 1f) * 2f - 1f)
-            val scale = (MIN_SCALE + (1f - MIN_SCALE) * t) * peak
+            val scale = if (reduceMotion) {
+                // 静止但仍读得出「在说话」：中间高、两边矮，和 iOS 那条同一个形状。
+                peak * if (i == 1) 1f else STILL_SIDE
+            } else {
+                val phase = (now - phaseStart) / PERIOD_MS.toFloat() + PHASES[i]
+                // 三角波比正弦省一次三角函数，而且在这个尺寸下看不出区别。
+                val t = kotlin.math.abs((phase % 1f) * 2f - 1f)
+                (MIN_SCALE + (1f - MIN_SCALE) * t) * peak
+            }
             val h = height * scale
             val left = i * (barW + gap)
             rect.set(left, (height - h) / 2f, left + barW, (height + h) / 2f)
             canvas.drawRoundRect(rect, barW / 2f, barW / 2f, barPaint)
         }
-        postInvalidateOnAnimation()
+        if (!reduceMotion) {
+            postInvalidateOnAnimation()
+            return
+        }
+        /*
+          不逐帧重画了，但**拖拍还得有人来收尾**：上面那句「到点就转 QUIET」只在
+          onDraw 里跑，没有下一帧就永远等不到，图标会一直亮着。所以精确地约一次。
+        */
+        if (quietAt != 0L) postInvalidateDelayed(quietAt - now)
     }
 
     private fun dp(v: Float) = (v * resources.displayMetrics.density + 0.5f).toInt()
@@ -126,6 +159,8 @@ internal class IMSpeechIconView(context: Context) : View(context) {
         const val PERIOD_MS = 620L
         const val MIN_SCALE = 0.34f
         const val PEAK_MIN = 0.5f
+        /** 「移除动画」下两边那两根条的相对高度，让静止图标仍有个起伏的轮廓。 */
+        const val STILL_SIDE = 0.7f
         const val HOLD_MS = 400L
         /** 三根条的相位错开，不然是一起上下的一整块。 */
         val PHASES = floatArrayOf(0f, 0.45f, 0.22f)

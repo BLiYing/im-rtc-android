@@ -419,7 +419,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         // 而那圈绿边压在全屏画面上只会显得像出了什么问题。九宫格里才需要它。
         remote.apply(peer.uid, peer.uid, peer.video, peer.audio, isSpeaking = false,
             networkLevel = peer.networkLevel, avatarSizeDp = if (state.isSwapped) 44 else IMKitTheme.AVATAR_LARGE_DP)
-// **1v1 不显示说话指示器**（2026-09-09 拍板）：远端那格传的就是 false，
+        // **1v1 不显示说话指示器**（2026-09-09 拍板）：远端那格传的就是 false，
         // 本端这格也必须一致，否则会变成「小窗在跳、全屏的对方一直是暗的」。
         applySelf(
             state, actions?.hasLocalVideo() ?: false,

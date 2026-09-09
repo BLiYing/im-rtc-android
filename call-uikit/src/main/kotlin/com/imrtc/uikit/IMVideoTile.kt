@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Outline
-import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.SurfaceView
 import android.view.ViewOutlineProvider
