@@ -405,7 +405,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         pip.visibility = if (showPreview) VISIBLE else GONE
         pip.liftsForControls = false
         if (showPreview) {
-            applySelf(state, hasLocalVideo, 44, showsSpeaking = false)
+            applySelf(state, hasLocalVideo, 44)
             mountInPip(selfTile)
         }
     }
@@ -419,12 +419,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         // 而那圈绿边压在全屏画面上只会显得像出了什么问题。九宫格里才需要它。
         remote.apply(peer.uid, peer.uid, peer.video, peer.audio, isSpeaking = false,
             networkLevel = peer.networkLevel, avatarSizeDp = if (state.isSwapped) 44 else IMKitTheme.AVATAR_LARGE_DP)
-        // **1v1 不显示说话指示器**（2026-09-09 拍板）：远端那格传的就是 false，
-        // 本端这格也必须一致，否则会变成「小窗在跳、全屏的对方一直是暗的」。
         applySelf(
             state, actions?.hasLocalVideo() ?: false,
             if (state.isSwapped) IMKitTheme.AVATAR_LARGE_DP else 44,
-            showsSpeaking = false,
         )
         // 默认远端全屏、本端小窗；互换后反过来。层上界由 Kit 按 isSwapped 报。
         val (full, small) = if (state.isSwapped) selfTile to remote else remote to selfTile
@@ -442,8 +439,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         pip.visibility = GONE
         val members = state.tiles
         retireTiles(members.map { it.uid }.toSet())
-        // 九宫格是唯一显示说话指示器的版式，本端那格也在内（2026-09-09 拍板）。
-        applySelf(state, actions?.hasLocalVideo() ?: false, 44, showsSpeaking = true)
+        applySelf(state, actions?.hasLocalVideo() ?: false, 44)
         val ordered = ArrayList<View>()
         ordered += selfTile
         selfTile.setRounded(true)
@@ -486,20 +482,20 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     }
 
     /**
-     * @param showsSpeaking 只有九宫格传 true。**这个参数不能省**——三种版式共用这一个方法，
-     *   写死的话 1v1 也会跟着亮（拍板：1v1 不改）。
+     * 本端那格。**只表达麦克风开 / 关两态**（2026-09-09 拍板）——
+     * 自己在不在说话自己知道，所以这里不再需要「哪种版式才显示说话」那个参数：
+     * 三种版式一视同仁。
      */
-    private fun applySelf(
-        state: IMCallViewState,
-        hasLocalVideo: Boolean,
-        avatarDp: Int,
-        showsSpeaking: Boolean,
-    ) {
+    private fun applySelf(state: IMCallViewState, hasLocalVideo: Boolean, avatarDp: Int) {
         val showVideo = state.cameraOn && hasLocalVideo
         selfTile.setVideoView(if (showVideo) actions?.localPreviewView() else null, overlay = !state.isSwapped)
         // 本端那格也显示（2026-09-09 拍板）：uid 为空串，说话状态按本端音量判。
-        selfTile.apply("", "我", showVideo, state.micOn,
-            showsSpeaking && state.selfSpeaking, if (showsSpeaking) state.selfVolume else 0,
+        /*
+          **本端那格只表达麦克风开关**（2026-09-09 拍板）：自己在不在说话自己知道，
+          那一格跳来跳去纯属多余。showsSpeaking = false 之后它只有开 / 关两态。
+        */
+        selfTile.apply("", "我", showVideo, state.micOn, isSpeaking = false, volume = 0,
+            showsSpeaking = false,
             avatarSizeDp = avatarDp)
     }
 

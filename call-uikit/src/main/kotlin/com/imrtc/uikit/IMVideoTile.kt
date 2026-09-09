@@ -192,6 +192,11 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         isSpeaking: Boolean,
         /** 0~100，服务端给的音量，映射到条高。见 [IMSpeechIconView]。 */
         volume: Int = 0,
+        /**
+         * 这一格要不要区分「在说话」。**本端那格传 false**——自己在不在说话自己知道，
+         * 只需要表达麦克风开关（2026-09-09 拍板）。
+         */
+        showsSpeaking: Boolean = true,
         isRinging: Boolean = false,
         settled: IMCallViewState.Settled = IMCallViewState.Settled.NONE,
         networkLevel: Int = 0,
@@ -232,11 +237,14 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
           **静音优先**：静音的人不可能在说话，两者互斥。
           描边与绿名牌一并删掉——留着就是三处同时表达同一件事。
         */
-        speechIcon.set(speaking = isSpeaking, muted = !hasAudio, volume = volume)
+        speechIcon.set(
+            speaking = isSpeaking, muted = !hasAudio, volume = volume,
+            showsSpeaking = showsSpeaking,
+        )
         namePlate.contentDescription = when {
             !hasAudio -> "$shown，已静音"
-            isSpeaking -> "$shown，正在说话"
-            else -> shown
+            isSpeaking && showsSpeaking -> "$shown，正在说话"
+            else -> "$shown，麦克风已开启"
         }
         netPlate.visibility = if (IMCallViewState.isNetworkPoor(networkLevel)) VISIBLE else GONE
         netBars.level = networkLevel
