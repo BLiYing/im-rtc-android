@@ -24,7 +24,7 @@ internal class IMChromeGate(
      */
     private val gated: List<View>,
     /**
-     * 此刻允不允许自动隐藏。**排定时与触发时各查一次**，见 [arm]。
+     * 此刻允不允许自动隐藏。**排定时与触发时各查一次**（见 [schedule] 与 [hide]）。
      * 实现上是「版式是 VIDEO 且已接通」。
      */
     private val canAutoHide: () -> Boolean,
@@ -35,7 +35,11 @@ internal class IMChromeGate(
     var visible: Boolean = true
         private set
 
+    /** 「该不该重排」那一段判定摘在 [IMAutoHideCountdown]，纯逻辑、有单测。 */
+    private val countdown = IMAutoHideCountdown()
+
     private val hide = Runnable {
+        countdown.clear()
         /*
          **守卫必须在触发时再查一遍，不能只在排定时查。**
 
@@ -60,25 +64,50 @@ internal class IMChromeGate(
                 .start()
         }
         onChanged(visible)
-        main.removeCallbacks(hide)
-        if (visible && arm) armAutoHide()
+        cancel()
+        // restart = true：控制条刚显示出来，用户刚看到它，从头数满 3 秒。
+        if (visible && arm) schedule(restart = true)
     }
 
     /**
-     * 排定 3s 后隐藏。
+     * 界面每走一次 render 就叫一声「该计时了」。**已经在倒计时就不要重来。**
+     *
+     * # 这一条是本类存在的最主要理由
+     *
+     * `IMCallKit.startTimer()` **每秒**推一次状态（通话时长 +1），一路走到
+     * `IMCallActivity.render` → `IMCallView.render`，而 render 末尾就会调到这里。
+     * 原先这里无条件 `removeCallbacks` + `postDelayed`，于是
+     * **3 秒的计时每 1 秒被重置一次，永远走不完 —— 控制条从来没有自动隐藏过。**
+     *
+     * 这不是新引入的：拆出本类之前，`IMCallView.armAutoHide` 就是这么写的。
+     * 之所以一直没人发现，是因为「点一下画面」那条路能手动收起控制条，
+     * 看起来像是功能在工作。
+     *
+     * iOS 侧没踩到是因为它的每秒 tick **只刷标题栏**（`startTicking` 里调的是
+     * `renderHeader`，不是 `render`），整个 render 只在状态真变化时才走一遍。
+     * **两端的 tick 粒度不一样**，所以同一份判据在这边要多一道「别重置」。
+     */
+    fun armAutoHide() = schedule(restart = false)
+
+    /** 撤掉待触发的那一下。宿主 View 脱离窗口时必须调（CONVENTIONS §5）。 */
+    fun cancel() {
+        countdown.clear()
+        main.removeCallbacks(hide)
+    }
+
+    /**
+     * 把定时器排上（要不要排由 [IMAutoHideCountdown] 判）。
      *
      * **排定时就查 [canAutoHide] 是故意的**，不是照搬 iOS：iOS 那边无条件排、
      * 只在触发时查，于是在 CONNECTING 阶段排下的定时器可能在**接通后不到 3 秒**就触发，
      * 而规范 §07 说的是「接通后 3s」。phase 从 CONNECTING 变 CONNECTED 本身就会走一次
      * render、再 arm 一次，所以这里挡掉不会漏。（iOS 已对齐到这一版。）
      */
-    fun armAutoHide() {
+    private fun schedule(restart: Boolean) {
+        if (!countdown.arm(canAutoHide(), restart)) return
         main.removeCallbacks(hide)
-        if (canAutoHide()) main.postDelayed(hide, IMKitTheme.AUTO_HIDE_MS)
+        main.postDelayed(hide, IMKitTheme.AUTO_HIDE_MS)
     }
-
-    /** 撤掉待触发的那一下。宿主 View 脱离窗口时必须调（CONVENTIONS §5）。 */
-    fun cancel() = main.removeCallbacks(hide)
 
     /**
      * 收起后**必须真的收不到触摸**。

@@ -18,6 +18,7 @@
 | 状态 | 问题 | 改了什么 |
 |---|---|---|
 | ✅ **已真机验收、已合 main** | **控制条自动隐藏后按钮还能点**。`controls.isEnabled = false` 在 Android 上既不传给子 View 也不拦触摸派发，淡到 alpha=0 后静音/摄像头/扬声器/翻转/**挂断**全都还能点；而 `controls` 压在 `stage` 上面，「点一下叫回控制条」先被看不见的按钮吃掉 | 改成置 `INVISIBLE`（不绘制也不吃触摸，等价于 iOS 的 `isUserInteractionEnabled=false`），触摸落回 `stage`。控制条那块抽成 `IMChromeGate` |
+| ⬜ **未验收**，分支 `worktree-fix-autohide-never-fires` | **自动隐藏从来没生效过**：`IMCallKit.startTimer()` 每秒推一次状态 → `IMCallView.render` → `armAutoHide` 无条件重排，3 秒计时被 1 秒的 tick 一直打断。既有 bug，不是上一刀引入的；一直没发现是因为「点画面」能手动收起，看着像在工作 | 区分「刚显示出来」（从头数）与「又一次 render」（已经在数就别打扰）。判定摘成 `IMAutoHideCountdown` 纯逻辑 + 5 条单测 |
 | ✅ 同上 | 自动隐藏的守卫漏在结束画面：`render()` 在 ENDED 时提前 return，接通期排下的那一下不会被撤，会把标题栏一起淡掉 | `hideChrome` 触发时复查 layout 与 phase。**「排定时查 CONNECTED」保留**，iOS 对齐过来 |
 | ⚠️ **已合 main，但真机未验收** | **上行 simulcast 预算没人记账**：三层要 2.15Mbps，而 BWE 从默认 300kbps 起爬，顶层被 `SimulcastRateAllocator` 分到 0 bps。实测 h 层死了 37 秒、一通群通 27 秒全程只有 `l` | 补 `IMVideoProfile.simulcastUplinkBudgetBps`（三层之和，派生值，§3.5 表没动），`publish` 时喂给 `PeerConnection.setBitrate` 当种子 |
 
