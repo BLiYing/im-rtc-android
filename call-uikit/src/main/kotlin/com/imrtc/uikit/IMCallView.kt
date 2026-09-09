@@ -87,10 +87,19 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val rejectButton = IMControlButton(context, IMKitIcon.XMARK, "拒绝", role = IMControlButton.Role.DANGER)
 
     private val main = Handler(Looper.getMainLooper())
-    private val hideChrome = Runnable { setChrome(visible = false) }
-    private var chromeVisible = true
     private var layout = IMCallViewState.Layout.AUDIO
     private var state = IMCallViewState()
+
+    /** 控制条的「3s 后淡出、任意触摸恢复」。判据与 iOS 对齐，细节全在 [IMChromeGate]。 */
+    private val chrome = IMChromeGate(
+        main = main,
+        faded = listOf(header, controls, controlsScrim),
+        gated = listOf(header, controls),
+        canAutoHide = {
+            layout == IMCallViewState.Layout.VIDEO && state.phase == IMCallViewState.Phase.CONNECTED
+        },
+        onChanged = { visible -> pip.liftsForControls = visible && layout == IMCallViewState.Layout.VIDEO },
+    )
 
     /**
      * 全屏画面的宿主：**根布局最底下一层，铺满整屏**（含状态栏与手势条那两条）。
@@ -122,7 +131,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         stage.addView(endedLabel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply { setMargins(dp(24), 0, dp(24), 0) })
         stage.addView(pip, LayoutParams(dp(96), dp(128)))
         // 单击画面空白处：显示 / 隐藏控制条（视频版式才生效）。
-        stage.setOnClickListener { if (layout == IMCallViewState.Layout.VIDEO) setChrome(!chromeVisible) }
+        stage.setOnClickListener { if (layout == IMCallViewState.Layout.VIDEO) chrome.set(!chrome.visible) }
 
         controlsScrim.background = IMKitTheme.controlsScrim()
         addView(controlsScrim, LayoutParams(LayoutParams.MATCH_PARENT, dp(160), Gravity.BOTTOM))
@@ -286,7 +295,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             IMCallViewState.Layout.VIDEO -> renderVideo(state)
             IMCallViewState.Layout.GRID -> renderGrid(state)
         }
-        if (layout != IMCallViewState.Layout.VIDEO) setChrome(visible = true, arm = false) else if (chromeVisible) armAutoHide()
+        if (layout != IMCallViewState.Layout.VIDEO) chrome.set(visible = true, arm = false) else if (chrome.visible) chrome.armAutoHide()
     }
 
     /** 橙条：文案怎么定见 [IMBannerRules]，这里只管把它写上去、以及给「网络不佳」那条排定时器。 */
@@ -428,7 +437,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         pinFull(full)
         mountInPip(small)
         pip.visibility = VISIBLE
-        pip.liftsForControls = chromeVisible
+        pip.liftsForControls = chrome.visible
         pip.contentDescription = if (state.isSwapped) "对方画面。轻点互换，长按可移动" else "本端画面。轻点互换，长按可移动"
         // 进小窗的报 l、上全屏的报 h（协议 §3.5）。
         actions?.reportLayer(peer.uid, if (state.isSwapped) "l" else "h")
@@ -534,26 +543,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         }
     }
 
-    // ── 控制条自动隐藏（规范 §07：3s 后淡出，任意触摸恢复）───────────
-
-    private fun setChrome(visible: Boolean, arm: Boolean = true) {
-        chromeVisible = visible
-        for (view in listOf(header, controls, controlsScrim)) {
-            view.animate().alpha(if (visible) 1f else 0f).setDuration(IMKitTheme.FADE_MS).start()
-        }
-        controls.isEnabled = visible
-        pip.liftsForControls = visible && layout == IMCallViewState.Layout.VIDEO
-        main.removeCallbacks(hideChrome)
-        if (visible && arm) armAutoHide()
-    }
-
-    private fun armAutoHide() {
-        main.removeCallbacks(hideChrome)
-        if (state.phase == IMCallViewState.Phase.CONNECTED) main.postDelayed(hideChrome, IMKitTheme.AUTO_HIDE_MS)
-    }
-
     override fun onDetachedFromWindow() {
-        main.removeCallbacks(hideChrome)
+        chrome.cancel()
         super.onDetachedFromWindow()
     }
 

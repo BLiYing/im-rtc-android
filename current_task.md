@@ -11,34 +11,27 @@
 
 ## 当前焦点
 
-**2026-09-09 晚：ICE 自愈的上报改成按协议 §7.2 分两路（分支 `fix/parity-leave-failed-and-2006`）。**
+**2026-09-09 夜：真机联调查出的两处，一处已验收合入 main，一处还在分支上等验收。**
 
-扫四端静默失败点时发现，**本仓其实是四端里最接近协议原意的那个**——
-`IMPeerConnections` 对 ICE FAILED 与 SDP 失败都报了 2006，而 Web / iOS 一个发射点都没有。
-问题只在**没有分路**：pub 那条我们正在自愈，头两次多半只是切网抖动，
-每次都报等于把「正在自愈」误报成「通话废了」，而且每 30 秒刷一条。
+依据是 16:01–16:05 那三通（1v1 + 两通群通，Android=alice / iOS=carol / Web=bob）的三方日志。
 
-改成：pub 连续 3 次重启仍 FAILED 才抛一次，之后继续重试但不再重复抛；
-sub 与 SDP 失败照旧立即抛；回 CONNECTED 清零。
-
-判定摘成了新的 `IMIceGiveUp`（`call-engine-webrtc`），**理由与 `IMNegotiationGate` 相同**：
-`IMPeerConnections` 要造 `PeerConnectionFactory`，JVM 单测里起不来，
-而这段判定恰恰是最容易写错的——差一个 `>=` 就退化成「永远不报」或「每次都报」。
-
-`./scripts/test.sh` 全绿（6 步），新增 `IMIceGiveUpTest` 6 条。
-
-**2026-09-09 一整天：说话指示器改版 + 语音判定重做 + 四个真机 bug。全部已合入 main 并推送。**
-
-> **没有一条经过真机验收**——除了下面单独标注的。真机清单见「下一步」。
-
-### 这一轮做了什么
-
-| # | 改动 | 提交 |
+| 状态 | 问题 | 改了什么 |
 |---|---|---|
-| 1 | **呼叫中按的静音会被丢掉，对端照样听得见**（隐私问题）。`setMuted` 把「关本端轨道」和「发 room.mute 帧」绑死了，拿不到 track_id 就连本地也不关——而「拿不到」恰恰发生在最该静音的时候。意图存进 `IMMuteBook`，publish.ok 拿到 track_id 时补做 | `1f2dde9` |
-| 2 | **说话指示器改版** + 修掉「只亮一个人」：`onActiveSpeakers` 原先 `maxByOrNull { it.volume }`，三个人同时说话只亮一个，那人若是本端则远端一个都不亮——「说话高亮没实现」就是这么来的 | `712ed3a` / `030a63d` |
-| 3 | 「移除动画」开关这一端一直没看（iOS/web 都有） | `4859a24` |
-| 4 | 进房却不发布时留一条 debug 日志 | `7a67204` |
+| ✅ **已真机验收、已合 main** | **控制条自动隐藏后按钮还能点**。`controls.isEnabled = false` 在 Android 上既不传给子 View 也不拦触摸派发，淡到 alpha=0 后静音/摄像头/扬声器/翻转/**挂断**全都还能点；而 `controls` 压在 `stage` 上面，「点一下叫回控制条」先被看不见的按钮吃掉 | 改成置 `INVISIBLE`（不绘制也不吃触摸，等价于 iOS 的 `isUserInteractionEnabled=false`），触摸落回 `stage`。控制条那块抽成 `IMChromeGate` |
+| ✅ 同上 | 自动隐藏的守卫漏在结束画面：`render()` 在 ENDED 时提前 return，接通期排下的那一下不会被撤，会把标题栏一起淡掉 | `hideChrome` 触发时复查 layout 与 phase。**「排定时查 CONNECTED」保留**，iOS 对齐过来 |
+| ⬜ **未验收**，在分支 `worktree-fix-chrome-autohide-and-uplink` 上 | **上行 simulcast 预算没人记账**：三层要 2.15Mbps，而 BWE 从默认 300kbps 起爬，顶层被 `SimulcastRateAllocator` 分到 0 bps。实测 h 层死了 37 秒、一通群通 27 秒全程只有 `l` | 补 `IMVideoProfile.simulcastUplinkBudgetBps`（三层之和，派生值，§3.5 表没动），`publish` 时喂给 `PeerConnection.setBitrate` 当种子 |
+
+上行那一刀**要配服务端 `im-rtc-server` 分支 `worktree-fix-bwe-burst-and-ratchet` 一起验**：
+那边修的是「压到 l 之后爬不回来」（升层判据数学上不可能满足），这边修的是
+「开局就没爬上去过」，一头一尾，分开验看不出效果。
+
+`./scripts/test.sh` 全绿（6 步）。**worktree 里要带
+`RTC_CONFORMANCE_DIR=/Users/liying/IOSProject/im-rtc/im-rtc-server/docs/conformance`**，
+否则 `../im-rtc-server` 相对路径解析不到。
+
+**iOS 的 simulcast 缺失是另一回事，已决定暂缓**（2026-09-09）：换包方案验证完了、
+结论记在 `../im-rtc-ios/current_task.md` 的「已知坑」里，等模糊问题排上优先级再定。
+现阶段三端画面都看得见，够用。
 
 ### 体量欠账（**下次动它之前必须先拆**）
 
@@ -49,10 +42,15 @@ sub 与 SDP 失败照旧立即抛；回 CONNECTED 清零。
 
 ## 下一步
 
-- **本仓的静默失败点清单**（P0×3 / P1×10 / P2×7，2026-09-09 扫描）见
-  `../im-rtc-server/docs/ops/silent-failure/android.md`，跨端结论与修复顺序见同目录的
-  `SILENT_FAILURE_AUDIT.md`。**逐条状态只在那里维护，别抄回本文件。**
-  未修的头两条：`createCapturer` / `createPeerConnection` 返回 null 时静默继续（界面显示通话中，SDP 一条没产生过）、权限 Activity 回调可永久悬挂。
+### 真机验收
+
+**本轮这三条优先**（Android 真机 + iOS 真机，1v1 视频）：
+
+1. **控制条收起后点屏幕底部**：该把控制条叫回来，**不该**静音/挂断。改之前点下去是后者。
+2. **挂断后的结束画面**：标题栏不该在 3 秒后淡掉（停留 1.5~3s，可能只是一闪，盯着看）。
+3. **开局清晰度**：iOS 看 Android 的第一两秒就该有 720p，不再是先糊一段。
+   判据在服务端日志：`上行层已接入 … rid=m` / `rid=h` 应该在进房后 1 秒内就出现三条，
+   并且整通不出现 `上行层存活性变化 … layer=h live=False`。
 
 ### 真机验收（**这一整批一条都没验**）
 
@@ -91,6 +89,19 @@ sub 与 SDP 失败照旧立即抛；回 CONNECTED 清零。
     （Web uikit 2 个、iOS `default: break`、Android `when` 没有 `else`），2006 落地即消失。
     所以现在**回归风险≈0，价值也≈0**，要等 Kit 那几个兜底补上才通。
   - 弱网环境暂缓搭建（2026-09-09 决定），有条件再做。
+
+- **`maxBitrateBps` 是「h 一层」的数，不是上行总量。** 推 simulcast 时上行真正要
+  `l+m+h`（720p = 2.15Mbps）；服务端 `bwe.go` 的 `bitrateHigh=1.5M` 算的是**下行**预算，
+  那边每个订阅者只收一层，两个数不是一回事。混为一谈的后果是
+  `SimulcastRateAllocator` 自底向上分配时给顶层分 0 bps——**开局只有 `l` 层出包**，
+  服务端日志是 `上行层存活性变化 layer=h live=False`，订阅端看到 320×180。
+  已由 `simulcastUplinkBudgetBps` + `PeerConnection.setBitrate` 播种兜住。
+
+- **iOS 端没有真 simulcast，所以「两端都糊」不是对称的。** `stasel/WebRTC 152.0.0`
+  **没打进 `RTCVideoEncoderFactorySimulcast`**（头文件与符号都不存在，`nm` 验过），
+  iOS 发出去的永远是单层 H264。于是 SFU 的降层只砸 Android：全量日志里 H264 轨道
+  101 条全是 1 层，下行 21 条即使 `bw_cap=l` 也照发 h；VP8 那边 32 条有 20 条真降到了 `l`。
+  **排查「为什么只有 Android 糊」时先想到这条**，别往本仓的编码参数上找。
 
 - **真机连不上服务端，先看链路再看代码。** 两条路二选一，且**跟机器走、不跟仓走**：
   局域网 IP（PKD130 可用）或 `adb reverse tcp:8787 tcp:8787` + `http://127.0.0.1:8787`
