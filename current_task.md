@@ -49,6 +49,11 @@ sub 与 SDP 失败照旧立即抛；回 CONNECTED 清零。
 
 ## 下一步
 
+- **本仓的静默失败点清单**（P0×3 / P1×10 / P2×7，2026-09-09 扫描）见
+  `../im-rtc-server/docs/ops/silent-failure/android.md`，跨端结论与修复顺序见同目录的
+  `SILENT_FAILURE_AUDIT.md`。**逐条状态只在那里维护，别抄回本文件。**
+  未修的头两条：`createCapturer` / `createPeerConnection` 返回 null 时静默继续（界面显示通话中，SDP 一条没产生过）、权限 Activity 回调可永久悬挂。
+
 ### 真机验收（**这一整批一条都没验**）
 
 按风险排序，前两条不过其余不用看：
