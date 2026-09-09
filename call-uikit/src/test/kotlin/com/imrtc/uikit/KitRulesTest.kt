@@ -49,6 +49,22 @@ class KitRulesTest {
         assertEquals(listOf(IMPermissionGate.Device.MICROPHONE, IMPermissionGate.Device.CAMERA), IMPermissionGate.devicesFor("video", true))
         assertEquals("关着摄像头接听只要麦克风", listOf(IMPermissionGate.Device.MICROPHONE), IMPermissionGate.devicesFor("video", false))
 
+        // 群通话默认关摄像头，所以发起时**不申请**摄像头——「没有摄像头权限也能发起群通话」
+        // 这个承诺就落在这一行上。1v1 视频照旧两个都要。
+        assertEquals(
+            "群通话发起时只申请麦克风",
+            listOf(IMPermissionGate.Device.MICROPHONE),
+            IMPermissionGate.devicesForPlacing("video", isGroup = true),
+        )
+        assertEquals(
+            listOf(IMPermissionGate.Device.MICROPHONE, IMPermissionGate.Device.CAMERA),
+            IMPermissionGate.devicesForPlacing("video", isGroup = false),
+        )
+        assertEquals(
+            listOf(IMPermissionGate.Device.MICROPHONE),
+            IMPermissionGate.devicesForPlacing("audio", isGroup = false),
+        )
+
         fun run(results: Map<IMPermissionGate.Device, IMPermissionGate.Result>): Pair<IMPermissionGate.Outcome?, List<IMPermissionGate.Device>> {
             val asked = ArrayList<IMPermissionGate.Device>()
             var outcome: IMPermissionGate.Outcome? = null

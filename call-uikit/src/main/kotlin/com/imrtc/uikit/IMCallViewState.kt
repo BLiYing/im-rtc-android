@@ -243,6 +243,23 @@ internal fun IMCallViewState.videoSpeakerUid(): String {
 internal object IMCallViewReducer {
 
     /**
+     * 进这一通电话时摄像头开不开。
+     *
+     * **1v1 视频默认开**：那一屏的产品意图就是看见对方，进来一片头像盘是错的。
+     * **群通话默认关**（2026-09-09）：群里进去时没人在出镜，摄像头这件事该由用户自己点开。
+     * 真正要紧的是它的连带后果——摄像头权限从「发起群通话的前置条件」降级成
+     * 「按下那颗按钮时才要的东西」，于是**没有摄像头权限也能发起和参加群通话**
+     * （见 `IMCallKit.placeCall` 的 `withCamera`）。人多的时候还顺带省掉一路上行。
+     *
+     * **会议房不走这里**（[meeting] 里仍是默认开）：同样的道理适用，
+     * 但会议房刚按「默认开」在真机上验过，改它要重验，留到下一轮定。
+     *
+     * 规范见《界面规范》§04 末尾与《交互流程》§01。
+     */
+    fun defaultCameraOn(mediaType: String, isGroup: Boolean): Boolean =
+        mediaType == "video" && !isGroup
+
+    /**
      * `calleeIds` 是这通电话邀了谁（**已去掉自己**）。
      *
      * 主叫先摆上（他一定在通话里），其余被邀请的人摆成「还在响铃」的占位格——
@@ -261,7 +278,7 @@ internal object IMCallViewReducer {
         peer = if (isGroup) "" else caller,
         mediaType = mediaType,
         isGroup = isGroup,
-        cameraOn = mediaType == "video",
+        cameraOn = defaultCameraOn(mediaType, isGroup),
         // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
         speakerOn = false,
         members = linkedMapOf(caller to IMCallViewState.Member(caller)) +
@@ -277,7 +294,7 @@ internal object IMCallViewReducer {
             mediaType = mediaType,
             isGroup = isGroup,
             role = "caller",
-            cameraOn = mediaType == "video",
+            cameraOn = defaultCameraOn(mediaType, isGroup),
             // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
             speakerOn = false,
             // 呼出时对方还没接——**先摆上去且标成未接听**，界面才有「呼叫中…」的占位格。

@@ -42,6 +42,19 @@ internal object IMPermissionGate {
     fun devicesFor(mediaType: String, withCamera: Boolean): List<Device> =
         if (mediaType == "video" && withCamera) listOf(Device.MICROPHONE, Device.CAMERA) else listOf(Device.MICROPHONE)
 
+    /**
+     * **发起一通电话**时该申请哪些设备（交互稿 §01 的表，2026-09-09 改）。
+     *
+     * 群通话默认关摄像头（`IMCallViewReducer.defaultCameraOn`），
+     * 所以发起时申请摄像头是在为一件还没发生的事要权限——**只申请麦克风**，
+     * 等用户点「开摄像头」时再问（`IMCallKit.toggleCamera`）。
+     * 于是**没有摄像头权限也能发起和参加群通话**，1v1 视频不变。
+     *
+     * 抽成函数是为了让它在 JVM 单测里咬得住：留在调用点上就得有设备才跑得到。
+     */
+    fun devicesForPlacing(mediaType: String, isGroup: Boolean): List<Device> =
+        devicesFor(mediaType, withCamera = !isGroup)
+
     /** 说明卡：说清**用来做什么**，不说「请授权」。 */
     fun explanation(device: Device): Copy = when (device) {
         Device.MICROPHONE -> Copy("需要用到麦克风", "通话时对方要听见你的声音。接下来系统会问你要不要允许。")
