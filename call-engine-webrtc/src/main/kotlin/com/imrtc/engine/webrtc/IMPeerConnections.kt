@@ -57,6 +57,14 @@ internal class IMPeerConnections(
     private val remoteReady = mutableSetOf<String>()
 
     /**
+     * pub 侧 ICE 自愈的放弃判定（协议 §7.2）。判定逻辑与它的理由见 [IMIceGiveUp]。
+     *
+     * 只被 WebRTC 的 signaling 线程碰（[Observer.onIceConnectionChange]），
+     * 与同在那条线程上的 [bufferedCandidates] 同一个并发模型，不额外加锁。
+     */
+    private val pubIceGiveUp = IMIceGiveUp()
+
+    /**
      * **协商必须串行**：一条 PeerConnection 上同时飞两个 offer，第二条 answer 回来时
      * 状态已经是 stable，native 层直接报 `Called in wrong state: stable`，
      * 那条轨道就再也协商不上了。
@@ -283,11 +291,27 @@ internal class IMPeerConnections(
              真机上抓到过 iOS 的两条 PC 从某一刻起五分钟一轮地失败，再没回到 CONNECTED。
 
              重启失败还会再进 FAILED，于是天然形成一个重试节奏；人真的走了由信令层收场。
-             `onError` 照旧报——顶部那条橙色提示还是要出的。
+
+             **但上报要按协议 §7.2 分两路，不能一律每次都报**：
+             `pub` 那条我们正在救，头两次多半只是切网抖动，报了等于把「正在自愈」
+             误报成「通话废了」——连续 PUB_ICE_GIVE_UP 次仍失败才抛一次 2006。
+             `sub` 那条我们救不了，没有「再等等」这一说，立即抛。
             */
+            if (pc == "pub" && (state == PeerConnection.IceConnectionState.CONNECTED ||
+                    state == PeerConnection.IceConnectionState.COMPLETED)
+            ) {
+                pubIceGiveUp.noteConnected()
+            }
             if (state == PeerConnection.IceConnectionState.FAILED) {
-                events.onError("$pc ICE failed")
-                if (pc == "pub") createOffer(pc, iceRestart = true)
+                if (pc == "pub") {
+                    if (pubIceGiveUp.noteFailure()) {
+                        IMRTCLog.e("media", "上行通路连续重启仍失败，上报宿主")
+                        events.onError("pub ICE failed")
+                    }
+                    createOffer(pc, iceRestart = true)
+                } else {
+                    events.onError("$pc ICE failed")
+                }
             }
         }
 
