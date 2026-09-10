@@ -115,6 +115,26 @@ internal object DemoSession {
             notifyChanged()
         }
 
+    /**
+     * 视频走**硬件 H.264** 还是原来的 VP8 软编。**换了要重登才生效**（同 [videoProfile]）。
+     *
+     * # 为什么做成开关而不是写死
+     *
+     * 硬编治的是「CPU 跟不上 → 帧率掉 → 顶层饿死」那一半：真机实测 OPPO 推三层 VP8 时
+     * 约 30 秒后必出 `受限=cpu`、帧率钉在 19。但 **Android 硬编做 simulcast 的成败
+     * 取决于这台机器的 MediaCodec 实现**，厂商之间差别很大——有的起不了三个并发实例，
+     * 有的低码率下码率控制很烂。
+     *
+     * 所以它必须能**不重新打包就退回去**，否则换一台机器出问题就只能等发版。
+     * 关掉之后行为与 2026-09-10 之前完全一致（VP8 + libvpx 原生 simulcast）。
+     */
+    var preferHardwareH264: Boolean = true
+        set(value) {
+            field = value
+            prefs.edit().putBoolean(KEY_H264, value).apply()
+            notifyChanged()
+        }
+
     /** 详细日志。关掉就只留 info 以上，主讲人/网络质量那些周期事件不刷屏。 */
     var verboseLog: Boolean = true
         set(value) {
@@ -162,6 +182,7 @@ internal object DemoSession {
             .split(",").map { it.trim() }.filter { it.isNotEmpty() }
         videoProfile = IMVideoProfile.PRESETS
             .firstOrNull { it.name == prefs.getString(KEY_PROFILE, "") } ?: IMVideoProfile.DEFAULT
+        preferHardwareH264 = prefs.getBoolean(KEY_H264, true)
         verboseLog = prefs.getBoolean(KEY_VERBOSE, true)
         bannerFirst = prefs.getBoolean(KEY_BANNER, true)
         floatingWindow = prefs.getBoolean(KEY_FLOATING, true)
@@ -273,7 +294,7 @@ internal object DemoSession {
             IMCallEngine.Config(url = wsUrl, deviceId = deviceId),
             // **Kit 包一层**：宿主自己的 listener 照常收到全部回调，Kit 只是搭个便车。
             IMCallKit.wrap(HostListener(loginGeneration)),
-            IMWebRTCAdapter(applicationContext, videoProfile),
+            IMWebRTCAdapter(applicationContext, videoProfile, preferHardwareH264),
         )
         engine = instance
         // 「添加成员」的候选名单是宿主给的：Demo 用与选人页同一份写死的联系人，自己不放进去。

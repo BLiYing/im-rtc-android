@@ -6,6 +6,7 @@ import org.webrtc.AudioSource
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
+import org.webrtc.HardwareVideoEncoderFactory
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
@@ -15,6 +16,9 @@ import org.webrtc.RtpReceiver
 import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import org.webrtc.SimulcastVideoEncoderFactory
+import org.webrtc.SoftwareVideoEncoderFactory
+import org.webrtc.VideoEncoderFactory
 import org.webrtc.audio.JavaAudioDeviceModule
 
 /**
@@ -34,6 +38,13 @@ import org.webrtc.audio.JavaAudioDeviceModule
 internal class IMPeerConnections(
     private val appContext: Context,
     private val events: Callbacks,
+    /**
+     * 视频编码走**硬件 H.264** 还是保持原来的 VP8 软编。见 [buildFactory]。
+     *
+     * **这是个可回退的开关，不是常量**：硬编在 Android 上的成败取决于这台机器的
+     * MediaCodec 实现（厂商之间差别很大），出问题时宿主要能不换包就退回去。
+     */
+    private val preferHardwareH264: Boolean = true,
 ) {
 
     interface Callbacks {
@@ -47,7 +58,7 @@ internal class IMPeerConnections(
 
     val eglBase: EglBase = sharedEgl(appContext)
 
-    private val factory: PeerConnectionFactory = buildFactory(appContext, eglBase)
+    private val factory: PeerConnectionFactory = buildFactory(appContext, eglBase, preferHardwareH264)
 
     private var pub: PeerConnection? = null
     private var sub: PeerConnection? = null
@@ -374,7 +385,11 @@ internal class IMPeerConnections(
             initialized = true
         }
 
-        private fun buildFactory(context: Context, egl: EglBase): PeerConnectionFactory {
+        private fun buildFactory(
+            context: Context,
+            egl: EglBase,
+            preferHardwareH264: Boolean,
+        ): PeerConnectionFactory {
             val audioModule = JavaAudioDeviceModule.builder(context.applicationContext)
                 // 硬件回声消除/降噪：**没有它就会听到自己**，而那听起来像「对方设备有问题」。
                 .setUseHardwareAcousticEchoCanceler(true)
@@ -382,9 +397,50 @@ internal class IMPeerConnections(
                 .createAudioDeviceModule()
             return PeerConnectionFactory.builder()
                 .setAudioDeviceModule(audioModule)
-                .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl.eglBaseContext, true, true))
+                .setVideoEncoderFactory(encoderFactory(egl, preferHardwareH264))
                 .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext))
                 .createPeerConnectionFactory()
+        }
+
+        /**
+         * 视频编码器工厂。两条路，**必须与 [IMWebRTCAdapter] 的 codec 偏好成对切换**。
+         *
+         * # 硬编那条（preferHardwareH264 = true）
+         *
+         * `SimulcastVideoEncoderFactory(硬件, 软件)` —— **每一层各起一个编码器实例**，
+         * 硬件起不来的那一层自动退回软编。这是 Android 上 H.264 做 simulcast 的唯一办法：
+         * MediaCodec 的 H.264 编码器**不原生支持多层**，不套这层 adapter 就只能出一层。
+         *
+         * # 为什么这两件事必须一起切
+         *
+         * adapter 对**VP8 是负优化**：libvpx 原生支持 simulcast（一个实例内部编三路，
+         * 共享分析结果），套上 adapter 就变成三个独立实例，CPU 反而更高。
+         * 所以「套了 adapter 却没协商到 H.264」是最坏的组合——比什么都不改还差。
+         * [IMWebRTCAdapter.preferH264Codec] 负责把 H.264 排到 offer 前面，两者同进同退。
+         *
+         * # 为什么目标是 Constrained Baseline 而不是 High
+         *
+         * Android 硬编（`enableH264HighProfile=true`）提供 `640c1f`（Constrained High）
+         * 与 `42e01f`（Constrained Baseline）；而服务端 Pion 的 `RegisterDefaultCodecs`
+         * 注册的是 `64001f`（普通 High）与 `42e01f`。**High 那一对差一个约束位、
+         * profile 枚举不同，匹配不上**，所以实际会落在 Constrained Baseline 上。
+         * 这不是缺陷，是当前唯一两边都有的那一档；要用 High 得先往服务端加 `640c1f`，
+         * 那是另一刀（还要走 `CLIENT_PARITY.md` 的 H.264 跨端三条实测）。
+         *
+         * # 原来那条（false）
+         *
+         * `DefaultVideoEncoderFactory` 的软件工厂排在前面，所以 VP8 自动胜出、
+         * 走 libvpx 原生 simulcast。**这是 2026-09-10 之前一直在跑的行为**，
+         * 硬编在某台机器上出问题时退回这里。
+         */
+        private fun encoderFactory(egl: EglBase, preferHardwareH264: Boolean): VideoEncoderFactory {
+            if (!preferHardwareH264) {
+                return DefaultVideoEncoderFactory(egl.eglBaseContext, true, true)
+            }
+            return SimulcastVideoEncoderFactory(
+                HardwareVideoEncoderFactory(egl.eglBaseContext, true, true),
+                SoftwareVideoEncoderFactory(),
+            )
         }
     }
 }

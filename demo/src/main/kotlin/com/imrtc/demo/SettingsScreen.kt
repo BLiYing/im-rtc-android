@@ -46,6 +46,11 @@ internal class SettingsScreen(private val activity: Activity) : DemoScreen {
                                 DemoSession.floatingWindow,
                             ) { on -> DemoSession.floatingWindow = on },
                             switchRow(
+                                "硬件 H.264 编码",
+                                "关掉退回 VP8 软编。换了要重登才生效",
+                                DemoSession.preferHardwareH264,
+                            ) { on -> DemoSession.preferHardwareH264 = on },
+                            switchRow(
                                 "详细日志",
                                 "debug 级别，含主讲人 / 网络质量那些周期事件",
                                 DemoSession.verboseLog,
