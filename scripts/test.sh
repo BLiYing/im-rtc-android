@@ -10,6 +10,24 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+# sibling_root 打印**兄弟仓所在的那一级目录**（本仓与 im-rtc-server 同级）。
+#
+# **不能直接用 `..`。** 从 worktree（`.claude/worktrees/<分支>/`）里跑时，
+# `..` 是 worktrees 目录，兄弟仓根本不在那儿——症状是「缺 call_fsm.json」，
+# 而人会以为是没克隆 im-rtc-server。
+#
+# `git rev-parse --git-common-dir` 无论在主检出还是 worktree 里，都指向**共享的那个 .git**；
+# 它的上一级就是主检出，再往上才是同级目录。**两种返回形态都要接住**：
+# 在主检出里它给相对路径 `.git`，在 worktree 里给绝对路径。
+# 不是 git 仓（打包分发的源码）时退回 `..`，与从前的行为一致。
+sibling_root() {
+  common=$(git rev-parse --git-common-dir 2>/dev/null) || { echo ".."; return; }
+  case "${common}" in
+    /*) echo "$(dirname "${common}")/.." ;;
+    *)  echo "$(cd "$(dirname "${common}")" && pwd)/.." ;;
+  esac
+}
+
 # ── JDK 17 ──────────────────────────────────────────────────────────────
 # 本机的 Homebrew gradle 把 JAVA_HOME 写成了占位符（@@HOMEBREW_JAVA@@），
 # 直接跑会报 "JAVA_HOME is set to an invalid directory"。这里统一兜底。
@@ -43,7 +61,7 @@ echo "  ✓ 日志纪律（含自检）"
 # 向量是五仓共用的同一份文件，**禁止手抄到本仓**。找不到就在这里失败，
 # 而不是让单测「优雅跳过」——跳过等于闸门不存在。
 step 4 "一致性向量可达"
-VEC_DIR="${RTC_CONFORMANCE_DIR:-../im-rtc-server/docs/conformance}"
+VEC_DIR="${RTC_CONFORMANCE_DIR:-$(sibling_root)/im-rtc-server/docs/conformance}"
 missing=0
 for f in call_fsm envelope error_codes reasons room_fsm; do
   if [ -f "$VEC_DIR/$f.json" ]; then echo "  ✓ $f.json"; else echo "  ✗ 缺 $f.json"; missing=1; fi
