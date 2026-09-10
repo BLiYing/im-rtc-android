@@ -171,6 +171,19 @@ internal data class IMCallViewState(
         }
 
     companion object {
+
+        /**
+         * 本地收场时写哪个结束原因。**照红键实际发出去的那个动作写**，不写 `"network"`。
+         *
+         * 复现出来的那一次网络是好的——是权限门没落定、帧压根没发出去。
+         * 屏幕上写「网络中断」是在冤枉网络，用户会去检查 WiFi。
+         * 与 iOS 的 `imEndWatchdogReason` 是同一条判据。
+         */
+        fun watchdogReason(action: Action): String = when (action) {
+            Action.CANCEL -> "cancel"
+            Action.REJECT -> "reject"
+            Action.HANGUP, Action.LEAVE_ROOM, Action.NONE -> "hangup"
+        }
         /** 结束原因的人话（规范 §08），与 iOS 的 `imEndReasonText` / Web 的 `endReasonText` 逐字对齐。 */
         fun endReasonText(reason: String, role: String, durationSec: Long): String = when (reason) {
             "hangup" -> if (durationSec > 0) "通话结束 · ${IMGrid.formatDuration(durationSec)}" else "通话结束"

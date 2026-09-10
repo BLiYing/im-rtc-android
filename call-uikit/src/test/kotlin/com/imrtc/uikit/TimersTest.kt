@@ -99,4 +99,99 @@ class TimersTest {
         assertEquals(listOf("dave", "erin"), removed)
         assertEquals(0, timers.pending)
     }
+
+    @Test
+    fun `通话时长秒表：重开先停上一只`() {
+        // 不停的话重连一次就多一只表，界面上的秒数开始跳着走。
+        val clock = FakeClock()
+        val ticker = IMDurationTicker(clock::schedule, clock::cancel)
+        var ticks = 0
+
+        ticker.start { ticks += 1 }
+        ticker.start { ticks += 1 }
+        assertEquals("重开只该剩一只表", 1, clock.queued.size)
+
+        clock.fire()
+        assertEquals(1, ticks)
+        assertEquals("走一拍要排下一拍", 1, clock.queued.size)
+
+        ticker.stop()
+        clock.fire()
+        assertEquals("停了就不该再走", 1, ticks)
+        assertFalse(ticker.running)
+
+        ticker.stop() // 重复调用无害
+    }
+
+    @Test
+    fun `提示过期：只清掉自己那一条`() {
+        /*
+         `statusText` 里 hint 优先于时长，不撤的话「通话已满员」会顶着标题栏直到通话结束。
+         但**中途来了新提示时，旧提示的计时器不该把新的抹掉**——那会让新提示只闪一下，
+         用户根本没看清写的是什么。
+        */
+        val clock = FakeClock()
+        val expiry = IMHintExpiry(clock::schedule, clock::cancel)
+        val expired = ArrayList<String>()
+
+        expiry.arm("通话已满员") { expired += it }
+        assertTrue(expiry.armed)
+
+        // 中途换了一条：上一条的表要作废，只剩新的那一只。
+        expiry.arm("对方已拒接") { expired += it }
+        assertEquals(1, clock.queued.size)
+        clock.fire()
+        assertEquals(listOf("对方已拒接"), expired)
+        assertFalse(expiry.armed)
+
+        // 空串 = 只撤上一条，不排新的。
+        expiry.arm("还在排队") { expired += it }
+        expiry.arm("") { expired += it }
+        clock.fire()
+        assertEquals("空串不排新表，也不该让旧表跑掉", listOf("对方已拒接"), expired)
+        assertFalse(expiry.armed)
+
+        expiry.clear() // 重复调用无害
+    }
+
+    @Test
+    fun `异步回来之后还算不算数`() {
+        /*
+         权限门可能停在系统框上好几秒，回调回来时的世界和发起时不是同一个。
+         不看一眼就往下走：拨出侧屏幕早收了 invite 却照发，**对方响起铃来而主叫这边一个界面都没有**；
+         被叫侧则是去接一通已经不存在的电话（服务端回 1401）。
+        */
+        val placing = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
+        assertTrue(IMLateGuard.stillPlacing(placing))
+        assertFalse(IMLateGuard.stillIncoming(placing))
+        assertTrue(IMLateGuard.stillInCall(placing))
+
+        val incoming = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", emptyList(), "audio", false)
+        assertTrue(IMLateGuard.stillIncoming(incoming))
+        assertFalse(IMLateGuard.stillPlacing(incoming))
+
+        // 红键按过、界面已经收场：三条都不该再放行。
+        val ended = IMCallViewReducer.ended(placing, "cancel")
+        assertFalse("结束画面上不该再发 invite", IMLateGuard.stillPlacing(ended))
+        assertFalse("结束画面自己会收，别再收一次把 endReason 抹掉", IMLateGuard.stillInCall(ended))
+
+        val idle = IMCallViewReducer.reset()
+        assertFalse(IMLateGuard.stillPlacing(idle))
+        assertFalse(IMLateGuard.stillIncoming(idle))
+        assertFalse(IMLateGuard.stillInCall(idle))
+    }
+
+    @Test
+    fun `本地收场的原因照实际发出去的动作写，不冤枉网络`() {
+        // 复现出来那一次网络是好的——是权限门没落定、帧压根没发。
+        // 写 "network" 的话屏幕上是「网络中断」，用户会去检查 WiFi。
+        assertEquals("cancel", IMCallViewState.watchdogReason(IMCallViewState.Action.CANCEL))
+        assertEquals("reject", IMCallViewState.watchdogReason(IMCallViewState.Action.REJECT))
+        assertEquals("hangup", IMCallViewState.watchdogReason(IMCallViewState.Action.HANGUP))
+        assertEquals("hangup", IMCallViewState.watchdogReason(IMCallViewState.Action.LEAVE_ROOM))
+
+        // 拨出中按红键 = 「已取消」，不是「网络中断」。
+        val text = IMCallViewState.endReasonText("cancel", role = "caller", durationSec = 0L)
+        assertEquals("已取消", text)
+    }
 }

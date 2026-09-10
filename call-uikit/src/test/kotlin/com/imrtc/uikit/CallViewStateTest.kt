@@ -236,6 +236,10 @@ class VideoSpeakerUidTest {
     fun `没有远端成员时返回空串`() {
         assertEquals("", state(emptyList(), speaking = "alice").videoSpeakerUid())
     }
+}
+
+/** 摄像头的默认态：1v1 开、群通话关（设计稿 v3.5）。 */
+class CameraDefaultTest {
 
     @Test
     fun `群通话默认关摄像头，1v1 视频照旧默认开`() {
