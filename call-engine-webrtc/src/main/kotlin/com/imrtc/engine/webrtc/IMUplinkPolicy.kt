@@ -141,8 +141,10 @@ internal class IMUplinkPolicy(
             return
         }
         val h264 = ordered.filter { it.name.equals(H264, ignoreCase = true) }
-        val error = sender.setCodecPreferences(ordered)
-        if (error == null) {
+        // 成功时返回的也是一个非 null 的 RtcError（isSuccess=true），只判 null 会把成功记成失败——
+        // 2026-09-10 真机就是这样：日志报「没设上」，服务端却明明协商到了 H264。
+        val result = sender.setCodecPreferences(ordered)
+        if (result == null || result.isSuccess) {
             IMRTCLog.i(
                 "media",
                 "codec 偏好已设：H.264 优先（${h264.size} 档）" +
@@ -151,7 +153,12 @@ internal class IMUplinkPolicy(
                     },
             )
         } else {
-            IMRTCLog.w("media", "codec 偏好没设上（$error），会走默认顺序 VP8——此时 simulcast adapter 是负优化")
+            // 编码器工厂的默认顺序本来就是硬件 H.264 在前，所以没设上不等于退回 VP8；
+            // 实际用了哪个 codec 以服务端「上行 Track 已接入 … codec=」为准。
+            IMRTCLog.w(
+                "media",
+                "codec 偏好没设上（${result.error()?.message ?: "未知原因"}），保持工厂默认顺序——实际 codec 看服务端「上行 Track 已接入」",
+            )
         }
     }
 
