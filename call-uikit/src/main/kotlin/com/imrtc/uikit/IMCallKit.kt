@@ -118,8 +118,10 @@ object IMCallKit {
     /**
      * 拨出。**先过权限门再发 invite**（交互稿 §01）：拿不到麦克风就不该去响别人的铃；
      * 摄像头拿不到就降级为语音继续。界面先切到「正在呼叫…」，权限卡叠在它上面——
-     * 所以过完门要用 [stillPlacing] 再看一眼。**群通话只申请麦克风**
-     * （见 [IMPermissionGate.devicesForPlacing]），点「开摄像头」时才申请（[toggleCamera]）。
+     * 所以过完门要用 [stillPlacing] 再看一眼。
+     *
+     * 申请哪些设备**只看 `media_type`**（[IMPermissionGate.devicesForPlacing]）：
+     * 视频通话就要摄像头，哪怕群通话默认关着它——引擎照样会在进房时推视频。
      */
     @JvmOverloads
     @JvmStatic

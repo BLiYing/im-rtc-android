@@ -72,7 +72,10 @@ internal class IMPermissionActivity : Activity() {
             }
             return
         }
-        showCard(IMPermissionGate.blocked(device), "知道了", if (device == IMPermissionGate.Device.MICROPHONE) "去设置" else "") { primary ->
+        // **两种设备都给「去设置」**：永久拒了之后只能去系统设置里改，
+        // 只写一句「请到设置里打开」而不给按钮，等于让用户自己去翻。iOS 的
+        // `offersSettings` 一直是两种都给，这里 2026-09-10 拉齐。
+        showCard(IMPermissionGate.blocked(device), "知道了", "去设置") { primary ->
             if (!primary) openSettings()
             finishWith(IMPermissionGate.Result.DENIED)
         }

@@ -43,17 +43,25 @@ internal object IMPermissionGate {
         if (mediaType == "video" && withCamera) listOf(Device.MICROPHONE, Device.CAMERA) else listOf(Device.MICROPHONE)
 
     /**
-     * **发起一通电话**时该申请哪些设备（交互稿 §01 的表，2026-09-09 改）。
+     * **发起一通电话**时该申请哪些设备。**只看 `media_type`，不看界面上摄像头开没开。**
      *
-     * 群通话默认关摄像头（`IMCallViewReducer.defaultCameraOn`），
-     * 所以发起时申请摄像头是在为一件还没发生的事要权限——**只申请麦克风**，
-     * 等用户点「开摄像头」时再问（`IMCallKit.toggleCamera`）。
-     * 于是**没有摄像头权限也能发起和参加群通话**，1v1 视频不变。
+     * 2026-09-09 曾经改成「群通话默认关摄像头，所以只申请麦克风」，**次日退回**。
+     * 退回的理由不是产品口味，是引擎的形状：`IMCallEngine.publishDefaults`
+     * **按 `media_type` 眼推视频**，进房那一刻摄像头就真的被打开了，
+     * 界面上那颗按钮是开是关它不看。
      *
-     * 抽成函数是为了让它在 JVM 单测里咬得住：留在调用点上就得有设备才跑得到。
+     * 权限清单一旦和它分叉，就会撞上一条**不报错的死路**：
+     * 没权限时 `IMWebRTCAdapter.ensureCapture()` 里 `startCapture` 异步失败，
+     * 可 `videoSource` 已经被缓存下来（而 `createCapturer(name, null)` 连
+     * `CameraEventsHandler` 都没接，失败一声不吭）。此后用户点「开摄像头」，
+     * 权限拿到了、`setMuted(false)` 也执行了，`ensureCapture()` 却直接返回那个死 source
+     * ——**按钮亮着、一帧画面都没有，四端日志里什么都看不到**。
+     *
+     * 所以：**推什么就要什么权限**。摄像头被拒不挡通话（[Outcome.CAMERA_BLOCKED]
+     * 降级为语音继续），代价只是多问一次。
      */
     fun devicesForPlacing(mediaType: String, isGroup: Boolean): List<Device> =
-        devicesFor(mediaType, withCamera = !isGroup)
+        devicesFor(mediaType, withCamera = true)
 
     /** 说明卡：说清**用来做什么**，不说「请授权」。 */
     fun explanation(device: Device): Copy = when (device) {
