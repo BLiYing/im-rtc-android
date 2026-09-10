@@ -49,6 +49,29 @@ class KitRulesTest {
         assertEquals(listOf(IMPermissionGate.Device.MICROPHONE, IMPermissionGate.Device.CAMERA), IMPermissionGate.devicesFor("video", true))
         assertEquals("关着摄像头接听只要麦克风", listOf(IMPermissionGate.Device.MICROPHONE), IMPermissionGate.devicesFor("video", false))
 
+        /*
+         **发起时申请哪些设备只看 `media_type`，不看群不群、也不看摄像头默认开没开。**
+
+         2026-09-09 曾经改成「群通话只申请麦克风」，次日退回：引擎
+         `publishDefaults` 按 `media_type` 眼推视频，进房那一刻摄像头就真的被打开了。
+         权限清单和它一分叉，`ensureCapture()` 就会把一个采集失败的 source 缓存下来，
+         此后点「开摄像头」按钮亮着却一帧画面都没有，而且**一条日志都不打**。
+        */
+        assertEquals(
+            "群视频照样要摄像头——引擎会推视频",
+            listOf(IMPermissionGate.Device.MICROPHONE, IMPermissionGate.Device.CAMERA),
+            IMPermissionGate.devicesForPlacing("video", isGroup = true),
+        )
+        assertEquals(
+            listOf(IMPermissionGate.Device.MICROPHONE, IMPermissionGate.Device.CAMERA),
+            IMPermissionGate.devicesForPlacing("video", isGroup = false),
+        )
+        assertEquals(
+            "语音通话不要摄像头",
+            listOf(IMPermissionGate.Device.MICROPHONE),
+            IMPermissionGate.devicesForPlacing("audio", isGroup = true),
+        )
+
         fun run(results: Map<IMPermissionGate.Device, IMPermissionGate.Result>): Pair<IMPermissionGate.Outcome?, List<IMPermissionGate.Device>> {
             val asked = ArrayList<IMPermissionGate.Device>()
             var outcome: IMPermissionGate.Outcome? = null

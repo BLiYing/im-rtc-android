@@ -237,3 +237,40 @@ class VideoSpeakerUidTest {
         assertEquals("", state(emptyList(), speaking = "alice").videoSpeakerUid())
     }
 }
+
+/** 摄像头的默认态：1v1 开、群通话关（设计稿 v3.5）。 */
+class CameraDefaultTest {
+
+    @Test
+    fun `群通话默认关摄像头，1v1 视频照旧默认开`() {
+        /*
+         这一条守的是「没有摄像头权限也能发起群通话」这个产品承诺的**前半截**：
+         默认关摄像头 → 发起时就不必申请摄像头权限（后半截在 KitRulesTest）。
+
+         起因是 2026-09-09 真机：摄像头设成「每次询问」后发起视频呼叫，
+         进了呼叫界面却挂不掉。群通话这一路绕开摄像头权限门之后就不再经过那一段。
+        */
+        assertTrue("1v1 视频要看见对方，进来一片头像盘是错的", IMCallViewReducer.defaultCameraOn("video", isGroup = false))
+        assertFalse("群视频进去时没人在出镜", IMCallViewReducer.defaultCameraOn("video", isGroup = true))
+        assertFalse(IMCallViewReducer.defaultCameraOn("audio", isGroup = false))
+        assertFalse(IMCallViewReducer.defaultCameraOn("audio", isGroup = true))
+
+        // 拨出与来电两条路都要走同一个判据——只改一条的话，
+        // 群视频**来电横幅**上那颗按钮会显示成已开启，而实际不该开。
+        assertFalse(IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob", "carol"), "video", true).cameraOn)
+        assertTrue(IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "video", false).cameraOn)
+        assertFalse(
+            IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", listOf("bob"), "video", true).cameraOn,
+        )
+        assertTrue(
+            IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", emptyList(), "video", false).cameraOn,
+        )
+
+        // 摄像头按钮**照样显示**（被叫可能想开），变的只是它的默认态。
+        val groupIncoming = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", listOf("bob"), "video", true)
+        assertTrue("群视频里那颗按钮还在，只是默认关着", groupIncoming.showsCameraButton)
+
+        // **会议房本轮不改**：它刚按「默认开」在真机上验过，改它要重验。
+        assertTrue("会议房仍是默认开摄像头", IMCallViewReducer.meeting(IMCallViewState(), "r-1").cameraOn)
+    }
+}

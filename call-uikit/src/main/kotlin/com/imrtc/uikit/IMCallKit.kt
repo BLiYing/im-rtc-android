@@ -49,11 +49,20 @@ object IMCallKit {
     internal var state: IMCallViewState = IMCallViewState()
         private set
 
-    private var timer: Runnable? = null
-    private var hintExpiry: Runnable? = null
+    private val ticker = IMDurationTicker(
+        schedule = { delayMs, task -> main.postDelayed(task, delayMs) },
+        unschedule = { task -> main.removeCallbacks(task) },
+    )
+    private val hintExpiry = IMHintExpiry(
+        schedule = { delayMs, task -> main.postDelayed(task, delayMs) },
+        unschedule = { task -> main.removeCallbacks(task) },
+    )
     /** 最后一批邀请出去的 uid。加人被服务端拒时用它把占位格收回来。 */
     private var lastInvited: List<String> = emptyList()
-    private val settleTimers = HashMap<String, Runnable>()
+    private val settleTimers = IMSettleTimers(
+        schedule = { delayMs, task -> main.postDelayed(task, delayMs) },
+        unschedule = { task -> main.removeCallbacks(task) },
+    )
     private val observers = mutableListOf<(IMCallViewState) -> Unit>()
 
     /** 权限门的系统探针。默认拉透明 Activity 去问；测试可换。 */
@@ -86,9 +95,9 @@ object IMCallKit {
     fun stop() {
         engine = null
         stopTimer()
-        clearSettleTimers()
-        hintExpiry?.let { main.removeCallbacks(it) }
-        hintExpiry = null
+        settleTimers.clear()
+        hintExpiry.clear()
+        redButton.disarm()
         lastInvited = emptyList()
         state = IMCallViewReducer.reset()
         main.post { overlay.detach() }
@@ -108,21 +117,27 @@ object IMCallKit {
 
     /**
      * 拨出。**先过权限门再发 invite**（交互稿 §01）：拿不到麦克风就不该去响别人的铃；
-     * 摄像头拿不到就降级为语音继续（`cameraBlocked`）。界面先切到「正在呼叫…」，权限卡叠在它上面。
+     * 摄像头拿不到就降级为语音继续。界面先切到「正在呼叫…」，权限卡叠在它上面——
+     * 所以过完门要用 [stillPlacing] 再看一眼。
+     *
+     * 申请哪些设备**只看 `media_type`**（[IMPermissionGate.devicesForPlacing]）：
+     * 视频通话就要摄像头，哪怕群通话默认关着它——引擎照样会在进房时推视频。
      */
     @JvmOverloads
     @JvmStatic
     fun placeCall(peers: List<String>, mediaType: String, isGroup: Boolean = false) {
         val instance = engine ?: return
         update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup))
-        ensurePermissions(IMPermissionGate.devicesFor(mediaType, withCamera = true)) { outcome ->
+        ensurePermissions(IMPermissionGate.devicesForPlacing(mediaType, isGroup)) { outcome ->
             when (outcome) {
                 IMPermissionGate.Outcome.OK -> {
+                    if (!stillPlacing()) return@ensurePermissions
                     // 摄像头到手了才接采集——**拨出中就该看见自己**（草图 §03-E）。
                     onLocalMediaStarted()
                     instance.call(peers, mediaType, isGroup)
                 }
                 IMPermissionGate.Outcome.CAMERA_BLOCKED -> {
+                    if (!stillPlacing()) return@ensurePermissions
                     update(IMCallViewReducer.cameraBlocked(state))
                     instance.call(peers, mediaType, isGroup)
                 }
@@ -266,6 +281,7 @@ object IMCallKit {
     internal fun answer() {
         val instance = engine ?: return
         ensurePermissions(IMPermissionGate.devicesFor(state.mediaType, withCamera = state.cameraOn)) { outcome ->
+            if (!stillIncoming()) return@ensurePermissions
             when (outcome) {
                 IMPermissionGate.Outcome.OK -> { onLocalMediaStarted(); instance.accept() }
                 IMPermissionGate.Outcome.CAMERA_BLOCKED -> { update(IMCallViewReducer.cameraBlocked(state)); instance.accept() }
@@ -274,8 +290,42 @@ object IMCallKit {
         }
     }
 
+    /** 红键的看门狗（为什么要有它、判据为什么是「走没走」，见 [IMRedButtonWatchdog]）。 */
+    private val redButton = IMRedButtonWatchdog(
+        schedule = { delayMs, task -> main.postDelayed(task, delayMs) },
+        unschedule = { task -> main.removeCallbacks(task) },
+    )
+
+    /** 看门狗到点了：这一屏还在就本地收场。 */
+    private fun armedEnd(reason: String) {
+        if (IMLateGuard.stillInCall(state)) endLocally("${redButton.timeoutMs}ms 没等到结束事件", reason)
+    }
+
+    /** 结束这一屏，**不依赖服务端应答**（为什么必须能本地走完，见 [IMRedButtonWatchdog]）。 */
+    private fun endLocally(why: String, reason: String) {
+        IMRTCLog.w("kit", "红按钮本地收场：$why（phase=${state.phase} reason=$reason）")
+        update(IMCallViewReducer.ended(state, reason))
+        main.postDelayed({ if (state.phase == IMCallViewState.Phase.ENDED) update(IMCallViewReducer.reset()) }, 1_500)
+    }
+
+    /** 过完权限门拨出那一屏还在不在（判据与理由都在 [IMLateGuard]），不在就记一笔。 */
+    private fun stillPlacing(): Boolean = IMLateGuard.stillPlacing(state).also {
+        if (!it) IMRTCLog.w("kit", "过完权限门时这一屏已经不在了，invite 不发（phase=${state.phase}）")
+    }
+
+    /** 同上，被叫侧。不在就别去接一通已经不存在的电话（服务端回 1401）。 */
+    private fun stillIncoming(): Boolean = IMLateGuard.stillIncoming(state).also {
+        if (!it) IMRTCLog.w("kit", "过完权限门时来电已经不在了，accept 不发（phase=${state.phase}）")
+    }
+
     internal fun hangup() {
-        when (state.hangupAction) {
+        // 认得出动作的那四条也要盯着——**帧发不出去与认不出动作是两回事**。
+        val action = state.hangupAction
+        val reason = IMCallViewState.watchdogReason(action)
+        if (action != IMCallViewState.Action.NONE) {
+            redButton.arm { armedEnd(reason) }
+        }
+        when (action) {
             // **会议房里没有 call，结束动作是 leaveRoom**。红按钮无条件走 hangup 的话，通话机会把它本地拒成 2005。
             IMCallViewState.Action.LEAVE_ROOM -> engine?.leaveRoom()
             IMCallViewState.Action.REJECT -> engine?.reject()
@@ -291,14 +341,7 @@ object IMCallKit {
              服务端只回 1203，而界面还在，点什么都没反应。
              这时唯一正确的动作是**本地收场**，而不是什么都不做。
             */
-            IMCallViewState.Action.NONE -> {
-                IMRTCLog.w("kit", "红按钮无对应动作（phase=${'$'}{state.phase}），本地收场")
-                update(IMCallViewReducer.ended(state, "network"))
-                main.postDelayed(
-                    { if (state.phase == IMCallViewState.Phase.ENDED) update(IMCallViewReducer.reset()) },
-                    1_500,
-                )
-            }
+            IMCallViewState.Action.NONE -> endLocally("认不出该发哪种结束帧", reason)
         }
     }
 
@@ -308,12 +351,33 @@ object IMCallKit {
         update(IMCallViewReducer.toggleMic(state))
     }
 
-    /** 禁用态点了要出提示，不能静默（规范 §06）。 */
+    /**
+     * 开 / 关摄像头。禁用态点了要出提示，不能静默（规范 §06）。
+     *
+     * **要开而权限还没到手时，权限门在这里才跑**（2026-09-09）。群通话默认关摄像头、
+     * 发起时不申请摄像头权限，所以「第一次真正需要它」就是这一刻（《交互流程》§01 的表）。
+     * 被拒**只把这颗按钮置成「无权限」，通话继续**——它不是通话的必需品，
+     * 不能像麦克风那样把整通电话取消掉。
+     */
     internal fun toggleCamera() {
         if (state.cameraBlocked) { hint("没有摄像头权限"); return }
-        val next = !state.cameraOn
-        if (next) engine?.openCamera() else engine?.closeCamera()
+        if (state.cameraOn) { engine?.closeCamera(); update(IMCallViewReducer.toggleCamera(state)); return }
+        if (cameraGranted()) { openCameraNow(); return }
+        ensurePermissions(listOf(IMPermissionGate.Device.CAMERA)) { outcome ->
+            when (outcome) {
+                IMPermissionGate.Outcome.OK -> openCameraNow()
+                // 点了说明卡上的「取消」：什么都不改，他随时能再点一次。
+                IMPermissionGate.Outcome.CANCELLED -> Unit
+                // 被拒**只把这颗按钮置成「无权限」，通话继续**——摄像头不是通话的必需品。
+                else -> update(IMCallViewReducer.cameraBlocked(state))
+            }
+        }
+    }
+
+    private fun openCameraNow() {
+        engine?.openCamera()
         update(IMCallViewReducer.toggleCamera(state))
+        onLocalMediaStarted()
     }
 
     internal fun toggleSpeaker() {
@@ -364,15 +428,8 @@ object IMCallKit {
      */
     internal fun hint(text: String) {
         update(IMCallViewReducer.hint(state, text))
-        hintExpiry?.let { main.removeCallbacks(it) }
-        hintExpiry = null
-        if (text.isEmpty()) return
-        val expire = Runnable {
-            // 只清掉自己那条：中途又来一条新提示时，不该被上一条的计时器抹掉。
-            if (state.hint == text) update(IMCallViewReducer.hint(state, ""))
-        }
-        hintExpiry = expire
-        main.postDelayed(expire, IMKitTheme.HINT_HOLD_MS)
+        // 只清掉自己那条：中途又来一条新提示时，不该被上一条的计时器抹掉（见 [IMHintExpiry]）。
+        hintExpiry.arm(text) { mine -> if (state.hint == mine) update(IMCallViewReducer.hint(state, "")) }
     }
 
     internal fun showInvitePicker(activity: Activity) {
@@ -442,6 +499,9 @@ object IMCallKit {
 
     internal fun update(next: IMCallViewState) {
         state = next
+        // 收到终态就不必再盯着。**挂在这里而不是各个回调里**：update 是唯一的状态入口，
+        // 漏挂一条回调就会多出一次莫名其妙的「本地收场」。
+        if (!IMLateGuard.stillInCall(next)) redButton.disarm()
         main.post {
             observers.toList().forEach { it(next) }
             applyPresentation(next)
@@ -514,21 +574,12 @@ object IMCallKit {
         context.startActivity(Intent(context, IMCallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    /** 邀请中的格子拿到终局（已拒绝 / 未接听）后停 2s 再收（交互稿 §05 G3）。 */
+    /** 邀请中的格子拿到终局（已拒绝 / 未接听）后停 2s 再收（交互稿 §05 G3，记账见 [IMSettleTimers]）。 */
     private fun scheduleSettledRemovals(current: IMCallViewState) {
-        current.members.values.filter { it.settled != IMCallViewState.Settled.NONE && it.uid !in settleTimers }.forEach { member ->
-            val remove = Runnable {
-                settleTimers.remove(member.uid)
-                update(IMCallViewReducer.userRemove(state, member.uid))
-            }
-            settleTimers[member.uid] = remove
-            main.postDelayed(remove, IMKitTheme.SETTLED_HOLD_MS)
-        }
-    }
-
-    private fun clearSettleTimers() {
-        settleTimers.values.forEach { main.removeCallbacks(it) }
-        settleTimers.clear()
+        val settled = current.members.values
+            .filter { it.settled != IMCallViewState.Settled.NONE }
+            .map { it.uid }
+        settleTimers.scheduleAll(settled) { uid -> update(IMCallViewReducer.userRemove(state, uid)) }
     }
 
     private fun clearCallViews() {
@@ -537,23 +588,10 @@ object IMCallKit {
         reportedLayers.clear()
         localPreview = null
         localPreviewStarted = false
-        clearSettleTimers()
+        settleTimers.clear()
     }
 
-    internal fun startTimer() {
-        stopTimer()
-        val tick = object : Runnable {
-            override fun run() {
-                update(IMCallViewReducer.tick(state))
-                main.postDelayed(this, 1_000)
-            }
-        }
-        timer = tick
-        main.postDelayed(tick, 1_000)
-    }
+    internal fun startTimer() = ticker.start { update(IMCallViewReducer.tick(state)) }
 
-    internal fun stopTimer() {
-        timer?.let { main.removeCallbacks(it) }
-        timer = null
-    }
+    internal fun stopTimer() = ticker.stop()
 }
