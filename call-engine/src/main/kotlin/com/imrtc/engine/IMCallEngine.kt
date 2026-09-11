@@ -153,6 +153,15 @@ class IMCallEngine private constructor(
     fun updateToken(token: String, expiresAtMs: Long = 0L) =
         scheduler.post { connection.updateToken(token, expiresAtMs) }
 
+    /**
+     * 告知 Engine 宿主 App 当前处于前台还是后台，只影响**断线后下一次重连要等多久**——
+     * 详见 `IMSignalConnection` 类注释「后台重连节奏：不清零，最长 3 秒」（2026-09-11，
+     * 真机 OPPO/ColorOS：后台每约 3 秒被系统杀一次 socket，退避走到 15s/30s 会错过
+     * 服务端等 5 秒的来电窗口）。**接了 `call-uikit` 的宿主不用管**，`IMCallKit.start()`
+     * 已自动喂了；自画 UI 的宿主接 `Application.ActivityLifecycleCallbacks` 后调用即可。
+     */
+    fun setAppForeground(foreground: Boolean) = scheduler.post { connection.setForeground(foreground) }
+
     /** 登出并释放连接。**之后可以再 login。** */
     fun logout() = scheduler.post {
         media?.stop()

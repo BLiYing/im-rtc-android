@@ -449,6 +449,173 @@ class SignalConnectionTest {
         assertEquals("截止时刻被重连失败一路推后，等于这条闸从来不会合上", 1, events.unrecoverable)
     }
 
+    /*
+      后台重连节奏「不清零，最长 3 秒」（2026-09-11，真机 OPPO/ColorOS）。
+
+      ColorOS 后台每约 3 秒杀一次 socket，默认退避会越退越慢，而服务端「被叫刚断线」
+      只等 5 秒就转振铃——这五条钉住四条判定规则 + 回前台立即重连，一条都不能只靠肉眼验。
+      纯判定逻辑本身在 [IMReconnectPolicy]，这里验的是 [IMSignalConnection] 把它接对了没有。
+     */
+
+    @Test
+    fun `前台：不管连接活了多久，断开都归零退避`() {
+        connect()
+        scheduler.advance(500) // 活得很短
+        transport.closed(1006, "network")
+        assertEquals("前台断开该归零（归零后重连本身会把档位变成1）", 1, connection.debugBackoffAttempts)
+
+        scheduler.advance(2_000) // 把上面那次重连排出去
+        transport.open()
+        transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+        // 这次活过了后台规则③的 10 秒线——但心跳要喂着，不然会被判成假活提前断开，
+        // 那就测的是心跳超时那条路而不是这一条了。
+        scheduler.advance(12_000)
+        transport.closed(1006, "network")
+        assertEquals("活很久也一样归零", 1, connection.debugBackoffAttempts)
+    }
+
+    @Test
+    fun `后台连上不到10秒就断：退避不归零，但等待封顶3秒`() {
+        connection.setForeground(false)
+        connection.start(config, "tk-1")
+        transport.open()
+        transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+
+        // 连续 6 轮「连上不到 10 秒就被 ColorOS 掐掉」：退避档从 1s 一路推到顶格 30s，
+        // 但只要还是这种短命连接，每一轮都必须在 3 秒内就已经在重连——不许越等越久。
+        repeat(6) { i ->
+            scheduler.advance(2_000) // 活了 2 秒，< 10 秒
+            transport.closed(1006, "colouros kill")
+            val before = transport.connectCount
+            scheduler.advance(3_000)
+            assertTrue("第${i + 1}轮该在封顶 3 秒内重连", transport.connectCount > before)
+            transport.open()
+            transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+        }
+        assertEquals(
+            "后台短命连接不该把退避归零——6 轮下来该正好是 6",
+            6,
+            connection.debugBackoffAttempts,
+        )
+    }
+
+    @Test
+    fun `后台短命连接的等待精确封顶在3000ms，抖动也不会让它溢出`() {
+        connection.setForeground(false)
+        connection.start(config, "tk-1")
+        transport.open()
+        transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+
+        // 先跑两轮把退避档推到第 3 档：base=4000ms，±20% 抖动最低也有 3200ms，
+        // 一定会撞上封顶——用它来精确验证「封顶」而不是碰巧没抖动到 3000 以上。
+        repeat(2) {
+            scheduler.advance(2_000)
+            transport.closed(1006, "colouros kill")
+            scheduler.advance(3_000)
+            transport.open()
+            transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+        }
+
+        scheduler.advance(2_000)
+        transport.closed(1006, "colouros kill")
+        val before = transport.connectCount
+        scheduler.advance(2_999)
+        assertEquals("差 1ms 到 3000ms 不该提前重连", before, transport.connectCount)
+        scheduler.advance(1)
+        assertEquals("满 3000ms 必须已经重连", before + 1, transport.connectCount)
+    }
+
+    @Test
+    fun `后台连上超过10秒才断：不是被ColorOS掐的那种，跟前台一样归零`() {
+        connection.setForeground(false)
+        connection.start(config, "tk-1")
+        transport.open()
+        transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+
+        // 先制造两轮短命连接，把退避档推起来（规则②：不归零）。
+        repeat(2) {
+            scheduler.advance(2_000)
+            transport.closed(1006, "colouros kill")
+            scheduler.advance(3_000)
+            transport.open()
+            transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+        }
+        val attemptsBeforeLongLived = connection.debugBackoffAttempts
+        assertTrue(
+            "前两轮短命连接应该把退避档推起来，实际=$attemptsBeforeLongLived",
+            attemptsBeforeLongLived >= 2,
+        )
+
+        // 这一条连接活过了 10 秒才断——规则③：归零。
+        scheduler.advance(11_000)
+        transport.closed(1006, "normal bg close")
+        assertEquals(
+            "活过10秒该归零（归零后重连本身会把档位变成1，而不是继续往上涨）",
+            1,
+            connection.debugBackoffAttempts,
+        )
+    }
+
+    @Test
+    fun `从未连上成功：不管前后台都按原退避走满，不许被封顶到3秒`() {
+        connection.setForeground(false)
+        connection.start(config, "tk-1")
+
+        // 制造两轮「压根没连上」的失败，把退避推到第 3 档（base=4000ms）。
+        transport.failure(RuntimeException("no network"))
+        scheduler.advance(1_500) // 第 1 档 base=1000ms，跑完它触发下一次尝试
+        transport.failure(RuntimeException("no network"))
+        scheduler.advance(2_500) // 第 2 档 base=2000ms
+
+        // 第 3 档 base=4000ms：±20% 抖动最低也有 3200ms，
+        // 若被误判成「后台短命连接」封顶到 3 秒，这里 3 秒内就会重连——不许发生，
+        // 否则一次真实的断网会被当成每 3 秒空连一次。
+        val before = transport.connectCount
+        transport.failure(RuntimeException("no network"))
+        scheduler.advance(3_000)
+        assertEquals(
+            "从未连上成功却被封顶到了 3 秒，会把断网场景变成每 3 秒空连一次",
+            before,
+            transport.connectCount,
+        )
+        // 再往后走完，确认它只是慢，不是不重连了。
+        scheduler.advance(2_000)
+        assertTrue("该继续按原退避重连，只是没被封顶", transport.connectCount > before)
+    }
+
+    @Test
+    fun `重连定时器等待中回到前台：立刻重连并把退避归零`() {
+        connection.setForeground(false)
+        connection.start(config, "tk-1")
+        transport.open()
+        transport.replyOk(IMFrameType.HELLO, mapOf("session_id" to IMJson.Str("s-1")))
+
+        scheduler.advance(2_000)
+        transport.closed(1006, "colouros kill")
+        assertTrue("这一步该有一个待发的重连定时器", connection.debugBackoffAttempts >= 1)
+        val connectsBefore = transport.connectCount
+
+        connection.setForeground(true)
+
+        assertEquals("回前台该立刻重连，不等定时器", connectsBefore + 1, transport.connectCount)
+        assertEquals("回前台该把退避归零", 0, connection.debugBackoffAttempts)
+    }
+
+    @Test
+    fun `前台运行中的通话被切到后台：照样按后台节奏走（前台服务托着通话不影响这条判定）`() {
+        // 对应任务规则第 6 条的确认项：通话中按 Home 键、App 本身进后台（即使前台服务
+        // 还在跑），IMSignalConnection 这一层只看 setForeground 喂的信号，不知道也不
+        // 关心「是不是在通话」——这正是设计上要的：封顶 3 秒比前台最长 30 秒的退避更快
+        // 够上服务端 5 秒的等待窗口，对「后台但在通话」这种场景只有好处。
+        connect() // 默认前台，模拟正在通话
+        connection.setForeground(false) // 按 Home：App 后台，前台服务继续跑
+        scheduler.advance(2_000)
+        transport.closed(1006, "colouros kill")
+        val before = transport.connectCount
+        scheduler.advance(3_000)
+        assertTrue("通话中切后台也该在3秒内重连", transport.connectCount > before)
+    }
+
     private class RecordingEvents : IMSignalConnection.Events {
         val connected = mutableListOf<Pair<String, Boolean>>()
         val frames = mutableListOf<Pair<String, Map<String, IMJson>>>()

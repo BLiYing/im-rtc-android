@@ -11,33 +11,59 @@
 
 ## 当前焦点
 
-**2026-09-11 晚：「来电页 + 进房前关摄像头停采集」第 6 步 + 延后项①（本仓），直接在 main 改，已提交，用户真机验过。**
-六步总表在 `../im-rtc-server/current_task.md` 的「另一条线」；第 4 步（来电页不弹摄像头权限、未进房也停采集）已提交 `46ebb51`。
+**2026-09-11 深夜：信令后台重连节奏「后台不清零，最长 3 秒」（本仓），直接在 main 改，未提交，等用户真机验。**
 
-| 现象 | 根因 | 改了什么 |
-|---|---|---|
-| 来电页 / 拨出中开过摄像头又关掉，灯要等挂断才灭 | Kit 只翻意图 | Engine 新增 `stopLocalPreview()`（走引擎线程）；adapter 已发布（`videoTrack != null`）的不停，`IMPreviewIntent` 作废在途的预览挂载，停采集后前台服务降回不带 camera（没进房直接停）。Kit `turnCameraOff()` = `closeCamera` + `stopLocalPreview`，划掉 `localPreviewStarted` |
-| 通话中关摄像头只是静音，灯仍亮 | `setMuted` 只 `setEnabled(false)` | `setCapturePaused`：关 = `stopCapture`、开 = `startCapture`（先查权限，没有就报 2001、保持停着）。轨道 / transceiver 不动，不重协商；关着时 `switchCamera` 不动 |
+真机现象（OPPO/ColorOS，2026-09-11 13:41）：Demo 切后台后，ColorOS 的 `OAppNetControlService`
+约每 3 秒强杀一次后台 socket（`Close socket:[...] cause:App bg(IMMEDIATELY)`），
+按原退避（1,2,4,8,15,30s 且每次断开都归零）会越走越慢，很快超过服务端等 5 秒才判来电离线/振铃的窗口。
 
-`./scripts/test.sh` 全绿（6 步）。adapter 没有 JVM 单测（依赖 `org.webrtc`），靠 `temp_verify.py` 静态断言 + 真机。
+规则（"后台不清零，最长 3 秒"）：
+1. 前台：跟以前一样，断开就归零退避。
+2. 后台、连上了但活不到 10 秒就断：**不归零**退避档位，但把这一步实际等待（含抖动）**封顶 3 秒**——节奏 1,2,3,3,3…秒。
+3. 后台、活过 10 秒才断：跟前台一样归零（不是被 ColorOS 秒杀的那种）。
+4. 从没连上过（无网/握手失败）：不管前后台都按原退避走满到 30s，不许被误判成「后台短命连接」。
+5. 等待中回到前台：立刻重连并把退避归零。
+6. 前后台判定复用 `call-uikit` 现成的 `IMActivityTracker`，Engine 不直接依赖 UI 生命周期——
+   `IMCallKit.onForegroundChanged` 转调新增的 `IMCallEngine.setAppForeground()`。
+   **通话中被切后台也按后台节奏走**（前台服务托着通话不影响这条判定，反而比前台 30s 退避更快够上服务端 5s 窗口），
+   已在 `IMCallKit.kt` 该方法的类注释里写明。
 
-上几刀（第 4 步、09-11 下午五个真机问题）细节看 `git log` 与 `current_task.archive.md`。
+改了什么：
+- 新增 `call-engine/.../signaling/IMReconnectPolicy.kt`：纯函数 `plan(wasConnected, aliveMs, foreground, resetBackoff)`，
+  四条规则的判定逻辑，不碰 IO/时钟/`IMSignalConnection` 状态，`IMReconnectPolicyTest.kt` 单独覆盖。
+- `IMSignalConnection.kt` 记录 `connectedAtMs` 算 `aliveMs`，断线走 `IMReconnectPolicy.plan`，
+  新增公开 `setForeground(value)`（回前台立刻重连+归零），新增测试观察口 `debugBackoffAttempts`。
+- 顺手把与本次无关但预置的 `IMSessionRecoveryTimer`（"服务端会话不可恢复"倒计时）抽成独立文件——
+  纯粹是给 `IMReconnectPolicy` 抽出去之后腾体量空间（642→597 行），行为原样保留。
+- `IMCallEngine.kt` 新增 `setAppForeground(foreground)`（过 scheduler 转给 connection）；
+  `IMCallKit.onForegroundChanged` 转调它；`JavaApiCheck.java` 补练。
+- 日志：断开一行（reason/aliveMs/前后台）、下次重连排期一行（间隔 ms + 退避档位 + 命中哪条规则）、
+  前后台切换一行，全部走既有 `IMRTCLog` tag `"signal"`。
+
+`./scripts/test.sh` 全绿（6 步）；独立校验脚本 `temp_verify_reconnect_pacing.py`（不复用仓根共享的
+`temp_verify.py`——那份是另一批任务在并发用，怕冲突）27 条全过。**未做真机验证**，见「下一步」。
+
+上几刀（来电页/摄像头那批，2026-09-11 晚）已提交 `a57b489`，细节看 `git log` 与 `current_task.archive.md`。
 
 **iOS 的 simulcast 缺失已决定暂缓**（2026-09-09），结论在 `../im-rtc-ios/current_task.md` 的「已知坑」。
 
 ### 体量欠账（**下次动它之前先拆**）
 
-`IMCallEngine.kt` 583 行、`IMSignalConnection.kt` 593 行，都贴着 600 硬闸。
-可以整体挪出去的：socket 代际那套（`generation` / `closedGeneration` / `TransportListener`）连同心跳。
+`IMCallEngine.kt` 598 行、`IMSignalConnection.kt` 597 行，都贴着 600 硬闸（这次已经各拆出一个文件才压回去）。
+`IMSignalConnection.kt` 还能再挪的：socket 代际那套（`generation` / `closedGeneration` / `TransportListener`）连同心跳。
 
 
 ## 下一步
 
-### 真机验收
+### 真机验收（本轮，最优先——上面那批还没有人验过）
 
-**本轮优先**：
-
-1. 本批（进房前 / 通话中关摄像头灯灭、关着时收回权限再开提示「无权限」）用户 2026-09-11 真机验过。
+1. **背景重连节奏**：Demo 登录后切后台放置约 1 分钟（ColorOS 手机最好，会自动杀后台 socket），
+   `adb logcat | grep -i signal`（或按 `IMRTCLog` 的 tag 过滤 `"signal"`）应该看到断开→重连间隔
+   走 1,2,3,3,3…秒（约每分钟 10 次重连，不是原来的 20 次）。
+2. 期间把 App 切回前台：日志里应该立刻出现一次重连（不是等到下一个定时器到点），且随后走的退避档位归零。
+3. 通话中把 App 切到后台（前台服务还在跑）：确认走的也是后台节奏（第 2 步同一套判据）。
+4. 以上均为**代码走查 + 单测覆盖**，无真机实测；ColorOS 秒杀 socket 的具体间隔是否稳定在 3 秒、
+   服务端 5 秒窗口是否真的因此不再错过，都还没有实机数据。
 
 **上一轮挂着的**（1v1 视频）：控制条收起后点底部该叫回控制条、不该静音/挂断；挂断后结束画面标题栏不淡掉；
 开局清晰度——服务端日志进房 1 秒内出现 `上行层已接入 … rid=h`、整通没有 `layer=h live=False`
@@ -71,6 +97,13 @@
 
 ## 已知坑 / 限制
 
+- **`SignalConnectionTest` 里用 `scheduler.advance(N)` 模拟「连接活了很久」要小心心跳超时**：
+  心跳每 `pingSec`（默认 15s）一次，`nowMs() - lastInboundMs > pingSec*2`（30s 静默）会自触发
+  `closeAndReconnect("heartbeat timeout")`，如果没有配合喂 `PONG`，`advance` 到 30s 以上会打进这条
+  分支，污染退避档位断言。要么把模拟时长压在 `2×pingSec` 以内，要么显式 `transport.deliver(PONG, "")`。
+- **仓根 `temp_verify.py` 是另一批任务共用的活文件**，别的会话/后台任务可能正并发在改；
+  本仓写自己的小验证脚本时（如 `temp_verify_reconnect_pacing.py`）optional 单独建文件，别往那份共享脚本里插，
+  免得竞争写丢内容。
 - **PKD130（ColorOS / Android 15）上 `pm revoke` 被挡**：`SecurityException … REVOKE_RUNTIME_PERMISSIONS`。
   要测「没摄像头权限」只能去系统设置里手动关，或先打开开发者选项的「USB 调试（安全设置）」。
 - **摄像头意图必须在进房之前给 Engine**（`IMCallKit.syncCameraIntent`）：晚了 `publishDefaults` 已经把视频轨发出去、采集也起了。

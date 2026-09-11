@@ -99,6 +99,9 @@ final class JavaApiCheck {
         engine.updateToken("new-token");
         // @JvmOverloads：带到期时刻的两参数形态 Java 也要能写出来。
         engine.updateToken("new-token", System.currentTimeMillis() + 3_600_000L);
+        // 自画 UI（没引 call-uikit）的宿主要能自己喂前后台状态，见方法注释「后台重连节奏」。
+        engine.setAppForeground(false);
+        engine.setAppForeground(true);
         engine.logout();
         engine.destroy();
 

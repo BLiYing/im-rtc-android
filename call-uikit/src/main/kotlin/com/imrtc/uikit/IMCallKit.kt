@@ -497,9 +497,15 @@ object IMCallKit {
      * 他进后台前本来就关着摄像头，回前台不要替他打开。与 iOS 的 `IMCallController` 同一条规则。
      *
      * 进系统画中画不算切后台：那时候采集照跑，画面就在那一小块窗口里。
+     *
+     * **不管是否在通话都要喂给 Engine**：`setAppForeground` 只影响信令重连节奏
+     * （见 `IMSignalConnection` 类注释「后台重连节奏」），跟下面摄像头那段是两件事——
+     * 通话中被前台服务托着、App 本身被切到后台（比如通话中按了 Home）也算「后台」，
+     * 一样要按后台节奏重连，这样反而比前台的退避（最长 30s）更快够上服务端 5s 的等待窗口。
      */
     private fun onForegroundChanged(foreground: Boolean) {
         val instance = engine ?: return
+        instance.setAppForeground(foreground)
         if (!foreground) {
             if (state.phase == IMCallViewState.Phase.IDLE || !state.cameraOn) return
             cameraPausedByBackground = true
