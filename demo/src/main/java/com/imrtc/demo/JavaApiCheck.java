@@ -6,6 +6,7 @@ import android.content.Context;
 
 import com.imrtc.engine.IMCallEngine;
 import com.imrtc.engine.IMCallEngineListener;
+import com.imrtc.engine.IMCallEngineVersion;
 import com.imrtc.engine.IMKickedOutReason;
 import com.imrtc.engine.IMNetworkQuality;
 import com.imrtc.engine.IMSpeaker;
@@ -40,6 +41,8 @@ final class JavaApiCheck {
     static void check(Context context) {
         // 构造：三参数与两参数（媒体可省）两种形态，Java 都要能写出来。
         IMCallEngine.Config config = new IMCallEngine.Config("ws://host:8787/v1/ws", "device-1");
+        // 版本号是 const val：Java 侧直接是静态常量，不用 INSTANCE。
+        String sdkVersion = IMCallEngineVersion.VERSION + " " + IMCallEngineVersion.SDK;
         IMCallEngineListener listener = new IMCallEngineListener() {
             @Override
             public void onCallEnd(String callId, String reason, long durationSec, String endedBy) {

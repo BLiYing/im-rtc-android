@@ -1,5 +1,6 @@
 package com.imrtc.engine.signaling
 
+import com.imrtc.engine.IMCallEngineVersion
 import com.imrtc.engine.IMKickedOutReason
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.protocol.IMCloseCode
@@ -68,7 +69,7 @@ internal class IMSignalConnection(
     data class Config(
         val url: String,
         val deviceId: String,
-        val sdk: String = "android",
+        val sdk: String = IMCallEngineVersion.SDK,
         val protocolVersion: Long = 1,
     )
 

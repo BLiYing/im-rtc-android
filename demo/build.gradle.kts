@@ -12,7 +12,8 @@ android {
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 1
-        versionName = "0.1"
+        // 与 SDK 同号（call-engine 的 IMCallEngineVersion.VERSION），五端统一 1.0.0。
+        versionName = "1.0.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
