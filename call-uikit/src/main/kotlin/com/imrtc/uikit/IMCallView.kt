@@ -454,7 +454,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         remote.setVideoView(actions?.videoViewFor(peer.uid), overlay = state.isSwapped)
         // **1v1 不做发言高亮**（绿描边 + 绿名牌）：只有两个人，谁在说话本来就一目了然，
         // 而那圈绿边压在全屏画面上只会显得像出了什么问题。九宫格里才需要它。
-        remote.apply(peer.uid, peer.uid, peer.video, peer.audio, isSpeaking = false,
+        remote.apply(peer.uid, peer.uid, peer.showsVideo, peer.audio, isSpeaking = false,
             networkLevel = peer.networkLevel, avatarSizeDp = if (state.isSwapped) 44 else IMKitTheme.AVATAR_LARGE_DP)
         applySelf(
             state, actions?.hasLocalVideo() ?: false,
@@ -491,7 +491,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
              对端一开摄像头就得重建 Surface 再等一个关键帧——白等半秒还闪一下。
             */
             tile.setVideoView(actions?.videoViewFor(m.uid))
-            tile.apply(m.uid, m.uid, m.video, m.audio, m.speaking, m.volume,
+            tile.apply(m.uid, m.uid, m.showsVideo, m.audio, m.speaking, m.volume,
                 isRinging = !m.accepted, settled = m.settled, networkLevel = m.networkLevel)
             actions?.reportLayer(m.uid, layer)
             ordered += tile

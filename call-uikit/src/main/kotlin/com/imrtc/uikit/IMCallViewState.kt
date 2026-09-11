@@ -89,7 +89,15 @@ internal data class IMCallViewState(
         val speaking: Boolean = false,
         /** 0~100 的音量，映射到说话图标的条高。服务端 300ms 一次。 */
         val volume: Int = 0,
-    )
+        /**
+         * 画面刚变成可用、**新画面还没上屏**：等 `onFirstVideoFrame`（兜底见 `IMKitListener.REVEAL_FALLBACK_MS`）。
+         * 这段时间格子照旧露头像——渲染器整通复用，Surface 上还留着关摄像头之前的最后一帧。
+         */
+        val videoPending: Boolean = false,
+    ) {
+        /** 格子该不该露画面。**界面只认这个，不认 [video]**。 */
+        val showsVideo: Boolean get() = video && !videoPending
+    }
 
     /** 三种版式（规范 §03 / §04）。 */
     enum class Layout { AUDIO, VIDEO, GRID }
@@ -390,8 +398,24 @@ internal object IMCallViewReducer {
     /** 服务端说不是主叫（1407）：藏掉加人入口。 */
     fun inviteDenied(state: IMCallViewState) = state.copy(canInvite = false, hint = "只有发起人可以添加成员")
 
+    /**
+     * 画面**从无到有**时先挂起（[IMCallViewState.Member.videoPending]），等首帧再揭示。
+     * 已经有画面时再来一次 true（比如重连后的快照）不挂起——不然正在播的画面会闪回头像。
+     */
     fun availability(state: IMCallViewState, uid: String, kind: String, available: Boolean) =
-        withMember(state, uid) { if (kind == "video") it.copy(video = available) else it.copy(audio = available) }
+        withMember(state, uid) {
+            if (kind != "video") {
+                it.copy(audio = available)
+            } else {
+                it.copy(video = available, videoPending = available && (it.videoPending || !it.video))
+            }
+        }
+
+    /** 新画面上屏了（或兜底到点）：揭示。**不补建成员**——兜底可能在人走之后才到点。没变化时原样返回。 */
+    fun firstVideoFrame(state: IMCallViewState, uid: String): IMCallViewState {
+        val member = state.members[uid]?.takeIf { it.videoPending } ?: return state
+        return state.copy(members = state.members + (uid to member.copy(videoPending = false)))
+    }
 
     fun networkQuality(state: IMCallViewState, levels: Map<String, Int>) = state.copy(
         members = state.members.mapValues { (uid, m) -> levels[uid]?.let { m.copy(networkLevel = it) } ?: m },

@@ -27,7 +27,7 @@ interface IMMediaAdapter {
         /** sub 侧连通 = 媒体就绪，通话状态机据此从 connecting 走到 connected。 */
         fun onMediaReady()
 
-        /** 某个远端第一帧画面到达，UI 用来撤掉 loading。 */
+        /** 某个远端第一帧画面到达，UI 用来撤掉 loading。对端关摄像头再开后（[awaitFirstVideoFrame]）会再报一次。 */
         fun onFirstVideoFrame(uid: String)
 
         /** 媒体层出错（协商失败、ICE failed、采集权限被拒）。 */
@@ -104,6 +104,16 @@ interface IMMediaAdapter {
      * 结果每个人的画面都被挂到同一把钥匙上，真机表现是「协商全通、一格画面都没有」。
      */
     fun claimRemoteTracks(owners: Map<String, String>)
+
+    /**
+     * 某个远端**刚变成有画面**（Engine 抛完 `onUserVideoAvailable(uid, true)` 之后调）：
+     * 等下一帧真的画到屏上，再经 [Events.onFirstVideoFrame] 报一次。
+     *
+     * 渲染器按 uid 整通复用，`init` 之后的首帧只有一次——对端关摄像头再开时没有别的信号，
+     * 界面只能按信令揭示，而信令比新画面早几百毫秒，那段时间露出来的是关之前的最后一帧。
+     * 默认空实现：不渲染的适配器无事可做。
+     */
+    fun awaitFirstVideoFrame(uid: String) {}
 
     /** 本端预览。 */
     fun startLocalPreview(view: Any?)

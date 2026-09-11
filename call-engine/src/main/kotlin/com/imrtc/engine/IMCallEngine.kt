@@ -374,6 +374,7 @@ class IMCallEngine private constructor(
 
         for (frame in output.send) sendFrame(frame)
         dispatcher.dispatchAll(output.emit)
+        for (uid in videoTurnedOn(output.emit)) media?.awaitFirstVideoFrame(uid)
         driveMedia(before, output.state)
         // **排在 driveMedia 之后**：新进房那一步正是在它里面发布轨道的，
         // 而要补的静音得等那些轨道的 track_id 回来（下一轮 input）才做得成。

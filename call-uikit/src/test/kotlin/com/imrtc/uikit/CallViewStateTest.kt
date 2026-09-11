@@ -2,6 +2,7 @@ package com.imrtc.uikit
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -96,6 +97,34 @@ class CallViewStateTest {
 
         state = IMCallViewReducer.userLeave(state, "bob")
         assertEquals(setOf("carol"), state.members.keys)
+    }
+
+    /**
+     * 真机 2026-09-11 19:17：iOS 关摄像头再开，Android 上那格「画面出来又刷新一下」。
+     * `room.track_muted` 比新画面早 450–900ms，按它揭示就露出 Surface 上关之前的最后一帧。
+     */
+    @Test
+    fun `对端重开摄像头：新画面上屏前不露，已在播时再报一次不闪回头像`() {
+        var state = IMCallViewReducer.userEnter(IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "video", true), "carol")
+        fun carol() = state.members.getValue("carol")
+
+        state = IMCallViewReducer.availability(state, "carol", "video", true)
+        assertTrue(carol().video)
+        assertFalse("首帧没上屏，格子还是头像", carol().showsVideo)
+        state = IMCallViewReducer.firstVideoFrame(state, "carol")
+        assertTrue(carol().showsVideo)
+
+        state = IMCallViewReducer.availability(state, "carol", "video", true)
+        assertTrue("重连快照再报一次 true：正在播的画面不能挂起", carol().showsVideo)
+
+        state = IMCallViewReducer.availability(state, "carol", "video", false)
+        state = IMCallViewReducer.firstVideoFrame(state, "carol")
+        assertFalse("关着的时候来的首帧不能把格子揭开", carol().showsVideo)
+        state = IMCallViewReducer.availability(state, "carol", "video", true)
+        assertFalse("Surface 上还是关之前的最后一帧，不能露", carol().showsVideo)
+
+        state = IMCallViewReducer.userLeave(state, "carol")
+        assertSame("兜底在人走之后才到点：不补建成员", state, IMCallViewReducer.firstVideoFrame(state, "carol"))
     }
 
     @Test

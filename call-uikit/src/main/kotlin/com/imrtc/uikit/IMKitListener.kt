@@ -4,6 +4,7 @@ import com.imrtc.engine.IMKickedOutReason
 import com.imrtc.engine.IMCallEngineListener
 import com.imrtc.engine.IMNetworkQuality
 import com.imrtc.engine.IMSpeaker
+import com.imrtc.engine.log.IMRTCLog
 
 /**
  * 包在宿主 listener 外面的一层：先喂 Kit，再原样转给宿主。
@@ -141,8 +142,30 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     override fun onUserVideoAvailable(uid: String, available: Boolean) {
         // 轨道来了才轮得到报层：人进来那一刻报的那次是空转（见 invalidateReportedLayer）。
         if (available) IMCallKit.invalidateReportedLayer(uid)
+        // 画面从无到有时格子先不揭示，等 onFirstVideoFrame（见 Member.videoPending）。
         IMCallKit.update(IMCallViewReducer.availability(state, uid, "video", available))
+        armRevealFallback(uid)
         host.onUserVideoAvailable(uid, available)
+    }
+
+    /**
+     * uid → 「新画面迟迟不上屏也照样揭示」的兜底。媒体层报不出首帧时（没接媒体、渲染器没有 Surface），
+     * 格子不能一直停在头像上。**每次重开换一个、旧的撤掉**：连着开关时，上一次的兜底不能提前揭示这一次。
+     */
+    private val revealFallbacks = HashMap<String, Runnable>()
+
+    private fun armRevealFallback(uid: String) {
+        revealFallbacks.remove(uid)?.let { IMCallKit.main.removeCallbacks(it) }
+        if (state.members[uid]?.videoPending != true) return
+        val fallback = Runnable {
+            revealFallbacks.remove(uid)
+            val next = IMCallViewReducer.firstVideoFrame(state, uid)
+            if (next === state) return@Runnable
+            IMRTCLog.w("kit", "新画面 ${REVEAL_FALLBACK_MS}ms 没上屏，照样揭示 uid=$uid")
+            IMCallKit.update(next)
+        }
+        revealFallbacks[uid] = fallback
+        IMCallKit.main.postDelayed(fallback, REVEAL_FALLBACK_MS)
     }
 
     override fun onActiveSpeakers(speakers: List<IMSpeaker>) {
@@ -171,10 +194,11 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     override fun onCallMediaTypeChanged(callId: String, from: String, to: String) = host.onCallMediaTypeChanged(callId, from, to)
 
     override fun onFirstVideoFrame(uid: String) {
-        // 第一帧到了，界面撤 loading：让格子重画一次就够。**顺带重报一次层上界**——
+        // 新画面上屏了，揭示格子（见 Member.videoPending）。**顺带重报一次层上界**——
         // 到这一步轨道一定在了，而人进来那一刻报的那次多半是空转。
         IMCallKit.invalidateReportedLayer(uid)
-        IMCallKit.update(state)
+        revealFallbacks.remove(uid)?.let { IMCallKit.main.removeCallbacks(it) }
+        IMCallKit.update(IMCallViewReducer.firstVideoFrame(state, uid))
         host.onFirstVideoFrame(uid)
     }
 
@@ -210,5 +234,10 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         IMCallKit.update(IMCallViewReducer.ended(state, reason))
         IMCallKit.main.postDelayed({ if (state.phase == IMCallViewState.Phase.ENDED) IMCallKit.update(IMCallViewReducer.reset()) }, 1_500)
         host.onRoomClosed(roomId, reason)
+    }
+
+    private companion object {
+        /** 真机上信令比新画面早 450–900ms（2026-09-11 19:17）。兜底要比它长，否则到点露出来的还是旧帧。 */
+        const val REVEAL_FALLBACK_MS = 2_000L
     }
 }

@@ -91,6 +91,15 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     /** 上行每一层实际编出多少分辨率、被什么限住。见 [IMUplinkStats] 的类注释。 */
     private val uplinkStats = IMUplinkStats(main)
 
+    /** 远端画面断流后恢复那几秒的诊断日志（排查「画面出来又刷新一下」）。见 [IMRemoteVideoDiagnostics]。 */
+    private val videoDiag = IMRemoteVideoDiagnostics(main, { peers.connection("sub") }) { trackOwners[it] }
+
+    /** 帧尺寸 → 裁切还是留边。见 [IMVideoFitter]。 */
+    private val fitter = IMVideoFitter(main) { renderers[it] }
+
+    /** 对端摄像头重开后，等新画面真的上屏再报首帧。见 [IMFirstFrameGate]。 */
+    private val firstFrames = IMFirstFrameGate(main) { events?.onFirstVideoFrame(it) }
+
     private var audioTrack: AudioTrack? = null
 
     /** 推上去的那条视频轨道，id = cid。 */
@@ -184,6 +193,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             renderers[LOCAL]?.let { renderer -> runCatching { videoTrack?.removeSink(renderer) } }
             renderers.values.forEach { renderer -> runCatching { renderer.release() } }
             renderers.clear()
+            videoDiag.clear()
+            firstFrames.clear()
             remoteVideo.clear()
             trackOwners.clear()
         }
@@ -279,76 +290,19 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     override fun createVideoView(context: android.content.Context): android.view.View =
         SurfaceViewRenderer(context)
 
-    /**
-     * 按 [IMVideoFit] 的判据决定这一格是裁切填满还是等比留边，并重新布局。
-     *
-     * # 为什么量的是**父容器**而不是渲染器自己
-     *
-     * 渲染器给的是 `WRAP_CONTENT`（见 `IMVideoTile`），它的尺寸**由 scalingType 反推出来**——
-     * 拿它去决定 scalingType 就成了循环。父容器（`videoHost`）是 `MATCH_PARENT`、
-     * 尺寸稳定，才是「这一格有多大」的正确来源。
-     *
-     * # 为什么不能给 `MATCH_PARENT`
-     *
-     * libwebrtc 的 `RendererCommon.VideoLayoutMeasure.measure()` 里有一句
-     * 「If the measure specification is forcing a specific size, yield」——
-     * 测量规格是 `EXACTLY`（`MATCH_PARENT` 就是）时它**直接忽略 scalingType**、
-     * 占满给定尺寸再裁切填充。2026-09-10 第一版改动就栽在这里：只设了
-     * `setScalingType`、而 `IMVideoTile` 给的是 `MATCH_PARENT`，**是个空操作**，
-     * 真机上仍然满格裁切。
-     *
-     * **两个参数都要传**：单参版只设「方向一致」那一种，而方向不一致恰恰是要处理的那一种。
-     *
-     * **必须在主线程**（见类注释）。
-     */
-    private fun applyVideoFit(renderer: SurfaceViewRenderer, frame: IntArray?) {
-        val host = renderer.parent as? android.view.View
-        val fill = frame == null ||
-            IMVideoFit.shouldFill(frame[0], frame[1], frame[2], host?.width ?: 0, host?.height ?: 0)
-        val type = if (fill) {
-            RendererCommon.ScalingType.SCALE_ASPECT_FILL
-        } else {
-            RendererCommon.ScalingType.SCALE_ASPECT_FIT
-        }
-        renderer.setScalingType(type, type)
-        renderer.requestLayout()
-    }
-
-    /** uid（或 [LOCAL]）→ 最近一帧的 `[未旋转宽, 未旋转高, 旋转角]`。布局变化时要拿它重算。 */
-    private val lastFrameSize = LinkedHashMap<String, IntArray>()
-
-    /**
-     * 记下这一路的帧尺寸并重算缩放。**在渲染线程上被调用**，所以先回主线程。
-     *
-     * 布局也要监听：第一帧到达时父容器可能还没量出来（宽高是 0），
-     * 那时 [IMVideoFit.shouldFill] 会先给 FILL，等 layout 稳定后这里再算一次。
-     */
-    private fun onFrameSize(key: String, width: Int, height: Int, rotation: Int) {
-        val frame = intArrayOf(width, height, rotation)
-        onMain {
-            lastFrameSize[key] = frame
-            renderers[key]?.let { applyVideoFit(it, frame) }
-        }
-    }
-
-    /** 父容器尺寸一变就重算（转屏、进出全屏、九宫格行列变化都会走到）。 */
-    private fun watchLayout(key: String, renderer: SurfaceViewRenderer) {
-        renderer.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            applyVideoFit(renderer, lastFrameSize[key])
-        }
-    }
-
     override fun attachView(uid: String, view: Any?) = onMain {
         detachRenderer(uid)
         val renderer = view as? SurfaceViewRenderer ?: return@onMain
         // **这两行必须在主线程**，否则直接抛 IllegalStateException（见类注释）。
         renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(uid))
         renderer.setEnableHardwareScaler(true)
-        applyVideoFit(renderer, lastFrameSize[uid])
-        watchLayout(uid, renderer)
+        fitter.mount(uid, renderer)
         renderers[uid] = renderer
         bindRemoteTracks()
     }
+
+    /** 渲染器复用、`init` 后的首帧只有一次，对端重开摄像头要另外等新画面上屏（见 [IMFirstFrameGate]）。 */
+    override fun awaitFirstVideoFrame(uid: String) = onMain { firstFrames.arm(uid, renderers[uid]) }
 
     override fun claimRemoteTracks(owners: Map<String, String>) = onMain {
         trackOwners.putAll(owners)
@@ -380,8 +334,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         // **本端预览也要 RendererEvents**：原先传 null，于是拿不到帧尺寸、缩放判据无从计算。
         renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(LOCAL))
         renderer.setEnableHardwareScaler(true)
-        applyVideoFit(renderer, lastFrameSize[LOCAL])
-        watchLayout(LOCAL, renderer)
+        fitter.mount(LOCAL, renderer)
         renderer.setMirror(frontCamera)
         renderers[LOCAL] = renderer
         // 对号与起采集在同一把锁里：停止要么整个排在前面（这里作罢），要么排在后面（把这次停掉）。
@@ -534,15 +487,18 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     private fun cameraPermitted() =
         appContext.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
-
-    /** 第一帧到了就撤 loading——UI 全靠这个信号，不然会露一段黑屏。 */
+    /** 第一帧到了就撤 loading——UI 全靠这个信号，不然会露一段黑屏。每次 `init` 新造一个。 */
     private fun firstFrameEvents(uid: String) = object : RendererCommon.RendererEvents {
+        private val initAtMs = android.os.SystemClock.elapsedRealtime()
+
         override fun onFirstFrameRendered() {
-            events?.onFirstVideoFrame(uid)
+            videoDiag.firstFrameRendered(uid, initAtMs)
+            firstFrames.firstFrameRendered(uid)
         }
 
         override fun onFrameResolutionChanged(width: Int, height: Int, rotation: Int) {
-            onFrameSize(uid, width, height, rotation)
+            videoDiag.resolutionChanged(uid, width, height, rotation)
+            fitter.onFrameSize(uid, width, height, rotation)
         }
     }
 
@@ -574,6 +530,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             // 这里是 WebRTC 的信令线程；三张表都归主线程管（见类注释）。
             onMain {
                 remoteVideo[trackId] = video
+                videoDiag.watch(trackId, video)
                 bindRemoteTracks()
             }
         }

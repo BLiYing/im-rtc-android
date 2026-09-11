@@ -392,6 +392,37 @@ class EngineLoopTest {
         assertEquals(offersAfterJoin, media.offersAsked.size)
     }
 
+    /**
+     * 对端开摄像头之后，要让媒体层**等新画面真正上屏**再报首帧（`awaitFirstVideoFrame`）。
+     *
+     * 渲染器整通复用，`init` 后的首帧只来一次；少了这一步，界面只能按 `room.track_muted` 揭示格子，
+     * 而信令比新画面早几百毫秒——露出来的是关摄像头之前的最后一帧（Android 真机 2026-09-11 19:17）。
+     */
+    @Test
+    fun `对端开摄像头要等新画面上屏，关摄像头和开关麦克风不等`() {
+        loginAndConnect()
+        joinConferenceRoom()
+        fun trackMuted(kind: String, muted: Boolean) = transport.deliver(
+            IMFrameType.ROOM_TRACK_MUTED,
+            "",
+            mapOf(
+                "room_id" to IMJson.Str("r-1"),
+                "track_id" to IMJson.Str("t-$kind"),
+                "participant_id" to IMJson.Str("p-2"),
+                "uid" to IMJson.Str("carol"),
+                "kind" to IMJson.Str(kind),
+                "muted" to IMJson.Bool(muted),
+            ),
+        )
+
+        trackMuted("video", true)
+        trackMuted("audio", false)
+        assertEquals(emptyList<String>(), media.awaitedFirstFrames)
+
+        trackMuted("video", false)
+        assertEquals(listOf("carol"), media.awaitedFirstFrames)
+    }
+
     @Test
     fun `没有媒体适配器时，推流失败但信令一切正常`() {
         val bare = IMCallEngine.forTest(
@@ -494,6 +525,10 @@ class EngineLoopTest {
         /** 最后一次收到的归属表：`track_id → uid`。 */
         var claimed: Map<String, String> = emptyMap()
         override fun claimRemoteTracks(owners: Map<String, String>) { claimed = owners }
+
+        /** 被要求「等新画面上屏再报首帧」的 uid，按先后。 */
+        val awaitedFirstFrames = mutableListOf<String>()
+        override fun awaitFirstVideoFrame(uid: String) { awaitedFirstFrames += uid }
         override fun startLocalPreview(view: Any?) = Unit
         override fun switchCamera() = Unit
         override fun setSpeakerOn(on: Boolean) = Unit
