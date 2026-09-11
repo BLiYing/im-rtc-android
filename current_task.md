@@ -11,31 +11,20 @@
 
 ## 当前焦点
 
-**2026-09-11：接听时的摄像头权限、摄像头关着不采集，三端一起对齐交互稿 `RTC_CALL_UX_FLOWS.html` §01 权限时机表 + §11-10。已合 main，用户自己打包真机验。**
+**2026-09-11 下午：真机报的五个问题逐个修，直接在 main 上改（未提交）。本仓三处：**
 
-| 场景 | 设计 | 现在（本仓） |
-|---|---|---|
-| 群视频来电横幅 | 最左的摄像头按钮是关态 | 关态 |
-| 接听群视频 | 麦克风 + 摄像头都申请，进房摄像头关着 | 两样都申请；**进房不发视频轨**，摄像头一个都不开 |
-| 1v1 视频，来电页亲手关掉摄像头再接 | 只要麦克风（= 以语音接听） | 只申请麦克风；不采集、不发视频轨 |
-| 通话中点「开摄像头」 | 那一刻才问；拒了按钮显示「无权限」，通话照打 | `openCamera` 补发视频轨；没 CAMERA 权限 `ensureCapture` 不起采集、抛 2001 |
+| # | 现象 | 根因 | 本仓改了什么 |
+|---|---|---|---|
+| 2 | PKD130 启动即崩，每次重启再崩（`Starting FGS with type microphone … requires RECORD_AUDIO`） | Android 14+ 前台服务的 microphone 类型要求 RECORD_AUDIO **已授权**。麦克风权限被收回后在来电页点开摄像头 → `ensureCapture` 起服务 → `onStartCommand` 里抛出去 → 系统重投启动 → 循环崩 | `IMForegroundTypes` 按真实授权拼类型；`start()` 一样都没有就不起；`onStartCommand` 兜住异常 `stopSelf()` |
+| 3a/3c | iOS 九宫格竖屏源左右黑边 / 变成竖直画面（本仓正常） | 9:16 源放正方形格子恰好压在 0.5625 阈值上，iOS 格子边长是小数、差 1px 就判成 FIT；本仓格子边长是整数像素 | `IMVideoFit.FILL_TOLERANCE = 0.01`，与 iOS 同值（对齐，不是修 bug） |
+| 4a | 视频来电横幅接听键是摄像头图标，点开来电页是听筒 | 横幅 `render` 按 `mediaType` 换图标，违反 UI_SPEC「phone · 来电页、来电横幅」 | 恒为 `PHONE` |
 
-**根因**：原先 Engine 进房就把视频轨发出去、采集照开，「关摄像头」只是 mute——所以关着接听也得要摄像头权限。
-iOS / Web 是等用户点开才采集，没有这个问题。
+`./scripts/test.sh` 全绿（6 步），新增 `IMForegroundTypesTest` 4 条、`VideoFitTest` 2 条。**没上真机**。
+Web（3b 本端格子没画面）与 iOS（3a/3c、4a、4b 来电页看不见自己）在各自仓的 current_task。
 
-**怎么改的**：
-- Kit 在 `call` / `accept` / `joinRoom` 之前 `syncCameraIntent`：摄像头关着就 `engine.closeCamera()`，Engine 记下意图。
-- `IMLocalPublisher.publishDefaults` 见意图是关就只发音频；`openCamera` 走 `publishCameraIfMissing` 补发，断线续房那条路同样补发。
-- 接听申请走 `devicesForAnswering(mediaType, cameraOptedOut)`。`cameraOptedOut` 只在 INCOMING 阶段切摄像头时置位——
-  群通话默认关着进来**不算**用户亲手关，照样问摄像头。
-- 本地预览只在 `wantsLocalPreview()`（摄像头开着）时起。
-- 顺带拆体量：发布逻辑抽成 `IMLocalPublisher`（`IMCallEngine.kt` 598 → 583 行），呈现逻辑抽成 `IMCallPresentation`。
+**悬而未决**：本仓来电页点开摄像头会当场弹摄像头权限框，交互稿 §01 说响铃时什么都不申请——等用户拍板，没动。
 
-**PKD130 / Android 15 上验过**（Web demo 当 bob）：群来电横幅关态；群接听不发视频、摄像头全 closed、点开后补发、Web 看得到；
-1v1 来电页关摄像头接听同上。**没验**：没摄像头权限的两条（ColorOS 挡 `pm revoke`，见「已知坑」）。
-
-`./scripts/test.sh` 全绿（6 步），新增 `CameraIntentPublishTest` 7 条。worktree 里要带
-`RTC_CONFORMANCE_DIR=/Users/liying/IOSProject/im-rtc/im-rtc-server/docs/conformance`。
+上一刀（接听时摄像头权限 / 摄像头关着不采集）已合 main、PKD130 验过，细节看 `git log`。
 
 **iOS 的 simulcast 缺失已决定暂缓**（2026-09-09），结论在 `../im-rtc-ios/current_task.md` 的「已知坑」。
 
@@ -49,12 +38,12 @@ iOS / Web 是等用户点开才采集，没有这个问题。
 
 ### 真机验收
 
-**本轮优先（摄像头权限这一刀）**：
+**本轮优先**：
 
-1. **先去系统设置里关掉 Demo 的相机权限**，再 1v1 视频来电 → 来电页关摄像头 → 接听：只弹麦克风、能接通、看得见对方。
-2. 接着点「开摄像头」：这时才弹摄像头权限；拒绝 → 按钮显示「无权限」，通话不断。
-3. 群视频接听（有权限）：进房自己那格是头像、对端看不到画面；点开后对端看得到。
-   日志判据：进房有 `进房时摄像头关着，视频先不发布`，点开有 `摄像头现在打开了，补发`。
+1. **系统设置里关掉 Demo 的麦克风权限**（相机留着）→ 视频来电 → 来电页点开摄像头：不崩；
+   日志 `前台服务已启动（mic=false camera=true）`。两样都关：日志 `麦克风与摄像头权限都没有，前台服务不起`，也不崩。
+2. 视频来电横幅的接听键是听筒，与点开来电页那颗一致。
+3. 上一刀没验的：没摄像头权限时 1v1 来电页关摄像头再接只弹麦克风；通话中点开 → 「无权限」、通话不断。
 
 **上一轮挂着的**（1v1 视频）：控制条收起后点底部该叫回控制条、不该静音/挂断；挂断后结束画面标题栏不淡掉；
 开局清晰度——服务端日志进房 1 秒内出现 `上行层已接入 … rid=h`、整通没有 `layer=h live=False`
@@ -158,6 +147,9 @@ iOS / Web 是等用户点开才采集，没有这个问题。
 - **小窗吸角要等容器量出来**：`IMPipLayout.origin` 是拿容器宽高算的，宽是 0 时右上角退化成 x=0。
 - **前台服务类型不能降级**：预览可能先把摄像头开起来了，`start()` 再传 `withCamera=false`，
   Android 14 起就是「正在用摄像头却没有 camera 类型」。
+- **前台服务类型也不能超出已授权的权限**（Android 14+）：microphone 要 RECORD_AUDIO、camera 要 CAMERA 已授权，否则
+  `startForeground` 抛 `SecurityException`。抛在 `onStartCommand` 里系统会重投启动 → **循环崩**；
+  而 `startForegroundService` 之后不调 `startForeground` 也崩——所以 `start()` 里先判（`IMForegroundTypes.granted`）。
 - **横排里的占位格高度必须写死 0**：裸 `View` 用 `wrap_content`，`View.getDefaultSize` 对
   `AT_MOST` 直接返回 specSize（= 整块可用高度），一个看不见的占位格就能把控制条撑到整屏高，
   贴底重力失效、按钮整体跑到屏幕顶上。同类坑对任何「用裸 View 占位」的地方都成立。

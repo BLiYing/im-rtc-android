@@ -37,6 +37,17 @@ internal object IMVideoFit {
     const val MIN_VISIBLE_FRACTION = 0.5625f
 
     /**
+     * 判据的容差：**贴着阈值的那一格不能因为一两个像素翻成 FIT**。
+     *
+     * 9:16 源在正方形格子里正好压在阈值上，任何微小偏差都会把它推到另一边：
+     * 格子宽高差 1px（iOS 2026-09-11 真机：UIStackView 把小数边长取整，左右露出两条黑边），
+     * 或发送端缩放后源不再是精确的 9:16（对齐到偶数 / 16 的倍数）。
+     * 本端的格子边长是整数像素、一直没踩到，但判据五端必须同一个数，所以一起加。
+     * 0.01 盖得住这两种，又远够不到真该留黑边的组合（竖屏全屏 + 横屏源是 0.276）。
+     */
+    const val FILL_TOLERANCE = 0.01f
+
+    /**
      * 裁切填满之后，源画面还剩多少比例可见。返回 `0f` 表示算不出（尺寸还没量出来）。
      *
      * `frameWidth` / `frameHeight` 是**未旋转**的缓冲区尺寸——libwebrtc 的
@@ -73,6 +84,6 @@ internal object IMVideoFit {
         viewHeight: Int,
     ): Boolean {
         val fraction = visibleFraction(frameWidth, frameHeight, rotationDegrees, viewWidth, viewHeight)
-        return fraction == 0f || fraction >= MIN_VISIBLE_FRACTION
+        return fraction == 0f || fraction >= MIN_VISIBLE_FRACTION - FILL_TOLERANCE
     }
 }

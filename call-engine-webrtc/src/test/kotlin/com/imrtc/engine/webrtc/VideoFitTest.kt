@@ -59,6 +59,23 @@ class VideoFitTest {
     }
 
     @Test
+    fun `格子差一个像素、源不是精确 9比16：贴着阈值的照样填满`() {
+        // iOS 2026-09-11 真机：格子取整后宽高差 1px，不加容差就翻成 FIT、左右两条黑边。
+        val offByOne = IMVideoFit.visibleFraction(portraitW, portraitH, portraitRot, 527, 526)
+        assertTrue("不加容差这一格就是 FIT", offByOne < IMVideoFit.MIN_VISIBLE_FRACTION)
+        assertTrue(IMVideoFit.shouldFill(portraitW, portraitH, portraitRot, 527, 526))
+        // 源缩放后 358×640（0.559）。
+        assertTrue(IMVideoFit.shouldFill(640, 358, 90, 350, 350))
+    }
+
+    @Test
+    fun `容差不吞掉真该留黑边的`() {
+        assertEquals(0.01f, IMVideoFit.FILL_TOLERANCE, 0.0001f)
+        // 0.54：明显低于阈值，照样留黑边。
+        assertFalse(IMVideoFit.shouldFill(1000, 540, 90, 350, 350))
+    }
+
+    @Test
     fun `方向完全一致时整帧都可见`() {
         assertEquals(1f, IMVideoFit.visibleFraction(1280, 720, 0, 640, 360), 0.001f)
         assertTrue(IMVideoFit.shouldFill(1280, 720, 0, 640, 360))

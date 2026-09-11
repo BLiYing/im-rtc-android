@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""三端「接听时摄像头权限 / 摄像头关着不采集」规则的静态对齐检查（交互稿 §01 权限时机表 + §11-10）。
+"""三端静态对齐检查：接听时摄像头权限 / 摄像头关着不采集（交互稿 §01 + §11-10），
+以及 2026-09-11 下午五个真机问题（前台服务类型、九宫格填满容差、Web 本端格子、横幅接听键、iOS 来电页预览）。
 
 只读三端 main 的源码，逐条断言关键实现在场；缺哪条就打印哪条并以非零退出。
 """
@@ -57,6 +58,42 @@ RULES: list[Rule] = [
     # 4. 群通话默认关摄像头（来电横幅最左那颗按钮是关态）
     Rule("android", "横幅摄像头图标跟 cameraOn", ANDROID, "call-uikit/src/main/**/IMIncomingBanner.kt", r"state\.cameraOn"),
     Rule("web", "defaultCameraOn = video && !group", WEB, "packages/call-uikit-react/src/**/callView.ts", r"defaultCameraOn"),
+    # ---- 2026-09-11 下午：五个真机问题 ----
+    # 2. Android 前台服务类型跟真实授权走，起不来不许循环崩
+    Rule("android", "startInForeground 按授权拼类型", ANDROID, "call-engine-webrtc/src/main/**/IMCallForegroundService.kt",
+         r"IMForegroundTypes\.granted\(this, withCamera\)"),
+    Rule("android", "start() 一样权限都没有就不起服务", ANDROID, "call-engine-webrtc/src/main/**/IMCallForegroundService.kt",
+         r"IMForegroundTypes\.granted\(context, withCamera\)\.isEmpty"),
+    Rule("android", "onStartCommand 兜住异常并 stopSelf", ANDROID, "call-engine-webrtc/src/main/**/IMCallForegroundService.kt",
+         r"startForeground 失败，收掉服务"),
+    Rule("android", "camera 类型要求摄像头已授权", ANDROID, "call-engine-webrtc/src/main/**/IMCallForegroundService.kt",
+         r"camera = withCamera && cameraGranted"),
+    # 3a/3c. 竖屏源放正方形格子正好压在阈值上：两端同一个容差，iOS 格子边长取整到像素
+    Rule("android", "FILL 判据带 FILL_TOLERANCE", ANDROID, "call-engine-webrtc/src/main/**/IMVideoFit.kt",
+         r"MIN_VISIBLE_FRACTION - FILL_TOLERANCE"),
+    Rule("android", "FILL_TOLERANCE = 0.01", ANDROID, "call-engine-webrtc/src/main/**/IMVideoFit.kt", r"FILL_TOLERANCE = 0\.01f"),
+    Rule("ios", "imShouldFillVideo 带 imFillTolerance", IOS, "Sources/IMCallEngine/Media/IMVideoFit.swift",
+         r"imMinVisibleFraction - imFillTolerance"),
+    Rule("ios", "imFillTolerance = 0.01", IOS, "Sources/IMCallEngine/Media/IMVideoFit.swift", r"imFillTolerance: Double = 0\.01"),
+    Rule("ios", "九宫格边长取整到物理像素", IOS, "Sources/IMCallKit/UI/IMCallGridView.swift",
+         r"imSquareTileSide\(width: bounds\.width, height: bounds\.height"),
+    # 3b. Web 通话中打开摄像头要把 cid 给本端格子
+    Rule("web", "通话中发布摄像头后 dispatch localCamera", WEB, "packages/call-uikit-react/src/useCallActions.ts",
+         r"cids\.current\.cam = await engine\.publishCamera\(\);\s*\n(?:\s*//[^\n]*\n)*\s*dispatch\(\{ type: 'localCamera', cid: cids\.current\.cam \}\)"),
+    # 4a. 横幅接听键恒为听筒，构造时给定
+    Rule("android", "横幅接听键构造为 PHONE", ANDROID, "call-uikit/src/main/**/IMIncomingBanner.kt",
+         r"acceptButton = roundButton\([^\n]*IMKitIcon\.PHONE"),
+    Rule("ios", "横幅接听键构造为 phone", IOS, "Sources/IMCallKit/UI/IMIncomingBanner.swift",
+         r"\(acceptButton, [^\n]*IMKitIcon\.phone"),
+    # 4b. iOS 来电页起预览；只起过预览的 cid 不算已发布
+    Rule("ios", "imShouldPreviewWhileRinging 规则", IOS, "Sources/IMCallKit/State/IMPermissionGate.swift",
+         r"cameraOn && !cameraBlocked && cameraStatus == \.granted"),
+    Rule("ios", "来电页渲染时起预览", IOS, "Sources/IMCallKit/UI/IMCallOverlayViewController.swift",
+         r"if state\.phase == \.incoming \{ controller\.startRingingPreviewIfAllowed\(\) \}"),
+    Rule("ios", "toggleCamera 按 cameraPublished 判发布", IOS, "Sources/IMCallKit/State/IMCallController.swift",
+         r"guard !cameraPublished, on else"),
+    Rule("ios", "预览防重入", IOS, "Sources/IMCallKit/State/IMCallController+Permissions.swift",
+         r"guard wanted, self\.cameraCID\.isEmpty, !self\.previewStarting else"),
 ]
 
 # 这几条是「旧行为不许回来」
@@ -64,6 +101,14 @@ FORBIDDEN: list[Rule] = [
     Rule("android", "answer() 不再按 cameraOn 申请", ANDROID, "call-uikit/src/main/**/IMCallKit.kt",
          r"devicesFor\(state\.mediaType, withCamera = state\.cameraOn\)"),
     Rule("android", "旧 publishDefaults 已删", ANDROID, "call-engine/src/main/**/IMCallEngine.kt", r"private fun publishDefaults\("),
+    Rule("android", "横幅接听键不再按 mediaType 换图标", ANDROID, "call-uikit/src/main/**/IMIncomingBanner.kt",
+         r"acceptButton\.setImageResource"),
+    Rule("ios", "横幅接听键不再按 mediaType 换图标", IOS, "Sources/IMCallKit/UI/IMIncomingBanner.swift",
+         r"acceptButton\.setImage"),
+    Rule("android", "startInForeground 不再无条件带 MICROPHONE", ANDROID, "call-engine-webrtc/src/main/**/IMCallForegroundService.kt",
+         r"var type = ServiceInfo\.FOREGROUND_SERVICE_TYPE_MICROPHONE\b"),
+    Rule("ios", "toggleCamera 不再按 cid 非空判已发布", IOS, "Sources/IMCallKit/State/IMCallController.swift",
+         r"guard cameraCID\.isEmpty, on else"),
 ]
 
 

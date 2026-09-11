@@ -115,7 +115,9 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
         }
         title.text = callerName
         subtitle.text = state.statusText
-        acceptButton.setImageResource((if (state.mediaType == "video") IMKitIcon.VIDEO else IMKitIcon.PHONE).resId)
+        // 接听键恒为听筒（构造时已设），与来电页那颗、与 Web 一致（UI_SPEC「phone · 来电页、来电横幅」）。
+        // 原先视频来电换成摄像机图标：群通话默认关着摄像头也显示摄像机，像是「以视频接听」。
+        // 出不出镜只由最左那颗摄像头开关表达（§11-10）。
         // 语音来电没有摄像头可关。
         cameraButton.visibility = if (state.showsCameraButton) VISIBLE else GONE
         cameraButton.setImageResource((if (state.cameraOn) IMKitIcon.VIDEO else IMKitIcon.VIDEO_SLASH).resId)
