@@ -91,9 +91,6 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     /** 上行每一层实际编出多少分辨率、被什么限住。见 [IMUplinkStats] 的类注释。 */
     private val uplinkStats = IMUplinkStats(main)
 
-    /** 远端画面断流后恢复那几秒的诊断日志（排查「画面出来又刷新一下」）。见 [IMRemoteVideoDiagnostics]。 */
-    private val videoDiag = IMRemoteVideoDiagnostics(main, { peers.connection("sub") }) { trackOwners[it] }
-
     /** 帧尺寸 → 裁切还是留边。见 [IMVideoFitter]。 */
     private val fitter = IMVideoFitter(main) { renderers[it] }
 
@@ -193,7 +190,6 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             renderers[LOCAL]?.let { renderer -> runCatching { videoTrack?.removeSink(renderer) } }
             renderers.values.forEach { renderer -> runCatching { renderer.release() } }
             renderers.clear()
-            videoDiag.clear()
             firstFrames.clear()
             remoteVideo.clear()
             trackOwners.clear()
@@ -489,15 +485,11 @@ class IMWebRTCAdapter @JvmOverloads constructor(
 
     /** 第一帧到了就撤 loading——UI 全靠这个信号，不然会露一段黑屏。每次 `init` 新造一个。 */
     private fun firstFrameEvents(uid: String) = object : RendererCommon.RendererEvents {
-        private val initAtMs = android.os.SystemClock.elapsedRealtime()
-
         override fun onFirstFrameRendered() {
-            videoDiag.firstFrameRendered(uid, initAtMs)
             firstFrames.firstFrameRendered(uid)
         }
 
         override fun onFrameResolutionChanged(width: Int, height: Int, rotation: Int) {
-            videoDiag.resolutionChanged(uid, width, height, rotation)
             fitter.onFrameSize(uid, width, height, rotation)
         }
     }
@@ -530,7 +522,6 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             // 这里是 WebRTC 的信令线程；三张表都归主线程管（见类注释）。
             onMain {
                 remoteVideo[trackId] = video
-                videoDiag.watch(trackId, video)
                 bindRemoteTracks()
             }
         }

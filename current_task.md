@@ -20,7 +20,7 @@
 - 回调表没加项，`onFirstVideoFrame` 语义扩成「重开后再报一次」（server 设计 §7.5 已改）。单测 `EngineLoopTest`、`CallViewStateTest` 各一条；`./scripts/test.sh` 全绿（6 步）。
 - 日志：`远端画面重开后新帧上屏 key= waitMs=`（每次重开 1 行）· `新画面 2000ms 没上屏，照样揭示 uid=`（不该出现）。
 - **限制**：首次进房也变成「首帧上屏前露头像」（原先黑底）；iOS / Web / 桌面没做「重开再报」；SFU 开摄像头不主动要关键帧（次要，没做）。
-- 上一轮接收侧诊断（`IMFrameGapTracker` / `IMRemoteVideoDiagnostics`，每帧多一次 JNI 回调）还挂着，**真机确认修好后拆掉**。
+- 上一轮接收侧诊断（`IMFrameGapTracker` / `IMRemoteVideoDiagnostics`，每帧多一次 JNI 回调）真机确认修好后已拆掉；还要查就从 git 历史捞回来。
 
 **体量欠账（下次动它之前先拆）**：`IMCallEngine.kt` 599、`IMSignalConnection.kt` 598、`IMCallView.kt` 591、`IMCallKit.kt` 589。
 `IMSignalConnection` 还能挪：socket 代际（`generation` / `closedGeneration` / `TransportListener`）连同心跳。
@@ -28,11 +28,11 @@
 ## 下一步
 
 **真机验收（报通话时间）**：
-0. **对端重开摄像头不再闪**：群通话里 iOS 频繁开关摄像头，本机 iOS 那格应是「头像 → 直接新画面」；logcat 有 `远端画面重开后新帧上屏 waitMs=`（几百 ms），没有 `没上屏，照样揭示`。
+0. ~~对端重开摄像头不再闪~~：20:04 真机已验（`IMFirstFrameGate`，已提交 `cc111f0`）；再回归看 logcat 有 `远端画面重开后新帧上屏 waitMs=`、没有 `没上屏，照样揭示`。
 1. **后台重连节奏**（`2c9c2fe`）：登录后切后台约 1 分钟（ColorOS 最好），`adb logcat | grep -i signal` 断开→重连间隔走 1,2,3,3,3… 秒（约每分钟 10 次，不是原来的 20 次）。
 2. 期间切回前台：立刻重连一次（不等定时器），退避归零。通话中切后台（前台服务在跑）也该走后台节奏。ColorOS 秒杀间隔是否稳定、服务端 5 秒窗口是否接得住，都还没实机数据。
 3. 1v1 视频上一轮：控制条收起后点底部叫回控制条（不静音 / 挂断）；挂断后结束画面标题栏不淡掉；开局清晰度——服务端进房 1 秒内有 `上行层已接入 … rid=h`、整通无 `layer=h live=False`。
-   自动隐藏那刀在分支 `worktree-fix-autohide-never-fires`，未验收。
+   自动隐藏那刀已合入 main（`f7cfb05`），未验收。
 4. 跨端老批次（含本端「接通前按静音」）清单见 `../im-rtc-server/current_task.md`「跨端待验」。
 
 **待办**：
