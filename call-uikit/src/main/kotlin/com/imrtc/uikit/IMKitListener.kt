@@ -181,8 +181,8 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     override fun onRoomJoined(roomId: String) {
         IMCallKit.update(IMCallViewReducer.connected(state))
         IMCallKit.startTimer()
-        // 进房时 Engine 按 media_type 自动发布了本端 Track：来电页上关着摄像头（= 以语音接听）或权限被拒的，
-        // 这里把它关回去——**用户表示不出镜，指示灯就不该亮**。
+        // Kit 自己拨出 / 接听时，关摄像头的意图进房之前就给过 Engine（`IMCallKit.syncCameraIntent`），视频根本没发。
+        // 这里再关一遍，兜的是宿主自己调 `engine.call` / `accept` 的路径——**用户表示不出镜，指示灯就不该亮**。
         if (state.mediaType == "video" && !state.cameraOn) IMCallKit.engine?.closeCamera()
         if (!state.micOn) IMCallKit.engine?.closeMic()
         /*

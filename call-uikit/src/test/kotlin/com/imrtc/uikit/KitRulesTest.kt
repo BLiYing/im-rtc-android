@@ -50,15 +50,11 @@ class KitRulesTest {
         assertEquals("关着摄像头接听只要麦克风", listOf(IMPermissionGate.Device.MICROPHONE), IMPermissionGate.devicesFor("video", false))
 
         /*
-         **发起时申请哪些设备只看 `media_type`，不看群不群、也不看摄像头默认开没开。**
-
-         2026-09-09 曾经改成「群通话只申请麦克风」，次日退回：引擎
-         `publishDefaults` 按 `media_type` 眼推视频，进房那一刻摄像头就真的被打开了。
-         权限清单和它一分叉，`ensureCapture()` 就会把一个采集失败的 source 缓存下来，
-         此后点「开摄像头」按钮亮着却一帧画面都没有，而且**一条日志都不打**。
+         **发起时申请哪些设备只看 `media_type`，不看群不群、也不看摄像头默认开没开**（交互稿 §01 的表）。
+         问归问：群通话默认关着摄像头，就不采集、不发布视频（见 `IMLocalPublisher`）。
         */
         assertEquals(
-            "群视频照样要摄像头——引擎会推视频",
+            "群视频照样要问摄像头权限",
             listOf(IMPermissionGate.Device.MICROPHONE, IMPermissionGate.Device.CAMERA),
             IMPermissionGate.devicesForPlacing("video", isGroup = true),
         )
@@ -70,6 +66,21 @@ class KitRulesTest {
             "语音通话不要摄像头",
             listOf(IMPermissionGate.Device.MICROPHONE),
             IMPermissionGate.devicesForPlacing("audio", isGroup = true),
+        )
+
+        // 接听：只有来电页上亲手关掉摄像头的才只要麦克风（§11-10）；群通话默认关着不算，照样问。
+        assertEquals(
+            listOf(IMPermissionGate.Device.MICROPHONE, IMPermissionGate.Device.CAMERA),
+            IMPermissionGate.devicesForAnswering("video", cameraOptedOut = false),
+        )
+        assertEquals(
+            "关掉摄像头再接听 = 以语音接听，只要麦克风",
+            listOf(IMPermissionGate.Device.MICROPHONE),
+            IMPermissionGate.devicesForAnswering("video", cameraOptedOut = true),
+        )
+        assertEquals(
+            listOf(IMPermissionGate.Device.MICROPHONE),
+            IMPermissionGate.devicesForAnswering("audio", cameraOptedOut = false),
         )
 
         fun run(results: Map<IMPermissionGate.Device, IMPermissionGate.Result>): Pair<IMPermissionGate.Outcome?, List<IMPermissionGate.Device>> {

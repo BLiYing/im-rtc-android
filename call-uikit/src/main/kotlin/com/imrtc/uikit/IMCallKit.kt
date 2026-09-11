@@ -3,7 +3,6 @@ package com.imrtc.uikit
 import android.app.Activity
 import android.app.Application
 import android.content.Context
-import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.view.View
@@ -19,7 +18,7 @@ import com.imrtc.engine.log.IMRTCLog
  *
  * 它做四件事：
  * 1. 把 Engine 的回调折成 [IMCallViewState]（纯值，可单测；接线在 [IMKitListener]）；
- * 2. 按当前状态**决定用哪种呈现形态**——全屏页 / 来电横幅 / 悬浮球 / 系统画中画，见 [desiredMode]；
+ * 2. 按当前状态**决定用哪种呈现形态**——全屏页 / 来电横幅 / 悬浮球 / 系统画中画，见 [IMCallPresentation]；
  * 3. 把界面上的点击翻译回 Engine 的方法调用；
  * 4. 拨出 / 接听之前先过权限门（交互稿 §01–§02）：拿不到麦克风就不该去响别人的铃。
  */
@@ -39,11 +38,8 @@ object IMCallKit {
     /** 横幅 / 悬浮球都挂在这上面（应用内浮层，不申请 SYSTEM_ALERT_WINDOW）。 */
     private val overlay = IMCallOverlay()
 
-    /** 横幅已经被用户点开过（或 5s 到点自动升级）。**它必须独立于 [IMCallViewState]**，否则界面来回跳。 */
-    private var bannerExpanded = false
-    private var mode = Mode.HIDDEN
-
-    private enum class Mode { HIDDEN, BANNER, BUBBLE, FULLSCREEN }
+    /** 呈现形态（全屏 / 横幅 / 悬浮球）怎么挑、怎么挂，见 [IMCallPresentation]。 */
+    private val presentation = IMCallPresentation(overlay)
 
     @Volatile
     internal var state: IMCallViewState = IMCallViewState()
@@ -101,8 +97,7 @@ object IMCallKit {
         lastInvited = emptyList()
         state = IMCallViewReducer.reset()
         main.post { overlay.detach() }
-        mode = Mode.HIDDEN
-        bannerExpanded = false
+        presentation.reset()
         remoteViews.clear()
         reportedLayers.clear()
         localPreview = null
@@ -120,8 +115,8 @@ object IMCallKit {
      * 摄像头拿不到就降级为语音继续。界面先切到「正在呼叫…」，权限卡叠在它上面——
      * 所以过完门要用 [stillPlacing] 再看一眼。
      *
-     * 申请哪些设备**只看 `media_type`**（[IMPermissionGate.devicesForPlacing]）：
-     * 视频通话就要摄像头，哪怕群通话默认关着它——引擎照样会在进房时推视频。
+     * 申请哪些设备**只看 `media_type`**（[IMPermissionGate.devicesForPlacing]）；
+     * 摄像头开不开看界面上那颗按钮（群通话默认关着），进房之前告诉 Engine，见 [syncCameraIntent]。
      */
     @JvmOverloads
     @JvmStatic
@@ -132,16 +127,20 @@ object IMCallKit {
             when (outcome) {
                 IMPermissionGate.Outcome.OK -> {
                     if (!stillPlacing()) return@ensurePermissions
-                    // 摄像头到手了才接采集——**拨出中就该看见自己**（草图 §03-E）。
+                    // 摄像头到手、而且开着才接采集——**拨出中就该看见自己**（草图 §03-E）。
                     onLocalMediaStarted()
+                    syncCameraIntent(instance)
                     instance.call(peers, mediaType, isGroup)
                 }
                 IMPermissionGate.Outcome.CAMERA_BLOCKED -> {
                     if (!stillPlacing()) return@ensurePermissions
                     update(IMCallViewReducer.cameraBlocked(state))
+                    syncCameraIntent(instance)
                     instance.call(peers, mediaType, isGroup)
                 }
-                IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED -> update(IMCallViewReducer.reset())
+                // 同上先看一眼：这一屏可能已经不在了，reset() 会把无关的当前状态整个抹掉。
+                IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED ->
+                    if (stillPlacing()) update(IMCallViewReducer.reset())
             }
         }
     }
@@ -158,6 +157,7 @@ object IMCallKit {
             } else {
                 onLocalMediaStarted()
             }
+            syncCameraIntent(instance)
             instance.joinRoom(roomId, roomToken)
         }
     }
@@ -199,14 +199,6 @@ object IMCallKit {
         return view
     }
 
-    /**
-     * 本端预览的渲染器。**造出来就当场接上采集**（`startLocalPreview` 自己会把摄像头开起来）。
-     *
-     * 原先是「造一个空视图，等 onRoomJoined 再接」，而那一步要拿前台 Activity——
-     * 可通话页 [IMCallActivity] 一起来，宿主的 Activity 就 pause 了，
-     * `IMActivityTracker.foreground()` 返回 null（它刻意不认自己家的通话页），
-     * 于是 `startLocalPreview` **一次都没被调用过**：真机上「别人看得见我，我自己看不见我」。
-     */
     /** 这个人的画面不要了：把渲染器从 Engine 上摘掉，别让解码器一直占着。 */
     internal fun releaseRemoteView(uid: String) {
         if (remoteViews.remove(uid) == null) return
@@ -242,6 +234,14 @@ object IMCallKit {
         reportedLayers.remove(uid)
     }
 
+    /**
+     * 本端预览的渲染器。**摄像头该开的话，造出来就当场接上采集**（`startLocalPreview` 自己会把摄像头开起来）。
+     *
+     * 原先是「造一个空视图，等 onRoomJoined 再接」，而那一步要拿前台 Activity——
+     * 可通话页 [IMCallActivity] 一起来，宿主的 Activity 就 pause 了，
+     * `IMActivityTracker.foreground()` 返回 null（它刻意不认自己家的通话页），
+     * 于是 `startLocalPreview` **一次都没被调用过**：真机上「别人看得见我，我自己看不见我」。
+     */
     internal fun localPreviewView(context: Context): View? {
         val instance = engine ?: return null
         val view = localPreview
@@ -252,8 +252,11 @@ object IMCallKit {
          「正在呼叫…」、权限卡叠在它上面——这一步比权限门先跑。抢在授权之前开摄像头，
          轻则拿不到设备被记成 `2002 device_not_found`，重则把权限门的三段式整个绕过去。
          授权通过后 `onLocalMediaStarted()` 会再来一次，那时才真的接上。
+
+         **摄像头关着也不许接**：群通话默认关着摄像头进来，过完权限门那一下若照样接上，
+         指示灯亮着、按钮却显示关着——等于替用户开了摄像头。
         */
-        if (!localPreviewStarted && cameraGranted()) {
+        if (!localPreviewStarted && wantsLocalPreview()) {
             instance.startLocalPreview(view)
             localPreviewStarted = true
         }
@@ -274,17 +277,37 @@ object IMCallKit {
      */
     internal fun hasLocalVideo(): Boolean = state.cameraOn && !state.cameraBlocked
 
+    /** 该不该接上本端采集：视频通话、摄像头开着没被拒、权限到手，三条缺一不可。 */
+    private fun wantsLocalPreview(): Boolean = state.mediaType == "video" && hasLocalVideo() && cameraGranted()
+
     /**
-     * 接听。**先过权限门再发 accept**——先 accept 再发现没权限，对方那边已经接通了却听不到人。
-     * 来电页上关掉了摄像头就只问麦克风（= 以语音接听）。接不了就拒掉，别让对方一直等。
+     * 把「摄像头关着」**在进房之前**告诉 Engine——它进房时据此决定发不发视频（`IMLocalPublisher`）。
+     *
+     * 等 `onRoomJoined` 再关就晚了：视频已经发布、采集已经起来。群通话默认关着的、
+     * 来电页上关掉摄像头再接听的（= 以语音接听，§11-10）、摄像头权限被拒的，都不该被开摄像头；
+     * 后两种可能根本没给过摄像头权限。之后点「开摄像头」由 `openCamera` 补发视频。
+     */
+    private fun syncCameraIntent(instance: IMCallEngine) {
+        if (state.mediaType == "video" && !state.cameraOn) instance.closeCamera()
+    }
+
+    /**
+     * 接听。**先过权限门再发 accept**；接不了就拒掉，别让对方一直等。
+     *
+     * 申请哪些设备见 [IMPermissionGate.devicesForAnswering]：来电页上亲手关掉摄像头的只要麦克风（§11-10），
+     * 群通话默认关着也照样问（交互稿 §01）。问归问，开不开仍看那颗按钮（[syncCameraIntent]）。
      */
     internal fun answer() {
         val instance = engine ?: return
-        ensurePermissions(IMPermissionGate.devicesFor(state.mediaType, withCamera = state.cameraOn)) { outcome ->
+        ensurePermissions(IMPermissionGate.devicesForAnswering(state.mediaType, state.cameraOptedOut)) { outcome ->
             if (!stillIncoming()) return@ensurePermissions
             when (outcome) {
-                IMPermissionGate.Outcome.OK -> { onLocalMediaStarted(); instance.accept() }
-                IMPermissionGate.Outcome.CAMERA_BLOCKED -> { update(IMCallViewReducer.cameraBlocked(state)); instance.accept() }
+                IMPermissionGate.Outcome.OK -> { onLocalMediaStarted(); syncCameraIntent(instance); instance.accept() }
+                IMPermissionGate.Outcome.CAMERA_BLOCKED -> {
+                    update(IMCallViewReducer.cameraBlocked(state))
+                    syncCameraIntent(instance)
+                    instance.accept()
+                }
                 IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED -> instance.reject()
             }
         }
@@ -354,8 +377,8 @@ object IMCallKit {
     /**
      * 开 / 关摄像头。禁用态点了要出提示，不能静默（规范 §06）。
      *
-     * **要开而权限还没到手时，权限门在这里才跑**（2026-09-09）。群通话默认关摄像头、
-     * 发起时不申请摄像头权限，所以「第一次真正需要它」就是这一刻（《交互流程》§01 的表）。
+     * **要开而权限还没到手时，权限门在这里才跑**（2026-09-09）。来电页上关掉摄像头再接听的
+     * 只给过麦克风权限，「第一次真正需要它」就是这一刻（《交互流程》§01 的表）。
      * 被拒**只把这颗按钮置成「无权限」，通话继续**——它不是通话的必需品，
      * 不能像麦克风那样把整通电话取消掉。
      */
@@ -364,6 +387,7 @@ object IMCallKit {
         if (state.cameraOn) { engine?.closeCamera(); update(IMCallViewReducer.toggleCamera(state)); return }
         if (cameraGranted()) { openCameraNow(); return }
         ensurePermissions(listOf(IMPermissionGate.Device.CAMERA)) { outcome ->
+            if (!IMLateGuard.stillInCall(state)) return@ensurePermissions // 通话可能已经结束
             when (outcome) {
                 IMPermissionGate.Outcome.OK -> openCameraNow()
                 // 点了说明卡上的「取消」：什么都不改，他随时能再点一次。
@@ -467,12 +491,13 @@ object IMCallKit {
 
     /** 从小窗 / 横幅展开回全屏。 */
     internal fun expand() {
-        bannerExpanded = true
+        presentation.bannerExpanded = true
         update(IMCallViewReducer.expand(state))
     }
 
-/**
-     * 本端采集起来了。**必须无条件通知界面**：cid 不在 state 里，状态相等时界面不会自己刷。
+    /**
+     * 权限门过了，本端采集可以接上了（摄像头开着的话，见 [wantsLocalPreview]）。
+     * **必须无条件通知界面**：cid 不在 state 里，状态相等时界面不会自己刷。
      *
      * 不再需要「前台 Activity」——渲染器用 applicationContext 造得出来，
      * 而拿前台 Activity 恰恰是拿不到的（通话页一起来宿主那个就 pause 了）。
@@ -504,74 +529,10 @@ object IMCallKit {
         if (!IMLateGuard.stillInCall(next)) redButton.disarm()
         main.post {
             observers.toList().forEach { it(next) }
-            applyPresentation(next)
+            if (next.phase == IMCallViewState.Phase.IDLE) clearCallViews()
+            presentation.apply(next, appContext)
             scheduleSettledRemovals(next)
         }
-    }
-
-    // ── 呈现形态：全屏 / 横幅 / 悬浮球 ────────────────────────────────
-
-    /** 按当前状态决定用哪种形态，并把上一种收掉。**每次状态更新都会走一遍**，所以它必须便宜且幂等。 */
-    private fun applyPresentation(current: IMCallViewState) {
-        if (current.phase == IMCallViewState.Phase.IDLE) { bannerExpanded = false; clearCallViews() }
-        val host = IMActivityTracker.foreground()
-        val wanted = desiredMode(current, host)
-        val changed = wanted != mode
-        mode = wanted
-        when (wanted) {
-            Mode.HIDDEN -> if (changed) overlay.detach()
-            Mode.FULLSCREEN -> { overlay.detach(); if (changed) present() }
-            Mode.BANNER -> mountBanner(host, current)
-            Mode.BUBBLE -> mountBubble(host, current)
-        }
-        if (changed) IMRTCLog.i("kit", "通话界面形态：${wanted.name.lowercase()}")
-    }
-
-    /**
-     * 形态判定。顺序有讲究，**小窗优先于横幅**：来电时不可能是小窗（还没接通），反过来接通后也不该再出横幅。
-     * 在系统画中画里就是 FULLSCREEN（那个 Activity 还活着），别往宿主界面上再挂一个悬浮球。
-     */
-    private fun desiredMode(current: IMCallViewState, host: Activity?): Mode = when {
-        current.phase == IMCallViewState.Phase.IDLE -> Mode.HIDDEN
-        current.isMinimized && config.floatingWindow -> if (host != null) Mode.BUBBLE else Mode.HIDDEN
-        current.phase == IMCallViewState.Phase.INCOMING && config.bannerFirst && !bannerExpanded && host != null -> Mode.BANNER
-        else -> Mode.FULLSCREEN
-    }
-
-    private fun mountBanner(host: Activity?, current: IMCallViewState) {
-        val banner = overlay.mount(
-            host, IMIncomingBanner::class.java,
-            { activity ->
-                IMIncomingBanner(activity).apply {
-                    onAccept = { answer() }
-                    onReject = { hangup() }
-                    onExpand = { expand() }
-                    onToggleCamera = { toggleCamera() }
-                }
-            },
-            { activity -> IMCallOverlay.bannerParams(activity) },
-        )
-        banner?.render(current)
-    }
-
-    private fun mountBubble(host: Activity?, current: IMCallViewState) {
-        val bubble = overlay.mount(
-            host, IMFloatingBubble::class.java,
-            { activity -> IMFloatingBubble(activity).apply { onExpand = { expand() }; onHangup = { hangup() } } },
-            { activity -> IMFloatingBubble.initialParams(activity) },
-        )
-        bubble?.render(current)
-        // 视频通话的悬浮球放主讲人的缩略画面（规范 §06）。
-        if (bubble != null && host != null && current.mediaType == "video") {
-            // **只在远端成员里挑**：speakingUid 可能是本端自己，见 [videoSpeakerUid]。
-            val speaker = current.videoSpeakerUid()
-            bubble.setVideoView(if (speaker.isEmpty()) null else videoViewFor(host, speaker))
-        }
-    }
-
-    private fun present() {
-        val context = appContext ?: return
-        context.startActivity(Intent(context, IMCallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     /** 邀请中的格子拿到终局（已拒绝 / 未接听）后停 2s 再收（交互稿 §05 G3，记账见 [IMSettleTimers]）。 */

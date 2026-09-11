@@ -43,25 +43,26 @@ internal object IMPermissionGate {
         if (mediaType == "video" && withCamera) listOf(Device.MICROPHONE, Device.CAMERA) else listOf(Device.MICROPHONE)
 
     /**
-     * **发起一通电话**时该申请哪些设备。**只看 `media_type`，不看界面上摄像头开没开。**
+     * **发起一通电话**时该申请哪些设备：**只看 `media_type`**，群通话默认关着摄像头也照样问（交互稿 §01 的表）。
      *
-     * 2026-09-09 曾经改成「群通话默认关摄像头，所以只申请麦克风」，**次日退回**。
-     * 退回的理由不是产品口味，是引擎的形状：`IMCallEngine.publishDefaults`
-     * **按 `media_type` 眼推视频**，进房那一刻摄像头就真的被打开了，
-     * 界面上那颗按钮是开是关它不看。
+     * 问归问，开不开是另一件事：摄像头关着就不采集、不发布视频（`IMCallKit.syncCameraIntent` →
+     * `IMLocalPublisher`），与 iOS / Web 一样等用户点「开摄像头」。
      *
-     * 权限清单一旦和它分叉，就会撞上一条**不报错的死路**：
-     * 没权限时 `IMWebRTCAdapter.ensureCapture()` 里 `startCapture` 异步失败，
-     * 可 `videoSource` 已经被缓存下来（而 `createCapturer(name, null)` 连
-     * `CameraEventsHandler` 都没接，失败一声不吭）。此后用户点「开摄像头」，
-     * 权限拿到了、`setMuted(false)` 也执行了，`ensureCapture()` 却直接返回那个死 source
-     * ——**按钮亮着、一帧画面都没有，四端日志里什么都看不到**。
-     *
-     * 所以：**推什么就要什么权限**。摄像头被拒不挡通话（[Outcome.CAMERA_BLOCKED]
-     * 降级为语音继续），代价只是多问一次。
+     * 历史：2026-09-09 曾改成「群通话只申请麦克风」，次日退回——那时引擎进房就按 `media_type` 发视频，
+     * 权限清单与它一分叉，`IMWebRTCAdapter.ensureCapture()` 会把没权限的死 source 缓存下来，
+     * 之后点「开摄像头」按钮亮着却一帧画面都没有。2026-09-10 两头都堵上了（关着不发布 + 没权限不起采集）。
+     * 摄像头被拒不挡通话（[Outcome.CAMERA_BLOCKED] 降级为语音继续）。
      */
     fun devicesForPlacing(mediaType: String, isGroup: Boolean): List<Device> =
         devicesFor(mediaType, withCamera = true)
+
+    /**
+     * **接听**时该申请哪些设备。只有**来电页上亲手关掉了摄像头**的才只要麦克风
+     * （拍板 §11-10：关掉摄像头再接听 = 以语音接听）；群通话默认关着不算，照样问（交互稿 §01）。
+     * 与 iOS 的 `imPermissionDevicesForAnswering`、Web 的 `devicesForAnswering` 同一条规则。
+     */
+    fun devicesForAnswering(mediaType: String, cameraOptedOut: Boolean): List<Device> =
+        devicesFor(mediaType, withCamera = !cameraOptedOut)
 
     /** 说明卡：说清**用来做什么**，不说「请授权」。 */
     fun explanation(device: Device): Copy = when (device) {
