@@ -115,6 +115,13 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     private var capturer: CameraVideoCapturer? = null
     private var captureHelper: SurfaceTextureHelper? = null
 
+    /** 通话中关了摄像头：capturer 停着、轨道留着（见 [setMuted]）。 */
+    @Volatile
+    private var capturePaused = false
+
+    /** 本端预览「开 / 关」只认最后一次（见 [IMPreviewIntent]）。 */
+    private val previewIntent = IMPreviewIntent()
+
     /** uid → 渲染器（本端预览用 [LOCAL] 这把钥匙）。**卸载时一定要先摘轨道**。 */
     private val renderers = LinkedHashMap<String, SurfaceViewRenderer>()
 
@@ -229,16 +236,34 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         // 前台服务的 camera 类型由 ensureCapture 负责升级——采集起来的那一刻才算真的在用摄像头。
     }
 
-
-
-
     override fun unpublish(cid: String) {
         // v1 一通电话就一组本端 Track，停采集即可；细到单条 Track 的拆除留给会议期。
         stopCapture()
     }
 
+    /**
+     * 通话中关摄像头 = **停采集**（指示灯灭），不只是 `setEnabled(false)`——那样灯一直亮着。
+     * 轨道、transceiver、source 都留着：打开时同一个 capturer 原地接着采，不重新协商。
+     * 还没发布（进房前）时什么都不做，那时关摄像头走 [stopLocalPreview]。
+     */
     override fun setMuted(kind: String, muted: Boolean) {
-        if (kind == "video") videoTrack?.setEnabled(!muted) else audioTrack?.setEnabled(!muted)
+        if (kind != "video") { audioTrack?.setEnabled(!muted); return }
+        val track = videoTrack ?: return
+        track.setEnabled(!muted)
+        setCapturePaused(muted)
+    }
+
+    private fun setCapturePaused(paused: Boolean): Unit = synchronized(captureLock) {
+        val active = capturer ?: return
+        if (paused == capturePaused) return
+        if (paused) {
+            runCatching { active.stopCapture() }
+        } else {
+            // 暂停期间权限可能在系统设置里被收回：照开只会异步失败、画面全黑、日志空白。
+            if (!cameraPermitted()) { events?.onMediaError(2001, "camera permission denied"); return }
+            active.startCapture(videoProfile.width, videoProfile.height, videoProfile.frameRate)
+        }
+        capturePaused = paused
     }
 
     override fun createOffer(pc: String) = peers.createOffer(pc)
@@ -336,14 +361,21 @@ class IMWebRTCAdapter @JvmOverloads constructor(
      * 拨出中还没有房间可发布，而用户此刻就该看见自己。预览走 [previewTrack]，
      * 与推流那条共用同一个 source，所以摄像头只开一次、切换也只有一处。
      */
-    override fun startLocalPreview(view: Any?) = onMain {
+    override fun startLocalPreview(view: Any?) {
+        // 号在 Engine 线程上领：与 stopLocalPreview 同一条线程，先后就是 Kit 调用的先后。
+        val token = previewIntent.begin()
+        onMain { attachLocalPreview(view, token) }
+    }
+
+    private fun attachLocalPreview(view: Any?, token: Long) {
+        if (!previewIntent.isCurrent(token)) return
         renderers[LOCAL]?.let { old ->
             runCatching { previewTrack?.removeSink(old) }
             runCatching { old.release() }
         }
         val renderer = view as? SurfaceViewRenderer ?: run {
             renderers.remove(LOCAL)
-            return@onMain
+            return
         }
         // **本端预览也要 RendererEvents**：原先传 null，于是拿不到帧尺寸、缩放判据无从计算。
         renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(LOCAL))
@@ -352,7 +384,31 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         watchLayout(LOCAL, renderer)
         renderer.setMirror(frontCamera)
         renderers[LOCAL] = renderer
-        ensurePreviewTrack()?.addSink(renderer)
+        // 对号与起采集在同一把锁里：停止要么整个排在前面（这里作罢），要么排在后面（把这次停掉）。
+        synchronized(captureLock) {
+            if (previewIntent.isCurrent(token)) ensurePreviewTrack()?.addSink(renderer)
+        }
+    }
+
+    /**
+     * 停掉进房前的本端预览，**连摄像头一起关**（设计 v3.7 第 6 步）。
+     *
+     * 来电页 / 拨出中开过预览又关掉，原先只熄按钮，指示灯要亮到通话结束。
+     * 已经发布进房的不停——通话中关摄像头走 [setMuted]。前台服务的 camera 类型是
+     * [ensureCapture] 起采集时升上去的，这里要降回去（还没进房的话压根不该有前台服务）。
+     */
+    override fun stopLocalPreview() {
+        synchronized(captureLock) {
+            if (videoTrack != null) return
+            previewIntent.cancel()
+            if (videoSource == null) return
+            stopCapture()
+        }
+        if (running) {
+            IMCallForegroundService.start(appContext, withCamera = false)
+        } else {
+            IMCallForegroundService.stop(appContext)
+        }
     }
 
     /** 造（或复用）只给预览看的那条轨道。拿不到摄像头时返回 null，界面退回头像。 */
@@ -397,6 +453,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     }
 
     override fun switchCamera() {
+        // 停着采集时 libwebrtc 只会回一句 "camera is not running"；界面上关着摄像头时翻转键本来就是灰的。
+        if (capturePaused) { IMRTCLog.w("media", "摄像头关着，不翻转"); return }
         capturer?.switchCamera(
             object : CameraVideoCapturer.CameraSwitchHandler {
                 override fun onCameraSwitchDone(isFront: Boolean) {
@@ -427,7 +485,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
          之后授权了再开也只拿到这个死 source：按钮亮着、一帧画面都没有、日志里什么都没有。
          不缓存、报 2001（Kit 据此把按钮置成「无权限」），授权之后下一次从头再来。
         */
-        if (appContext.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+        if (!cameraPermitted()) {
             IMRTCLog.w("media", "没有摄像头权限，不起采集")
             events?.onMediaError(2001, "camera permission denied")
             return null
@@ -470,7 +528,11 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         capturer = null
         captureHelper = null
         videoSource = null
+        capturePaused = false
     }
+
+    private fun cameraPermitted() =
+        appContext.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
 
     /** 第一帧到了就撤 loading——UI 全靠这个信号，不然会露一段黑屏。 */

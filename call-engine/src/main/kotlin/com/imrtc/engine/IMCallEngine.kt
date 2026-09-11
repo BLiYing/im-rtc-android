@@ -245,6 +245,12 @@ class IMCallEngine private constructor(
     fun startLocalPreview(view: Any?) = scheduler.post { requireMedia()?.startLocalPreview(view) }
 
     /**
+     * 停掉进房前的本端预览，**连摄像头一起关**（指示灯灭）。来电页 / 拨出中关摄像头时由 UIKit 调。
+     * 摄像头已经发布的不受影响——通话中关摄像头走 [closeCamera]。
+     */
+    fun stopLocalPreview() = scheduler.post { media?.stopLocalPreview() }
+
+    /**
      * 报某人画面的**层上界**（协议 §3.5：上界不是命令）。
      *
      * 九宫格缩略图报 `l`、全屏报 `h`。**不触发重协商**，也不保证立刻切——

@@ -49,7 +49,12 @@ interface IMMediaAdapter {
     /** 停止发布。 */
     fun unpublish(cid: String)
 
-    /** 开关本端麦克风/摄像头。**这不是 unpublish**，Track 与协商都保留。 */
+    /**
+     * 开关本端麦克风/摄像头。**这不是 unpublish**，Track 与协商都保留。
+     *
+     * 关摄像头**连采集一起停**（指示灯灭），打开时原地接着采。还没发布时是空操作——
+     * 进房前关摄像头走 [stopLocalPreview]。
+     */
     fun setMuted(kind: String, muted: Boolean)
 
     /**
@@ -102,6 +107,13 @@ interface IMMediaAdapter {
 
     /** 本端预览。 */
     fun startLocalPreview(view: Any?)
+
+    /**
+     * 停掉进房前起的本端预览，**连采集一起停**（摄像头指示灯灭，设计 v3.7）。
+     *
+     * 摄像头已经发布的不停——通话中关摄像头走 [setMuted]。默认空实现：没有采集的适配器无事可做。
+     */
+    fun stopLocalPreview() {}
 
     /** 前后摄像头切换。 */
     fun switchCamera()

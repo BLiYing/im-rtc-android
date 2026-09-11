@@ -288,7 +288,11 @@ object IMCallKit {
      * 后两种可能根本没给过摄像头权限。之后点「开摄像头」由 `openCamera` 补发视频。
      */
     private fun syncCameraIntent(instance: IMCallEngine) {
-        if (state.mediaType == "video" && !state.cameraOn) instance.closeCamera()
+        if (state.mediaType != "video" || state.cameraOn) return
+        instance.closeCamera()
+        // 兜底：进房前开过的预览不许留着采集（toggleCamera 已经停过的话这里是空操作）。
+        instance.stopLocalPreview()
+        localPreviewStarted = false
     }
 
     /**
@@ -385,7 +389,7 @@ object IMCallKit {
      */
     internal fun toggleCamera() {
         if (state.cameraBlocked) { hint("没有摄像头权限"); return }
-        if (state.cameraOn) { engine?.closeCamera(); update(IMCallViewReducer.toggleCamera(state)); return }
+        if (state.cameraOn) { turnCameraOff(); return }
         if (cameraGranted()) { openCameraNow(); return }
         if (!IMPermissionGate.asksCameraOnToggle(state.phase)) {
             // 来电页：只翻意图（进房前的 openCamera 只记账，不起采集），权限在接听时要。
@@ -409,6 +413,20 @@ object IMCallKit {
         engine?.openCamera()
         update(IMCallViewReducer.toggleCamera(state))
         onLocalMediaStarted()
+    }
+
+    /**
+     * 关摄像头**连采集一起停**（设计 v3.7）：原先进房前只翻意图，来电页 / 拨出中开过又关掉的，
+     * 指示灯要亮到通话结束。已经发布的由媒体层自己判：`stopLocalPreview` 不碰它，
+     * `closeCamera` 让它停采集、留轨道。
+     *
+     * 划掉「预览已接上」：再打开时 [localPreviewView] 才会重新起采集。
+     */
+    private fun turnCameraOff() {
+        engine?.closeCamera()
+        engine?.stopLocalPreview()
+        localPreviewStarted = false
+        update(IMCallViewReducer.toggleCamera(state))
     }
 
     internal fun toggleSpeaker() {

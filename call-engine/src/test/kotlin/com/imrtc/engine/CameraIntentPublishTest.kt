@@ -173,10 +173,26 @@ class CameraIntentPublishTest {
         assertEquals(listOf("audio", "audio", "video"), publishedKinds())
     }
 
+    @Test
+    fun `进房前关摄像头：停预览交给媒体层，一帧都不发`() {
+        login()
+        val framesBefore = transport.sent.size
+        engine.closeCamera()
+        engine.stopLocalPreview()
+
+        assertEquals(1, media.previewStops)
+        assertEquals(framesBefore, transport.sent.size)
+    }
+
     /** 只记录发布与协商的媒体适配器。 */
     private class RecordingMedia : IMMediaAdapter {
         val published = mutableListOf<String>()
         val offers = mutableListOf<String>()
+        var previewStops = 0
+
+        override fun stopLocalPreview() {
+            previewStops++
+        }
 
         override fun publish(cid: String, kind: String, simulcast: Boolean) {
             published += kind

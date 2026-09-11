@@ -11,18 +11,17 @@
 
 ## 当前焦点
 
-**2026-09-11 晚：「来电页 + 进房前关摄像头停采集」六步里的第 4 步（本仓），直接在 main 改，未提交。**
-六步总表在 `../im-rtc-server/current_task.md` 的「另一条线」。本仓两处：
+**2026-09-11 晚：「来电页 + 进房前关摄像头停采集」第 6 步 + 延后项①（本仓），直接在 main 改，已提交，用户真机验过。**
+六步总表在 `../im-rtc-server/current_task.md` 的「另一条线」；第 4 步（来电页不弹摄像头权限、未进房也停采集）已提交 `46ebb51`。
 
 | 现象 | 根因 | 改了什么 |
 |---|---|---|
-| 来电页点开摄像头当场弹摄像头权限框（交互稿 §01：响铃时什么都不申请） | `IMCallKit.toggleCamera()` 权限没到手就 `ensurePermissions`，不分阶段 | `IMPermissionGate.asksCameraOnToggle(phase)`：**来电页只翻意图**（`engine.openCamera()` 进房前只记账）、不申请、不起预览；权限留给 `answer()` 的 `devicesForAnswering`——开着接听就问，被拒置「无权限」、通话照接。已授权的照旧起预览 |
-| 进房前就结束的通话（拒接 / 对方取消 / 超时）摄像头灯常亮、通知栏常驻 | 预览经 `ensureCapture` 起了采集与前台服务，但 `running` 只由进房的 `start()` 置上；`IMWebRTCAdapter.stop()` 一上来 `if (!running) return` | `running` 为 false 时也 `stopCapture()` + `IMCallForegroundService.stop()`（两者幂等） |
+| 来电页 / 拨出中开过摄像头又关掉，灯要等挂断才灭 | Kit 只翻意图 | Engine 新增 `stopLocalPreview()`（走引擎线程）；adapter 已发布（`videoTrack != null`）的不停，`IMPreviewIntent` 作废在途的预览挂载，停采集后前台服务降回不带 camera（没进房直接停）。Kit `turnCameraOff()` = `closeCamera` + `stopLocalPreview`，划掉 `localPreviewStarted` |
+| 通话中关摄像头只是静音，灯仍亮 | `setMuted` 只 `setEnabled(false)` | `setCapturePaused`：关 = `stopCapture`、开 = `startCapture`（先查权限，没有就报 2001、保持停着）。轨道 / transceiver 不动，不重协商；关着时 `switchCamera` 不动 |
 
-`./scripts/test.sh` 全绿（6 步），`KitRulesTest` 补 `asksCameraOnToggle` 与「关了再开回来接听照样要摄像头」断言。**没上真机**。
-adapter 那处没有 JVM 单测（`IMWebRTCAdapter` 依赖 `org.webrtc`），靠 `temp_verify.py` 静态断言 + 真机。
+`./scripts/test.sh` 全绿（6 步）。adapter 没有 JVM 单测（依赖 `org.webrtc`），靠 `temp_verify.py` 静态断言 + 真机。
 
-上两刀（09-11 下午五个真机问题、接听时摄像头权限）细节看 `git log` 与 `current_task.archive.md`。
+上几刀（第 4 步、09-11 下午五个真机问题）细节看 `git log` 与 `current_task.archive.md`。
 
 **iOS 的 simulcast 缺失已决定暂缓**（2026-09-09），结论在 `../im-rtc-ios/current_task.md` 的「已知坑」。
 
@@ -38,10 +37,7 @@ adapter 那处没有 JVM 单测（`IMWebRTCAdapter` 依赖 `org.webrtc`），靠
 
 **本轮优先**：
 
-1. **系统设置里关掉 Demo 的麦克风权限**（相机留着）→ 视频来电 → 来电页点开摄像头：不崩；
-   日志 `前台服务已启动（mic=false camera=true）`。两样都关：日志 `麦克风与摄像头权限都没有，前台服务不起`，也不崩。
-2. 视频来电横幅的接听键是听筒，与点开来电页那颗一致。
-3. 上一刀没验的：没摄像头权限时 1v1 来电页关摄像头再接只弹麦克风；通话中点开 → 「无权限」、通话不断。
+1. 本批（进房前 / 通话中关摄像头灯灭、关着时收回权限再开提示「无权限」）用户 2026-09-11 真机验过。
 
 **上一轮挂着的**（1v1 视频）：控制条收起后点底部该叫回控制条、不该静音/挂断；挂断后结束画面标题栏不淡掉；
 开局清晰度——服务端日志进房 1 秒内出现 `上行层已接入 … rid=h`、整通没有 `layer=h live=False`
@@ -79,7 +75,8 @@ adapter 那处没有 JVM 单测（`IMWebRTCAdapter` 依赖 `org.webrtc`），靠
   要测「没摄像头权限」只能去系统设置里手动关，或先打开开发者选项的「USB 调试（安全设置）」。
 - **摄像头意图必须在进房之前给 Engine**（`IMCallKit.syncCameraIntent`）：晚了 `publishDefaults` 已经把视频轨发出去、采集也起了。
   接通后才打开的摄像头靠 `publishCameraIfMissing` 补发，补发后会多一条无害的 `room.mute muted=false`。
-- **拨出中起了预览再关摄像头，采集不停**（三端都这样，本轮没动）：只是轨道 mute，摄像头灯还亮着。
+- **关摄像头停的是采集**（2026-09-11）：进房前关 = `stopLocalPreview`（已发布的不碰），通话中关 = `setMuted` → `setCapturePaused`。
+  **进房前切到后台采集不停**（后台自动 mute 只管已发布的轨道）；通话中重开会让本端预览重新出第一帧，可能闪一下。
 
 - **2006 的阈值「3」没经过真机校准，而且它现在抛出来也没人接。** 两件事一起记（2026-09-09）：
   - **阈值待校准**：libwebrtc 判 `failed` 约 30 秒一轮，连续 3 次就是**一分半以后**宿主才知道，
