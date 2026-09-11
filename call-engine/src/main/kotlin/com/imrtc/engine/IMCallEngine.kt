@@ -116,8 +116,8 @@ class IMCallEngine private constructor(
     private val connection = IMSignalConnection(transport, scheduler, ConnectionEvents())
     private var ctx = IMEngineContext()
 
-    /** 本端已发布的 Track：cid → kind。挂断时要按它去停采集。 */
-    private val localTracks = LinkedHashMap<String, String>()
+    /** 本端轨道怎么发布、发了哪些（cid → kind）。见 [IMLocalPublisher]。 */
+    private val publisher = IMLocalPublisher(media, scheduler::nowMs) { input(it) }
 
     /** 发布之前按下的静音，攒在这儿等 track_id 回来再补做。见 [IMMuteBook]。 */
     private val muteBook = IMMuteBook()
@@ -156,7 +156,7 @@ class IMCallEngine private constructor(
     /** 登出并释放连接。**之后可以再 login。** */
     fun logout() = scheduler.post {
         media?.stop()
-        localTracks.clear()
+        publisher.clear()
         muteBook.clear()
         ctx = IMEngineContext()
         connection.stop()
@@ -221,7 +221,11 @@ class IMCallEngine private constructor(
 
     fun closeMic() = setMuted("audio", true)
 
-    fun openCamera() = setMuted("video", false)
+    /** 开摄像头。进房时摄像头关着、视频还没发布的，这一下补发（见 [IMLocalPublisher]）。 */
+    fun openCamera() = scheduler.post {
+        applyMuted("video", false)
+        publisher.publishCameraIfMissing(ctx)
+    }
 
     fun closeCamera() = setMuted("video", true)
 
@@ -288,18 +292,20 @@ class IMCallEngine private constructor(
      * `track_id`（那是服务端分配的），只有帧需要。原先两者绑在一起，拿不到 track_id
      * 就连本端也不关——而「拿不到」恰恰发生在最该静音的时候（还没发布）。见 [desiredMuted]。
      */
-    private fun setMuted(kind: String, muted: Boolean) = scheduler.post {
+    private fun setMuted(kind: String, muted: Boolean) = scheduler.post { applyMuted(kind, muted) }
+
+    private fun applyMuted(kind: String, muted: Boolean) {
         // 意图先记下：轨道还没发布时，这是唯一留得住它的地方。
         muteBook.want(kind, muted)
         // **无条件应用到本端**。轨道还不存在时它是空操作，随后 [flushPendingMutes] 会补。
         media?.setMuted(kind, muted)
 
-        val cid = localTracks.entries.firstOrNull { it.value == kind }?.key
+        val cid = publisher.tracks.entries.firstOrNull { it.value == kind }?.key
         val trackId = cid?.let { ctx.room.publishTrackIds[it] }
         if (trackId == null) {
             // 不是错误，是「来早了」：帧等发布完再补发。
             IMRTCLog.d("engine", "$kind 轨道还没发布，静音意图先记下（muted=$muted）")
-            return@post
+            return
         }
         sendMute(trackId, muted)
     }
@@ -320,7 +326,7 @@ class IMCallEngine private constructor(
      */
     private fun flushPendingMutes(before: IMEngineContext, after: IMEngineContext) {
         val pending = muteBook.pending(
-            localTracks,
+            publisher.tracks,
             before.room.publishTrackIds,
             after.room.publishTrackIds,
         )
@@ -416,7 +422,7 @@ class IMCallEngine private constructor(
             adapter.start(emptyList())
         }
 
-        // 进房成功：先确保媒体起来了，再按 media_type 自动发布本端 Track。
+        // 进房成功：先确保媒体起来了，再发布本端 Track（视频发不发看摄像头意图，见 [IMLocalPublisher]）。
         // **会议房是直接 joinRoom 的，压根不经过 call**——只按 room_token 判的话这里一次都不会起，
         // 真机上的症状是「还没 start 就 publish，忽略」，人进了房但谁也听不见谁。
         //
@@ -428,7 +434,7 @@ class IMCallEngine private constructor(
         // 本来什么都不用补。
         if (isFreshJoin(before, after)) {
             adapter.start(emptyList())
-            publishDefaults(after)
+            publisher.publishDefaults(after, cameraMuted = muteBook.wanted("video") == true)
         } else if (after.room.state == IMRoomState.JOINED && before.room.state != IMRoomState.JOINED) {
             /*
               **刚变成 joined 却不发布，要留一条。**
@@ -441,6 +447,8 @@ class IMCallEngine private constructor(
               判据取「刚变成 joined」而不是「没发布」，所以一次恢复只出现一条，不吵。
             */
             IMRTCLog.d("engine", "进房但不发布：从 ${before.room.state.wire} 恢复回来的，发布关系还在")
+            // 断线期间点了「开摄像头」的，那一路视频还没发过——不补的话按钮亮着却没有画面。
+            if (muteBook.wanted("video") == false) publisher.publishCameraIfMissing(after)
         }
 
         // 通话结束 / 离房：停掉媒体。**必须可重入**，挂断与被踢会先后到达。
@@ -453,7 +461,7 @@ class IMCallEngine private constructor(
         // 「断线 → reconnecting → 被踢 → idle」也是同一个漏法，一并被这条判据盖住。
         if (mediaWanted(before) && !mediaWanted(after)) {
             adapter.stop()
-            localTracks.clear()
+            publisher.clear()
             // 意图跟着这一轮媒体一起作废：下一通电话的开关由界面重新决定，
             // 留着的话会变成「上一通静音过，这一通莫名其妙也是静音的」。
             muteBook.clear()
@@ -473,29 +481,6 @@ class IMCallEngine private constructor(
         after.room.state == IMRoomState.JOINED &&
             before.room.state != IMRoomState.JOINED &&
             before.room.state != IMRoomState.RECONNECTING
-
-    private fun publishDefaults(state: IMEngineContext) {
-        val adapter = media ?: return
-        // 会议房没有 call，媒体类型无从谈起——按视频会议处理（草图 §08）。
-        val mediaType = if (state.call.state != IMCallState.IDLE) state.call.mediaType else "video"
-        val kinds = if (mediaType == "video") listOf("audio", "video") else listOf("audio")
-        for (kind in kinds) {
-            val cid = "local-$kind-${scheduler.nowMs()}"
-            localTracks[cid] = kind
-            adapter.publish(cid, kind, simulcast = kind == "video")
-            input(
-                IMMachineInput.Act(
-                    "publish",
-                    mapOf(
-                        "cid" to IMJson.Str(cid),
-                        "kind" to IMJson.Str(kind),
-                        "source" to IMJson.Str(if (kind == "video") "camera" else "microphone"),
-                        "simulcast" to IMJson.Bool(kind == "video"),
-                    ),
-                ),
-            )
-        }
-    }
 
     private fun requireMedia(): IMMediaAdapter? {
         if (media == null) {

@@ -273,4 +273,21 @@ class CameraDefaultTest {
         // **会议房本轮不改**：它刚按「默认开」在真机上验过，改它要重验。
         assertTrue("会议房仍是默认开摄像头", IMCallViewReducer.meeting(IMCallViewState(), "r-1").cameraOn)
     }
+
+    @Test
+    fun `只有来电页上亲手关掉摄像头才算以语音接听`() {
+        val group = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", listOf("bob"), "video", true)
+        assertFalse("群通话默认关着不是用户的选择，接听照样问摄像头权限", group.cameraOptedOut)
+        assertFalse("群通话来电页上打开摄像头也不算", IMCallViewReducer.toggleCamera(group).cameraOptedOut)
+
+        val oneToOne = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", emptyList(), "video", false)
+        val off = IMCallViewReducer.toggleCamera(oneToOne)
+        assertTrue("来电页上关掉摄像头 = 以语音接听（§11-10）", off.cameraOptedOut)
+        assertFalse("又打开了就不算", IMCallViewReducer.toggleCamera(off).cameraOptedOut)
+
+        val connected = IMCallViewReducer.begin(oneToOne, "c-1", "r-1", "video", "callee")
+        assertFalse("接通之后再关不改它", IMCallViewReducer.toggleCamera(connected).cameraOptedOut)
+        val blocked = IMCallViewReducer.cameraBlocked(oneToOne)
+        assertFalse("没权限时按钮点不动，也不改它", IMCallViewReducer.toggleCamera(blocked).cameraOptedOut)
+    }
 }

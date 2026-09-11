@@ -11,47 +11,54 @@
 
 ## 当前焦点
 
-**2026-09-09 夜：真机联调查出的两处，都已合入 main；控制条那处已验收，上行那处还没有。**
+**2026-09-11：接听时的摄像头权限、摄像头关着不采集，三端一起对齐交互稿 `RTC_CALL_UX_FLOWS.html` §01 权限时机表 + §11-10。已合 main，用户自己打包真机验。**
 
-依据是 16:01–16:05 那三通（1v1 + 两通群通，Android=alice / iOS=carol / Web=bob）的三方日志。
-
-| 状态 | 问题 | 改了什么 |
+| 场景 | 设计 | 现在（本仓） |
 |---|---|---|
-| ✅ **已真机验收、已合 main** | **控制条自动隐藏后按钮还能点**。`controls.isEnabled = false` 在 Android 上既不传给子 View 也不拦触摸派发，淡到 alpha=0 后静音/摄像头/扬声器/翻转/**挂断**全都还能点；而 `controls` 压在 `stage` 上面，「点一下叫回控制条」先被看不见的按钮吃掉 | 改成置 `INVISIBLE`（不绘制也不吃触摸，等价于 iOS 的 `isUserInteractionEnabled=false`），触摸落回 `stage`。控制条那块抽成 `IMChromeGate` |
-| ⬜ **未验收**，分支 `worktree-fix-autohide-never-fires` | **自动隐藏从来没生效过**：`IMCallKit.startTimer()` 每秒推一次状态 → `IMCallView.render` → `armAutoHide` 无条件重排，3 秒计时被 1 秒的 tick 一直打断。既有 bug，不是上一刀引入的；一直没发现是因为「点画面」能手动收起，看着像在工作 | 区分「刚显示出来」（从头数）与「又一次 render」（已经在数就别打扰）。判定摘成 `IMAutoHideCountdown` 纯逻辑 + 5 条单测 |
-| ✅ 同上 | 自动隐藏的守卫漏在结束画面：`render()` 在 ENDED 时提前 return，接通期排下的那一下不会被撤，会把标题栏一起淡掉 | `hideChrome` 触发时复查 layout 与 phase。**「排定时查 CONNECTED」保留**，iOS 对齐过来 |
-| ⚠️ **已合 main，但真机未验收** | **上行 simulcast 预算没人记账**：三层要 2.15Mbps，而 BWE 从默认 300kbps 起爬，顶层被 `SimulcastRateAllocator` 分到 0 bps。实测 h 层死了 37 秒、一通群通 27 秒全程只有 `l` | 补 `IMVideoProfile.simulcastUplinkBudgetBps`（三层之和，派生值，§3.5 表没动），`publish` 时喂给 `PeerConnection.setBitrate` 当种子 |
+| 群视频来电横幅 | 最左的摄像头按钮是关态 | 关态 |
+| 接听群视频 | 麦克风 + 摄像头都申请，进房摄像头关着 | 两样都申请；**进房不发视频轨**，摄像头一个都不开 |
+| 1v1 视频，来电页亲手关掉摄像头再接 | 只要麦克风（= 以语音接听） | 只申请麦克风；不采集、不发视频轨 |
+| 通话中点「开摄像头」 | 那一刻才问；拒了按钮显示「无权限」，通话照打 | `openCamera` 补发视频轨；没 CAMERA 权限 `ensureCapture` 不起采集、抛 2001 |
 
-上行那一刀**要配服务端 `im-rtc-server` 分支 `worktree-fix-bwe-burst-and-ratchet` 一起验**：
-那边修的是「压到 l 之后爬不回来」（升层判据数学上不可能满足），这边修的是
-「开局就没爬上去过」，一头一尾，分开验看不出效果。
+**根因**：原先 Engine 进房就把视频轨发出去、采集照开，「关摄像头」只是 mute——所以关着接听也得要摄像头权限。
+iOS / Web 是等用户点开才采集，没有这个问题。
 
-`./scripts/test.sh` 全绿（6 步）。**worktree 里要带
-`RTC_CONFORMANCE_DIR=/Users/liying/IOSProject/im-rtc/im-rtc-server/docs/conformance`**，
-否则 `../im-rtc-server` 相对路径解析不到。
+**怎么改的**：
+- Kit 在 `call` / `accept` / `joinRoom` 之前 `syncCameraIntent`：摄像头关着就 `engine.closeCamera()`，Engine 记下意图。
+- `IMLocalPublisher.publishDefaults` 见意图是关就只发音频；`openCamera` 走 `publishCameraIfMissing` 补发，断线续房那条路同样补发。
+- 接听申请走 `devicesForAnswering(mediaType, cameraOptedOut)`。`cameraOptedOut` 只在 INCOMING 阶段切摄像头时置位——
+  群通话默认关着进来**不算**用户亲手关，照样问摄像头。
+- 本地预览只在 `wantsLocalPreview()`（摄像头开着）时起。
+- 顺带拆体量：发布逻辑抽成 `IMLocalPublisher`（`IMCallEngine.kt` 598 → 583 行），呈现逻辑抽成 `IMCallPresentation`。
 
-**iOS 的 simulcast 缺失是另一回事，已决定暂缓**（2026-09-09）：换包方案验证完了、
-结论记在 `../im-rtc-ios/current_task.md` 的「已知坑」里，等模糊问题排上优先级再定。
-现阶段三端画面都看得见，够用。
+**PKD130 / Android 15 上验过**（Web demo 当 bob）：群来电横幅关态；群接听不发视频、摄像头全 closed、点开后补发、Web 看得到；
+1v1 来电页关摄像头接听同上。**没验**：没摄像头权限的两条（ColorOS 挡 `pm revoke`，见「已知坑」）。
 
-### 体量欠账（**下次动它之前必须先拆**）
+`./scripts/test.sh` 全绿（6 步），新增 `CameraIntentPublishTest` 7 条。worktree 里要带
+`RTC_CONFORMANCE_DIR=/Users/liying/IOSProject/im-rtc/im-rtc-server/docs/conformance`。
 
-`IMCallEngine.kt` 现在 **598 行**，硬闸 600——**再加两行就提交不了**。
-可以整体挪出去的：socket 代际那套（`generation` / `closedGeneration` / `TransportListener`）
-连同心跳。`IMSignalConnection.kt` 593 行同样贴线。
+**iOS 的 simulcast 缺失已决定暂缓**（2026-09-09），结论在 `../im-rtc-ios/current_task.md` 的「已知坑」。
+
+### 体量欠账（**下次动它之前先拆**）
+
+`IMCallEngine.kt` 583 行、`IMSignalConnection.kt` 593 行，都贴着 600 硬闸。
+可以整体挪出去的：socket 代际那套（`generation` / `closedGeneration` / `TransportListener`）连同心跳。
 
 
 ## 下一步
 
 ### 真机验收
 
-**本轮这三条优先**（Android 真机 + iOS 真机，1v1 视频）：
+**本轮优先（摄像头权限这一刀）**：
 
-1. **控制条收起后点屏幕底部**：该把控制条叫回来，**不该**静音/挂断。改之前点下去是后者。
-2. **挂断后的结束画面**：标题栏不该在 3 秒后淡掉（停留 1.5~3s，可能只是一闪，盯着看）。
-3. **开局清晰度**：iOS 看 Android 的第一两秒就该有 720p，不再是先糊一段。
-   判据在服务端日志：`上行层已接入 … rid=m` / `rid=h` 应该在进房后 1 秒内就出现三条，
-   并且整通不出现 `上行层存活性变化 … layer=h live=False`。
+1. **先去系统设置里关掉 Demo 的相机权限**，再 1v1 视频来电 → 来电页关摄像头 → 接听：只弹麦克风、能接通、看得见对方。
+2. 接着点「开摄像头」：这时才弹摄像头权限；拒绝 → 按钮显示「无权限」，通话不断。
+3. 群视频接听（有权限）：进房自己那格是头像、对端看不到画面；点开后对端看得到。
+   日志判据：进房有 `进房时摄像头关着，视频先不发布`，点开有 `摄像头现在打开了，补发`。
+
+**上一轮挂着的**（1v1 视频）：控制条收起后点底部该叫回控制条、不该静音/挂断；挂断后结束画面标题栏不淡掉；
+开局清晰度——服务端日志进房 1 秒内出现 `上行层已接入 … rid=h`、整通没有 `layer=h live=False`
+（要配服务端 `worktree-fix-bwe-burst-and-ratchet` 一起验）。自动隐藏那刀在分支 `worktree-fix-autohide-never-fires`，未验收。
 
 ### 真机验收（**这一整批一条都没验**）
 
@@ -80,6 +87,12 @@
 
 
 ## 已知坑 / 限制
+
+- **PKD130（ColorOS / Android 15）上 `pm revoke` 被挡**：`SecurityException … REVOKE_RUNTIME_PERMISSIONS`。
+  要测「没摄像头权限」只能去系统设置里手动关，或先打开开发者选项的「USB 调试（安全设置）」。
+- **摄像头意图必须在进房之前给 Engine**（`IMCallKit.syncCameraIntent`）：晚了 `publishDefaults` 已经把视频轨发出去、采集也起了。
+  接通后才打开的摄像头靠 `publishCameraIfMissing` 补发，补发后会多一条无害的 `room.mute muted=false`。
+- **拨出中起了预览再关摄像头，采集不停**（三端都这样，本轮没动）：只是轨道 mute，摄像头灯还亮着。
 
 - **2006 的阈值「3」没经过真机校准，而且它现在抛出来也没人接。** 两件事一起记（2026-09-09）：
   - **阈值待校准**：libwebrtc 判 `failed` 约 30 秒一轮，连续 3 次就是**一分半以后**宿主才知道，

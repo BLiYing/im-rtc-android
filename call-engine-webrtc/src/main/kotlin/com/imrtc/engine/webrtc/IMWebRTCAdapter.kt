@@ -1,6 +1,8 @@
 package com.imrtc.engine.webrtc
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMMediaAdapter
 import com.imrtc.engine.media.IMVideoProfile
@@ -409,6 +411,16 @@ class IMWebRTCAdapter @JvmOverloads constructor(
      */
     private fun ensureCapture(): VideoSource? = synchronized(captureLock) {
         videoSource?.let { return it }
+        /*
+         **没有摄像头权限就别去开。** `startCapture` 会异步失败，而 source 已经缓存下来——
+         之后授权了再开也只拿到这个死 source：按钮亮着、一帧画面都没有、日志里什么都没有。
+         不缓存、报 2001（Kit 据此把按钮置成「无权限」），授权之后下一次从头再来。
+        */
+        if (appContext.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            IMRTCLog.w("media", "没有摄像头权限，不起采集")
+            events?.onMediaError(2001, "camera permission denied")
+            return null
+        }
         val enumerator: CameraEnumerator = if (Camera2Enumerator.isSupported(appContext)) {
             Camera2Enumerator(appContext)
         } else {

@@ -25,6 +25,13 @@ internal data class IMCallViewState(
     val speakerOn: Boolean = false,
     /** 摄像头权限被拒（或没有设备）。**通话继续，只是没有画面**（交互稿 §02 P3）：按钮变禁用态写「无权限」。 */
     val cameraBlocked: Boolean = false,
+    /**
+     * 用户在**来电页上亲手关掉了**摄像头（拍板 §11-10：关掉摄像头再接听 = 以语音接听）。
+     *
+     * 不能拿 `!cameraOn` 代替：群通话默认就是关着进来的，那不是用户的选择，
+     * 接听时照样要问摄像头权限（交互稿 §01）。
+     */
+    val cameraOptedOut: Boolean = false,
     /** uid → 这个人的状态。**不含自己**。 */
     val members: Map<String, Member> = emptyMap(),
     /**
@@ -427,9 +434,16 @@ internal object IMCallViewReducer {
 
     fun toggleMic(state: IMCallViewState) = state.copy(micOn = !state.micOn)
 
-    /** 权限被拒时开不了：按钮本来就是禁用态，这里再挡一道免得状态漂移。 */
-    fun toggleCamera(state: IMCallViewState) =
-        if (state.cameraBlocked) state else state.copy(cameraOn = !state.cameraOn)
+    /**
+     * 权限被拒时开不了：按钮本来就是禁用态，这里再挡一道免得状态漂移。
+     * 来电页上的这一下还决定「以语音接听」与否，见 [IMCallViewState.cameraOptedOut]。
+     */
+    fun toggleCamera(state: IMCallViewState): IMCallViewState {
+        if (state.cameraBlocked) return state
+        val on = !state.cameraOn
+        val optedOut = if (state.phase == IMCallViewState.Phase.INCOMING) !on else state.cameraOptedOut
+        return state.copy(cameraOn = on, cameraOptedOut = optedOut)
+    }
 
     fun toggleSpeaker(state: IMCallViewState) = state.copy(speakerOn = !state.speakerOn)
 
