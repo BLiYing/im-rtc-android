@@ -152,7 +152,18 @@ class IMWebRTCAdapter @JvmOverloads constructor(
 
     /** **必须可重入**：挂断、被踢、宿主退出会先后到达。 */
     override fun stop() {
-        if (!running) return
+        if (!running) {
+            /*
+             **采集与前台服务不认 running。** `running` 只在进房时由 [start] 置上，
+             而来电页 / 拨出中的本端预览早就经 [ensureCapture] 把摄像头和前台服务起来了。
+             进房前就结束的通话（拒接、对方取消、振铃超时）走到这里 running 还是 false——
+             原先直接 return，摄像头灯常亮、通知栏常驻，直到下一通电话进房再 stop。
+             两件都幂等，挂断与被踢先后到达时重入无害。
+            */
+            stopCapture()
+            IMCallForegroundService.stop(appContext)
+            return
+        }
         running = false
         uplinkStats.stop()
         stopCapture()

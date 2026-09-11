@@ -11,20 +11,18 @@
 
 ## 当前焦点
 
-**2026-09-11 下午：真机报的五个问题逐个修，直接在 main 上改（未提交）。本仓三处：**
+**2026-09-11 晚：「来电页 + 进房前关摄像头停采集」六步里的第 4 步（本仓），直接在 main 改，未提交。**
+六步总表在 `../im-rtc-server/current_task.md` 的「另一条线」。本仓两处：
 
-| # | 现象 | 根因 | 本仓改了什么 |
-|---|---|---|---|
-| 2 | PKD130 启动即崩，每次重启再崩（`Starting FGS with type microphone … requires RECORD_AUDIO`） | Android 14+ 前台服务的 microphone 类型要求 RECORD_AUDIO **已授权**。麦克风权限被收回后在来电页点开摄像头 → `ensureCapture` 起服务 → `onStartCommand` 里抛出去 → 系统重投启动 → 循环崩 | `IMForegroundTypes` 按真实授权拼类型；`start()` 一样都没有就不起；`onStartCommand` 兜住异常 `stopSelf()` |
-| 3a/3c | iOS 九宫格竖屏源左右黑边 / 变成竖直画面（本仓正常） | 9:16 源放正方形格子恰好压在 0.5625 阈值上，iOS 格子边长是小数、差 1px 就判成 FIT；本仓格子边长是整数像素 | `IMVideoFit.FILL_TOLERANCE = 0.01`，与 iOS 同值（对齐，不是修 bug） |
-| 4a | 视频来电横幅接听键是摄像头图标，点开来电页是听筒 | 横幅 `render` 按 `mediaType` 换图标，违反 UI_SPEC「phone · 来电页、来电横幅」 | 恒为 `PHONE` |
+| 现象 | 根因 | 改了什么 |
+|---|---|---|
+| 来电页点开摄像头当场弹摄像头权限框（交互稿 §01：响铃时什么都不申请） | `IMCallKit.toggleCamera()` 权限没到手就 `ensurePermissions`，不分阶段 | `IMPermissionGate.asksCameraOnToggle(phase)`：**来电页只翻意图**（`engine.openCamera()` 进房前只记账）、不申请、不起预览；权限留给 `answer()` 的 `devicesForAnswering`——开着接听就问，被拒置「无权限」、通话照接。已授权的照旧起预览 |
+| 进房前就结束的通话（拒接 / 对方取消 / 超时）摄像头灯常亮、通知栏常驻 | 预览经 `ensureCapture` 起了采集与前台服务，但 `running` 只由进房的 `start()` 置上；`IMWebRTCAdapter.stop()` 一上来 `if (!running) return` | `running` 为 false 时也 `stopCapture()` + `IMCallForegroundService.stop()`（两者幂等） |
 
-`./scripts/test.sh` 全绿（6 步），新增 `IMForegroundTypesTest` 4 条、`VideoFitTest` 2 条。**没上真机**。
-Web（3b 本端格子没画面）与 iOS（3a/3c、4a、4b 来电页看不见自己）在各自仓的 current_task。
+`./scripts/test.sh` 全绿（6 步），`KitRulesTest` 补 `asksCameraOnToggle` 与「关了再开回来接听照样要摄像头」断言。**没上真机**。
+adapter 那处没有 JVM 单测（`IMWebRTCAdapter` 依赖 `org.webrtc`），靠 `temp_verify.py` 静态断言 + 真机。
 
-**悬而未决**：本仓来电页点开摄像头会当场弹摄像头权限框，交互稿 §01 说响铃时什么都不申请——等用户拍板，没动。
-
-上一刀（接听时摄像头权限 / 摄像头关着不采集）已合 main、PKD130 验过，细节看 `git log`。
+上两刀（09-11 下午五个真机问题、接听时摄像头权限）细节看 `git log` 与 `current_task.archive.md`。
 
 **iOS 的 simulcast 缺失已决定暂缓**（2026-09-09），结论在 `../im-rtc-ios/current_task.md` 的「已知坑」。
 

@@ -379,6 +379,7 @@ object IMCallKit {
      *
      * **要开而权限还没到手时，权限门在这里才跑**（2026-09-09）。来电页上关掉摄像头再接听的
      * 只给过麦克风权限，「第一次真正需要它」就是这一刻（《交互流程》§01 的表）。
+     * **来电页上除外**：只翻意图不申请，见 [IMPermissionGate.asksCameraOnToggle]。
      * 被拒**只把这颗按钮置成「无权限」，通话继续**——它不是通话的必需品，
      * 不能像麦克风那样把整通电话取消掉。
      */
@@ -386,6 +387,12 @@ object IMCallKit {
         if (state.cameraBlocked) { hint("没有摄像头权限"); return }
         if (state.cameraOn) { engine?.closeCamera(); update(IMCallViewReducer.toggleCamera(state)); return }
         if (cameraGranted()) { openCameraNow(); return }
+        if (!IMPermissionGate.asksCameraOnToggle(state.phase)) {
+            // 来电页：只翻意图（进房前的 openCamera 只记账，不起采集），权限在接听时要。
+            engine?.openCamera()
+            update(IMCallViewReducer.toggleCamera(state))
+            return
+        }
         ensurePermissions(listOf(IMPermissionGate.Device.CAMERA)) { outcome ->
             if (!IMLateGuard.stillInCall(state)) return@ensurePermissions // 通话可能已经结束
             when (outcome) {

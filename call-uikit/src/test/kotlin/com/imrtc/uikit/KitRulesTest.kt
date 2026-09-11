@@ -83,6 +83,20 @@ class KitRulesTest {
             IMPermissionGate.devicesForAnswering("audio", cameraOptedOut = false),
         )
 
+        // 点开摄像头：来电页只翻意图、不弹框（§01 响铃时什么都不申请，权限在接听时要）；其余阶段当场问。
+        assertFalse("来电页点开摄像头不申请权限", IMPermissionGate.asksCameraOnToggle(IMCallViewState.Phase.INCOMING))
+        for (phase in listOf(IMCallViewState.Phase.OUTGOING, IMCallViewState.Phase.CONNECTING, IMCallViewState.Phase.CONNECTED)) {
+            assertTrue("$phase 点开摄像头就是第一次真正需要它", IMPermissionGate.asksCameraOnToggle(phase))
+        }
+        // 来电页开着摄像头接听 → 接听时照样要摄像头；关掉再开回来同理（意图翻回来，optedOut 跟着清掉）。
+        val incoming = IMCallViewState(phase = IMCallViewState.Phase.INCOMING, mediaType = "video", cameraOn = true)
+        val reopened = IMCallViewReducer.toggleCamera(IMCallViewReducer.toggleCamera(incoming))
+        assertTrue(reopened.cameraOn)
+        assertEquals(
+            listOf(IMPermissionGate.Device.MICROPHONE, IMPermissionGate.Device.CAMERA),
+            IMPermissionGate.devicesForAnswering(reopened.mediaType, reopened.cameraOptedOut),
+        )
+
         fun run(results: Map<IMPermissionGate.Device, IMPermissionGate.Result>): Pair<IMPermissionGate.Outcome?, List<IMPermissionGate.Device>> {
             val asked = ArrayList<IMPermissionGate.Device>()
             var outcome: IMPermissionGate.Outcome? = null

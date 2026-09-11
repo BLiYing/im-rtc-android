@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """三端静态对齐检查：接听时摄像头权限 / 摄像头关着不采集（交互稿 §01 + §11-10），
-以及 2026-09-11 下午五个真机问题（前台服务类型、九宫格填满容差、Web 本端格子、横幅接听键、iOS 来电页预览）。
+以及 2026-09-11 下午五个真机问题（前台服务类型、九宫格填满容差、Web 本端格子、横幅接听键、iOS 来电页预览），
+以及 2026-09-11 晚「来电页 + 进房前关摄像头停采集」那一批（按步骤逐步补断言）。
 
-只读三端 main 的源码，逐条断言关键实现在场；缺哪条就打印哪条并以非零退出。
+只读三端 main 的源码与 server 仓的设计稿，逐条断言关键实现在场；缺哪条就打印哪条并以非零退出。
 """
 from __future__ import annotations
 
@@ -20,6 +21,11 @@ WT = ""
 ANDROID = BASE / "im-rtc-android" / WT
 IOS = BASE / "im-rtc-ios" / WT
 WEB = BASE / "im-rtc-web" / WT
+SERVER = BASE / "im-rtc-server"
+DESKTOP = BASE / "im-rtc-desktop"
+FLOWS = "docs/design/sketches/RTC_CALL_UX_FLOWS.html"
+SPEC = "docs/design/sketches/RTC_CALL_UI_SPEC.html"
+SKETCH = "docs/design/sketches/RTC_CALL_UX_SKETCH.html"
 
 
 @dataclass(frozen=True)
@@ -32,6 +38,61 @@ class Rule:
 
 
 RULES: list[Rule] = [
+    # 09-11 晚 第 4 步（Android）：来电页点开摄像头不弹权限框；进房前结束的通话也停采集 / 前台服务
+    Rule("android", "来电页不当场申请摄像头", ANDROID, "call-uikit/src/main/**/IMPermissionGate.kt",
+         r"fun asksCameraOnToggle\(phase: IMCallViewState\.Phase\): Boolean =\s*phase != IMCallViewState\.Phase\.INCOMING"),
+    Rule("android", "toggleCamera 走 asksCameraOnToggle 只翻意图", ANDROID, "call-uikit/src/main/**/IMCallKit.kt",
+         r"if \(!IMPermissionGate\.asksCameraOnToggle\(state\.phase\)\) \{\s*//[^\n]*\n\s*engine\?\.openCamera\(\)\s*update\(IMCallViewReducer\.toggleCamera\(state\)\)\s*return"),
+    Rule("android", "adapter stop() 未 start 也停采集与前台服务", ANDROID, "call-engine-webrtc/src/main/**/IMWebRTCAdapter.kt",
+         r"if \(!running\) \{\s*/\*[\s\S]*?\*/\s*stopCapture\(\)\s*IMCallForegroundService\.stop\(appContext\)\s*return\s*\}"),
+    Rule("android", "单测覆盖来电页不申请", ANDROID, "call-uikit/src/test/**/KitRulesTest.kt",
+         r"assertFalse\(\"来电页点开摄像头不申请权限\", IMPermissionGate\.asksCameraOnToggle"),
+    # 09-11 晚 第 3 步（桌面）：窗内来电横幅（不抢焦点）→ 点开是来电浮层；浮层来电态加禁用的摄像头
+    Rule("desktop", "横幅不抢焦点", DESKTOP, "demo/IncomingBanner.cpp", r"setFocusPolicy\(Qt::NoFocus\);\n  setCursor"),
+    Rule("desktop", "横幅按钮也不抢焦点", DESKTOP, "demo/IncomingBanner.cpp", r"button->setFocusPolicy\(Qt::NoFocus\)"),
+    Rule("desktop", "横幅本体点击展开", DESKTOP, "demo/IncomingBanner.cpp", r"emit expandRequested\(\)"),
+    Rule("desktop", "横幅摄像头仅视频来电", DESKTOP, "demo/IncomingBanner.cpp", r"camera_->setVisible\(isVideo_\)"),
+    Rule("desktop", "横幅接听键恒 phone", DESKTOP, "demo/IncomingBanner.cpp", r"setSymbols\(icons::Name::Phone, icons::Name::Phone\)"),
+    Rule("desktop", "来电先出横幅", DESKTOP, "demo/MainWindow.cpp", r"banner_->showCall\(caller, mediaType, isGroup\)"),
+    Rule("desktop", "showOverlay 收横幅", DESKTOP, "demo/MainWindow.cpp", r"void MainWindow::showOverlay\(\) \{\n  banner_->hide\(\);"),
+    Rule("desktop", "横幅上接通换浮层", DESKTOP, "demo/MainWindow.cpp", r"if \(banner_->isVisible\(\)\) showOverlay\(\)"),
+    Rule("desktop", "横幅开着时进房不再弹浮层", DESKTOP, "demo/MainWindow.cpp", r"overlay_->isVisible\(\) \|\| banner_->isVisible\(\)"),
+    Rule("desktop", "浮层来电态显示摄像头", DESKTOP, "demo/CallOverlay.cpp",
+         r"\(phase_ == Phase::Connected \|\| phase_ == Phase::Incoming\) && isVideo_"),
+    Rule("desktop", "浮层来电态标题留空", DESKTOP, "demo/CallOverlay.cpp", r"Phase::Incoming\) \{\n.*\n    title_->clear\(\)"),
+    Rule("desktop", "邀请语共用一张表（含群）", DESKTOP, "demo/CallStrings.cpp", r"if \(isGroup\) return tr\(\"邀请你加入群通话\"\)"),
+    Rule("desktop", "英文翻译有 IncomingBanner 上下文", DESKTOP, "demo/i18n/imrtc_demo_en.ts", r"<name>IncomingBanner</name>"),
+    Rule("desktop", "Incoming 测试进构建", DESKTOP, "demo/CMakeLists.txt", r"foreach\(_case [^)]*\bIncoming\)"),
+    Rule("desktop", "按钮点击不展开的测试在场", DESKTOP, "demo/tests/IncomingTest.cpp", r"void IncomingTest::buttonClicksDoNotExpand\(\)"),
+    # 09-11 晚 第 2 步（Web）：来电页 + 点横幅展开 + bannerFirst + 仅已授权预览 + adapter 单飞
+    Rule("web", "adapter 预览单飞 previewOpening", WEB, "packages/call-engine/src/media/webrtcAdapter.ts",
+         r"if \(this\.previewOpening === null\) this\.previewOpening = this\.openPreview\(this\.closeGeneration\)"),
+    Rule("web", "close() 作废在起的预览", WEB, "packages/call-engine/src/media/webrtcAdapter.ts",
+         r"this\.previewOpening = null;\s*this\.closeGeneration \+= 1;"),
+    Rule("web", "迟到的预览流当场 stop", WEB, "packages/call-engine/src/media/webrtcAdapter.ts",
+         r"generation !== this\.closeGeneration\) \{\s*//[^\n]*\n\s*for \(const track of stream\.getTracks\(\)\) track\.stop\(\)"),
+    Rule("web", "probeCamera 等在起的预览", WEB, "packages/call-engine/src/media/webrtcAdapter.ts",
+         r"if \(this\.previewOpening !== null\) \{\s*await this\.previewOpening;"),
+    Rule("web", "shouldPreviewWhileRinging 只认 granted", WEB, "packages/call-uikit-react/src/state/permissions.ts",
+         r"mediaType === 'video' && cameraOn && !cameraBlocked && status === 'granted'"),
+    Rule("web", "showsIncomingPage 判据", WEB, "packages/call-uikit-react/src/state/callView.ts",
+         r"state\.phase === 'incoming' && \(!bannerFirst \|\| state\.isBannerExpanded\)"),
+    Rule("web", "CallProvider bannerFirst 默认 true", WEB, "packages/call-uikit-react/src/CallProvider.tsx",
+         r"bannerFirst = true"),
+    Rule("web", "横幅本体点击展开", WEB, "packages/call-uikit-react/src/components/IncomingCall.tsx",
+         r"onClick=\{\(\) => actions\.expandIncoming\(\)\}"),
+    Rule("web", "横幅按钮栏 stopPropagation", WEB, "packages/call-uikit-react/src/components/IncomingCall.tsx",
+         r"style=\{styles\.toastActions\} onClick=\{\(e\) => e\.stopPropagation\(\)\}"),
+    Rule("web", "来电页走 ActiveCall", WEB, "packages/call-uikit-react/src/components/CallOverlay.tsx",
+         r"showsIncomingPage\(state, bannerFirst\) \? <ActiveCall /> : <IncomingCall />"),
+    Rule("web", "来电页不给小窗键 + 换成来电控制条", WEB, "packages/call-uikit-react/src/components/ActiveCall.tsx",
+         r"showsMinimize=\{!incoming\}[\s\S]*incoming \? <IncomingControls />"),
+    Rule("web", "来电页预览只在页上起、失败不置 cameraBlocked", WEB, "packages/call-uikit-react/src/useRingingPreview.ts",
+         r"if \(!pageShown \|\| localCameraCid !== '' \|\| starting\.current\) return;[\s\S]*logger\.warn\('来电页预览起不来"),
+    Rule("web", "来电页测试在场", WEB, "packages/call-uikit-react/test/incomingPage.test.tsx",
+         r"查权限还没回来通话就结束了"),
+    Rule("web", "单飞测试在场", WEB, "packages/call-engine/test/localPreview.test.ts",
+         r"起到一半 close\(\)"),
     # 1. 接听申请哪些设备：只有来电页上亲手关掉摄像头才只要麦克风
     Rule("android", "devicesForAnswering 按 cameraOptedOut 决定", ANDROID, "call-uikit/src/main/**/IMPermissionGate.kt",
          r"fun devicesForAnswering\(mediaType: String, cameraOptedOut: Boolean\)[^=]*=\s*devicesFor\(mediaType, withCamera = !cameraOptedOut\)"),
@@ -94,10 +155,25 @@ RULES: list[Rule] = [
          r"guard !cameraPublished, on else"),
     Rule("ios", "预览防重入", IOS, "Sources/IMCallKit/State/IMCallController+Permissions.swift",
          r"guard wanted, self\.cameraCID\.isEmpty, !self\.previewStarting else"),
+    # ---- 2026-09-11 晚：来电页 + 进房前关摄像头停采集 ----
+    # 第 1 步 设计稿
+    Rule("docs", "§01 来电页点开摄像头不申请", SERVER, FLOWS,
+         r"<b>来电页点开摄像头</b>（被叫，还没接听）</td><td><b>不申请</b>"),
+    Rule("docs", "§01 摄像头开着接听必须问摄像头", SERVER, FLOWS, r"<b>摄像头开着接听就必须问摄像头</b>"),
+    Rule("docs", "§01 v3.7 进房前关摄像头停采集", SERVER, FLOWS, r"<b>进房之前（拨出中 / 来电页）关掉摄像头 = 真的停采集</b>"),
+    Rule("docs", "§06 点横幅本体展开、四端一样", SERVER, FLOWS, r"<b>点横幅本体展开成全屏来电页</b>[\s\S]{0,200}<b>四端一样</b>"),
+    Rule("docs", "§07 桌面窗内横幅说明块", SERVER, FLOWS, r"桌面来电：窗内横幅 → 来电浮层"),
+    Rule("docs", "§09 第 37 条改为全部", SERVER, FLOWS, r"<td>全部（Web / 桌面 v3.7 起有来电页）</td>"),
+    Rule("docs", "§09 新增到第 45 条", SERVER, FLOWS, r'<td class="num">45</td><td>接通之后关摄像头'),
+    Rule("docs", "界面规范组件表有 Web / 桌面来电页", SERVER, SPEC, r"<b>来电页（Web 页内 / 桌面窗内）</b>"),
+    Rule("docs", "草图横幅接听键 📞", SERVER, SKETCH, r'<div class="rb no">✕</div><div class="rb yes">📞</div>'),
+    Rule("docs", "§7.5 有 stopLocalPreview", SERVER, "docs/design/RTC_CALL_DESIGN.md", r"\*\*`stopLocalPreview`\*\*"),
 ]
 
 # 这几条是「旧行为不许回来」
 FORBIDDEN: list[Rule] = [
+    Rule("android", "adapter stop() 不再一上来就按 running 早退", ANDROID, "call-engine-webrtc/src/main/**/IMWebRTCAdapter.kt",
+         r"override fun stop\(\) \{\s*if \(!running\) return\b"),
     Rule("android", "answer() 不再按 cameraOn 申请", ANDROID, "call-uikit/src/main/**/IMCallKit.kt",
          r"devicesFor\(state\.mediaType, withCamera = state\.cameraOn\)"),
     Rule("android", "旧 publishDefaults 已删", ANDROID, "call-engine/src/main/**/IMCallEngine.kt", r"private fun publishDefaults\("),
@@ -109,6 +185,12 @@ FORBIDDEN: list[Rule] = [
          r"var type = ServiceInfo\.FOREGROUND_SERVICE_TYPE_MICROPHONE\b"),
     Rule("ios", "toggleCamera 不再按 cid 非空判已发布", IOS, "Sources/IMCallKit/State/IMCallController.swift",
          r"guard cameraCID\.isEmpty, on else"),
+    Rule("docs", "不再有「5s 不处理升级为全屏」", SERVER, "docs/design/sketches/*.html", r"<b>5s 不处理升级为全屏"),
+    Rule("docs", "草图横幅接听键不再是 📹", SERVER, SKETCH, r'class="rb yes">📹'),
+    Rule("docs", "草图不再说视频来电横幅接听键是摄像头", SERVER, SKETCH, r"视频来电是摄像头图标 📹"),
+    Rule("desktop", "来电不再直接弹浮层", DESKTOP, "demo/MainWindow.cpp",
+         r"beginIncoming\(caller, callees, mediaType, isGroup\);\s*showOverlay\(\)"),
+    Rule("desktop", "CallOverlay 不再自己写邀请语", DESKTOP, "demo/CallOverlay.cpp", r"tr\(\"邀请你视频通话\"\)"),
 ]
 
 

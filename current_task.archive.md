@@ -885,3 +885,22 @@ guard 只挡信令帧，所以对端听不见你——这也正好解释了真�
 `IMNegotiationFrames.kt` 的自由函数（它不碰门面任何状态）。`IMCallEngine.kt` 回到 587 行。
 
 **新增 5 条用例**（`MuteBeforePublishTest`）。把 `setMuted` 注回旧逻辑，其中 2 条立刻红。
+
+## 2026-09-11 下午 · 真机报的五个问题（从「当前焦点」退休）
+
+**2026-09-11 下午：真机报的五个问题逐个修，直接在 main 上改（未提交）。本仓三处：**
+
+| # | 现象 | 根因 | 本仓改了什么 |
+|---|---|---|---|
+| 2 | PKD130 启动即崩，每次重启再崩（`Starting FGS with type microphone … requires RECORD_AUDIO`） | Android 14+ 前台服务的 microphone 类型要求 RECORD_AUDIO **已授权**。麦克风权限被收回后在来电页点开摄像头 → `ensureCapture` 起服务 → `onStartCommand` 里抛出去 → 系统重投启动 → 循环崩 | `IMForegroundTypes` 按真实授权拼类型；`start()` 一样都没有就不起；`onStartCommand` 兜住异常 `stopSelf()` |
+| 3a/3c | iOS 九宫格竖屏源左右黑边 / 变成竖直画面（本仓正常） | 9:16 源放正方形格子恰好压在 0.5625 阈值上，iOS 格子边长是小数、差 1px 就判成 FIT；本仓格子边长是整数像素 | `IMVideoFit.FILL_TOLERANCE = 0.01`，与 iOS 同值（对齐，不是修 bug） |
+| 4a | 视频来电横幅接听键是摄像头图标，点开来电页是听筒 | 横幅 `render` 按 `mediaType` 换图标，违反 UI_SPEC「phone · 来电页、来电横幅」 | 恒为 `PHONE` |
+
+`./scripts/test.sh` 全绿（6 步），新增 `IMForegroundTypesTest` 4 条、`VideoFitTest` 2 条。**没上真机**。
+Web（3b 本端格子没画面）与 iOS（3a/3c、4a、4b 来电页看不见自己）在各自仓的 current_task。
+
+**悬而未决**：本仓来电页点开摄像头会当场弹摄像头权限框，交互稿 §01 说响铃时什么都不申请——等用户拍板，没动。
+
+上一刀（接听时摄像头权限 / 摄像头关着不采集）已合 main、PKD130 验过，细节看 `git log`。
+
+**iOS 的 simulcast 缺失已决定暂缓**（2026-09-09），结论在 `../im-rtc-ios/current_task.md` 的「已知坑」。

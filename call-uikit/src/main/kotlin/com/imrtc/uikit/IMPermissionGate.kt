@@ -57,6 +57,17 @@ internal object IMPermissionGate {
         devicesFor(mediaType, withCamera = true)
 
     /**
+     * 摄像头权限**还没到手**时点「开摄像头」，要不要当场申请。
+     *
+     * **来电页上不申请**（交互稿 §01：响铃时什么都不申请，v3.7 起四端一致）：这一下只翻意图，
+     * 权限留到接听时由 [devicesForAnswering] 统一要——摄像头开着接听就会问，被拒只置「无权限」、通话照接。
+     * 原先这里当场弹系统框，于是还没决定接不接，先被问了一次摄像头。
+     * 其余阶段（拨出中 / 通话中）这一下就是「第一次真正需要它」，当场问。
+     */
+    fun asksCameraOnToggle(phase: IMCallViewState.Phase): Boolean =
+        phase != IMCallViewState.Phase.INCOMING
+
+    /**
      * **接听**时该申请哪些设备。只有**来电页上亲手关掉了摄像头**的才只要麦克风
      * （拍板 §11-10：关掉摄像头再接听 = 以语音接听）；群通话默认关着不算，照样问（交互稿 §01）。
      * 与 iOS 的 `imPermissionDevicesForAnswering`、Web 的 `devicesForAnswering` 同一条规则。
