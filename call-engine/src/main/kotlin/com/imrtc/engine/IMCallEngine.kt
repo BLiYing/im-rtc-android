@@ -49,7 +49,7 @@ class IMCallEngine private constructor(
     data class Config @JvmOverloads constructor(
         val url: String,
         val deviceId: String,
-        val sdk: String = "android",
+        val sdk: String = IMCallEngineVersion.SDK,
     ) {
         init {
             checkDeviceId(deviceId)

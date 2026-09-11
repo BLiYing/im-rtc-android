@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.CompoundButton
 import android.widget.LinearLayout
 import android.widget.Switch
+import com.imrtc.engine.IMCallEngineVersion
 import com.imrtc.engine.media.IMVideoProfile
 
 /**
@@ -70,7 +71,7 @@ internal class SettingsScreen(private val activity: Activity) : DemoScreen {
                     DemoUI.card(
                         activity, "关于",
                         listOf(
-                            detailRow("SDK", "im-rtc-android 0.1"),
+                            detailRow("SDK", "im-rtc-android ${IMCallEngineVersion.VERSION}"),
                             detailRow("libwebrtc", "M150（io.github.webrtc-sdk:android:150.7871.01）"),
                             detailRow("设备 ID", DemoSession.deviceId),
                         ),
