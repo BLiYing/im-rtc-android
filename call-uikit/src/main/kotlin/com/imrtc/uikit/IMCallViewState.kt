@@ -19,6 +19,8 @@ internal data class IMCallViewState(
     val mediaType: String = "audio",
     val role: String = "",
     val peer: String = "",
+    /** 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它不列发起人：他离场后服务端拉不回来。 */
+    val caller: String = "",
     val durationSec: Long = 0,
     val micOn: Boolean = true,
     val cameraOn: Boolean = false,
@@ -59,7 +61,7 @@ internal data class IMCallViewState(
     val isSwapped: Boolean = false,
     /** 信令连接的状态，驱动顶部的橙条。 */
     val connection: Connection = Connection.OK,
-    /** 还能不能加人。主叫默认能；收到 `1407 not_call_owner` 后关掉（兜底，正常情况下非主叫看不到入口）。 */
+    /** 还能不能加人。默认能；收到 `1407 not_call_owner`（本端已不在通话里）后关掉（兜底，正常情况下那时看不到入口）。 */
     val canInvite: Boolean = true,
     /** 一句给用户看的提示（「通话已满员」这类）。 */
     val hint: String = "",
@@ -123,11 +125,11 @@ internal data class IMCallViewState(
     val showsCameraButton: Boolean get() = mediaType == "video"
 
     /**
-     * 要不要给「添加成员」入口（交互稿 §05）。三个条件缺一不可：是群通话（会议房没有 call）、
-     * 本端是主叫（协议 1407：非主叫发 `invite_more` 会被拒）、房间没满（含本端 9 人）。
+     * 要不要给「添加成员」入口（交互稿 §05）。条件缺一不可：是群通话（会议房没有 call）、已接通、房间没满（含本端 9 人）。
+     * **不看主叫被叫**：通话里的任何人都能加人（2026-09-15 起）；还在响铃的人阶段不对，自然没有入口。
      */
     val canShowInvite: Boolean
-        get() = isGroup && !isMeeting && role == "caller" && canInvite &&
+        get() = isGroup && !isMeeting && canInvite &&
             members.size + 1 < IMGrid.MAX_TILES &&
             (phase == Phase.CONNECTED || phase == Phase.CONNECTING)
 
@@ -304,6 +306,7 @@ internal object IMCallViewReducer {
         phase = IMCallViewState.Phase.INCOMING,
         callId = callId,
         peer = if (isGroup) "" else caller,
+        caller = caller,
         mediaType = mediaType,
         isGroup = isGroup,
         cameraOn = defaultCameraOn(mediaType, isGroup),
@@ -401,8 +404,8 @@ internal object IMCallViewReducer {
     /** 终局停够了，把格子收掉。 */
     fun userRemove(state: IMCallViewState, uid: String) = state.copy(members = state.members - uid)
 
-    /** 服务端说不是主叫（1407）：藏掉加人入口。 */
-    fun inviteDenied(state: IMCallViewState) = state.copy(canInvite = false, hint = "只有发起人可以添加成员")
+    /** 服务端说本端不在通话里（1407）：藏掉加人入口。 */
+    fun inviteDenied(state: IMCallViewState) = state.copy(canInvite = false, hint = "你已不在通话中，无法添加成员")
 
     /**
      * 画面**从无到有**时先挂起（[IMCallViewState.Member.videoPending]），等首帧再揭示。

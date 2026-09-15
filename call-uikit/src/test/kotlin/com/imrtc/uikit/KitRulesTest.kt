@@ -124,15 +124,26 @@ class KitRulesTest {
     }
 
     @Test
-    fun `只有主叫看得到加人入口，满员或 1407 之后藏掉`() {
+    fun `通话里的人都看得到加人入口，满员或 1407 之后藏掉`() {
         assertTrue(groupCall("caller").canShowInvite)
-        assertFalse("非主叫发 invite_more 会被拒成 1407，入口直接不给", groupCall("callee").canShowInvite)
+        assertTrue("通话里的任何人都能加人（2026-09-15 起，原先仅主叫）", groupCall("callee").canShowInvite)
         assertEquals(7, groupCall("caller").inviteSlotsLeft)
         val full = IMCallViewReducer.invited(groupCall("caller"), listOf("c", "d", "e", "f", "g", "h", "i"))
         assertEquals(8, full.members.size)
         assertFalse("含本端 9 人就满了", full.canShowInvite)
         assertFalse(IMCallViewReducer.inviteDenied(groupCall("caller")).canShowInvite)
         assertFalse("会议房没有 call，不走这条", IMCallViewReducer.meeting(IMCallViewState(), "r").canShowInvite)
+    }
+
+    @Test
+    fun `被叫侧记下发起人，响铃中没有入口、接通后才有`() {
+        val ringing = IMCallViewReducer.incoming(IMCallViewState(), "c", "alice", listOf("carol"), "video", true)
+        assertEquals("alice", ringing.caller)
+        assertFalse("还在响铃的人不在通话里，发了也是 1407", ringing.canShowInvite)
+        val begun = IMCallViewReducer.connected(IMCallViewReducer.begin(ringing, "c", "r", "video", "callee"))
+        assertEquals("接通不能把发起人抹掉", "alice", begun.caller)
+        assertTrue(begun.canShowInvite)
+        assertEquals("自己拨出的下一通不带上一通的发起人", "", IMCallViewReducer.outgoing(begun, listOf("bob"), "audio", true).caller)
     }
 
     @Test

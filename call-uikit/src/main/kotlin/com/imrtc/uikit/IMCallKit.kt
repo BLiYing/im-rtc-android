@@ -406,7 +406,7 @@ object IMCallKit {
     /**
      * 往群通话里加人：占位格**立刻**出现，帧随后才发（交互稿 §05 G3）。
      *
-     * 记下这一批是谁：服务端拒掉（1407 非主叫 / 1202 满员）时不会有 `onUserReject`——
+     * 记下这一批是谁：服务端拒掉（1407 本端不在通话里 / 1202 满员）时不会有 `onUserReject`——
      * 那条是给「真的响了铃的人」的。不收回占位格的话它们会一直挂着「呼叫中…」，还占着人数，
      * 让「还能加 N 人」和九宫格的行列都算错。
      */
@@ -442,7 +442,11 @@ object IMCallKit {
     }
 
     internal fun showInvitePicker(activity: Activity) {
-        IMInvitePicker(activity, config.inviteCandidates, state.members.keys, state.inviteSlotsLeft) { inviteMore(it) }.show()
+        // 发起人不列：他不在服务端成员表里，离场后拉不回来（回 bad_params），列出来只会留下一个转不停的占位格。
+        // 也塞进「不可选」那一组，连手输 uid 那条路一起挡住。
+        val candidates = config.inviteCandidates.filter { it.uid != state.caller }
+        val blocked = if (state.caller.isEmpty()) state.members.keys else state.members.keys + state.caller
+        IMInvitePicker(activity, candidates, blocked, state.inviteSlotsLeft) { inviteMore(it) }.show()
     }
 
     /** 收进小窗。接通之前不许收，见 [IMCallViewState.canMinimize]。 */

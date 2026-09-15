@@ -44,7 +44,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         host.onTokenWillExpire(expiresAtMs)
     }
 
-    /** 加人的两条失败分支（交互稿 §05）：满员出提示；非主叫把入口藏掉。别的错误码由宿主处理。 */
+    /** 加人的两条失败分支（交互稿 §05）：满员出提示；本端已不在通话里（1407）把入口藏掉。别的错误码由宿主处理。 */
     override fun onError(code: Int, message: String) {
         when (code) {
             // 加人被拒：出提示 / 藏入口，**并且把刚摆上去的占位格收回来**。

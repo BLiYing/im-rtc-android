@@ -94,7 +94,7 @@ internal enum class IMErrorCode(
     INVALID_CALL_STATE(1405, "invalid_call_state", "invalid call state", "call", false),
     /** callee_ids 超上限 */
     TOO_MANY_CALLEES(1406, "too_many_callees", "too many callees", "call", false),
-    /** 非主叫发 call.cancel / call.invite_more */
+    /** 非主叫发 call.cancel；不在通话里的人发 call.invite_more */
     NOT_CALL_OWNER(1407, "not_call_owner", "not call owner", "call", false),
     /** 自己已在别的通话中 */
     ALREADY_IN_CALL(1408, "already_in_call", "already in call", "call", false),
