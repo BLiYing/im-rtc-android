@@ -695,8 +695,8 @@ class EngineLoopTest {
             callId: String,
             roomId: String,
             mediaType: String,
-            role: String,
             isGroup: Boolean,
+            role: String,
             caller: String,
             chatGroupId: String,
             userData: String,
@@ -704,13 +704,13 @@ class EngineLoopTest {
             callBegins += callId
             lastBeginGroupData = listOf(caller, chatGroupId, userData, isGroup)
         }
-        override fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {
-            callEnds += "$reason:$durationSec"
+        override fun onCallEnd(callId: String, reason: IMCallEndReason, durationSec: Long, endedBy: String) {
+            callEnds += "${reason.wire}:$durationSec"
         }
         override fun onUserAccept(uid: String) { userAccepts += uid }
         override fun onRoomJoined(roomId: String) { roomJoins += roomId }
         override fun onRoomLeft(roomId: String) { roomLeaves += roomId }
-        override fun onError(code: Int, message: String) { errors += code }
+        override fun onError(code: Int, name: String, message: String) { errors += code }
     }
 
     private class FakeMedia : IMMediaAdapter {

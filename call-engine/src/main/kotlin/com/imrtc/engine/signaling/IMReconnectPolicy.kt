@@ -1,5 +1,7 @@
 package com.imrtc.engine.signaling
 
+import com.imrtc.engine.protocol.IMCloseCode
+
 /**
  * 「后台重连节奏：不清零，最长 3 秒」的判定逻辑（2026-09-11，真机 OPPO/ColorOS）。
  *
@@ -61,5 +63,24 @@ internal object IMReconnectPolicy {
         }
         // 规则②：后台 + 连上不到 10 秒就断——不归零，但这一次封顶 3 秒（含抖动）。
         return Plan(BACKGROUND_SHORT_LIVED_CAP_MS, "后台短命连接封顶3s")
+    }
+
+    /**
+     * 断开这一刻会不会自动重连——供 [IMSignalConnection.handleClosed] 在抛 `onDisconnected`
+     * 之前当场裁决，判据要跟它随后真正走的 giveUp/reconnect 分支同步。
+     *
+     * @param authFailuresAfterIncrement 鉴权失败计数**自增之后**的值（不是自增前）。
+     */
+    fun willReconnect(
+        stopped: Boolean,
+        hasPendingGiveUp: Boolean,
+        code: Int,
+        authFailuresAfterIncrement: Int,
+        maxAuthFailures: Int,
+    ): Boolean = when {
+        stopped || hasPendingGiveUp -> false
+        code == IMCloseCode.KICKED.code -> false
+        code == IMCloseCode.UNAUTHORIZED.code -> authFailuresAfterIncrement < maxAuthFailures
+        else -> true
     }
 }

@@ -203,10 +203,10 @@ class IMCallEngine private constructor(
      * 1v1 就传一个人；群通话传多个并把 `isGroup` 置 true（房内含主叫最多 9 人）。
      */
     @JvmOverloads
-    fun call(userIds: List<String>, mediaType: String, isGroup: Boolean = false) = act(
+    fun call(calleeIds: List<String>, mediaType: String, isGroup: Boolean = false) = act(
         "call",
         mapOf(
-            "callee_ids" to IMJson.Arr(userIds.map { IMJson.Str(it) }),
+            "callee_ids" to IMJson.Arr(calleeIds.map { IMJson.Str(it) }),
             "media_type" to IMJson.Str(mediaType),
             "is_group" to IMJson.Bool(isGroup),
         ),
@@ -220,8 +220,8 @@ class IMCallEngine private constructor(
      * `onCallEnd(reason="error", durationSec=0)`，**不上线路**（`HOST_INTEGRATION_DESIGN.md` §3.3）。
      * 校验与参数拼装见 [IMCallInvite]——这里已经踩着体量红线，不能再堆逻辑。
      */
-    fun call(userIds: List<String>, mediaType: String, options: IMCallOptions) = scheduler.post {
-        IMCallInvite.act(dispatcher, userIds, mediaType, options)?.let { input(it) }
+    fun call(calleeIds: List<String>, mediaType: String, options: IMCallOptions) = scheduler.post {
+        IMCallInvite.act(dispatcher, calleeIds, mediaType, options)?.let { input(it) }
     }
 
     fun accept() = act("accept")
@@ -265,8 +265,8 @@ class IMCallEngine private constructor(
     private val forceEnder = IMForceEnd(scheduler, connection, { ctx }) { before, output -> applyOutput(before, output) }
 
     /** 群通话中途加邀，通话里的任何人都能发（还在响铃 / 已离场回 1407，名单含发起人回 bad_params）。 */
-    fun inviteMore(userIds: List<String>) =
-        act("invite_more", mapOf("callee_ids" to IMJson.Arr(userIds.map { IMJson.Str(it) })))
+    fun inviteMore(calleeIds: List<String>) =
+        act("invite_more", mapOf("callee_ids" to IMJson.Arr(calleeIds.map { IMJson.Str(it) })))
 
     /**
      * 主动加入一通进行中的群通话。
@@ -287,9 +287,13 @@ class IMCallEngine private constructor(
 
     // ── 设备与媒体 ────────────────────────────────────────────────────
 
-    fun openMic() = setMuted("audio", false)
+    /**
+     * 开麦克风：取消静音。**不需要照 [openCamera] 补「没发布就发布」**——音频轨道进房那一刻
+     * 就无条件发布（[IMLocalPublisher.publishDefaults]），只有 `muted` 跟着 [IMMuteBook] 走。
+     */
+    fun openMicrophone() = setMuted("audio", false)
 
-    fun closeMic() = setMuted("audio", true)
+    fun closeMicrophone() = setMuted("audio", true)
 
     /** 开摄像头。进房时摄像头关着、视频还没发布的，这一下补发（见 [IMLocalPublisher]）。 */
     fun openCamera() = scheduler.post {
@@ -518,10 +522,10 @@ class IMCallEngine private constructor(
             input(IMMachineInput.Act("restart_pub_ice", emptyMap()))
         }
 
-        override fun onDisconnected(code: Int, reason: String) {
+        override fun onDisconnected(code: Int, willReconnect: Boolean) {
             input(IMMachineInput.Internal("disconnected"))
             // 关闭码由连接层独占上报（状态机那份 onDisconnected 不带码，dispatcher 里刻意不派发）。
-            dispatcher.disconnected(code, reason)
+            dispatcher.disconnected(code, willReconnect)
         }
 
         override fun onFrame(type: String, data: Map<String, IMJson>) {
@@ -588,7 +592,7 @@ class IMCallEngine private constructor(
 
         override fun onMediaReady() = scheduler.post { input(IMMachineInput.Internal("media_ready")) }
 
-        override fun onFirstVideoFrame(uid: String) = dispatcher.firstVideoFrame(uid)
+        override fun onFirstVideoFrame(uid: String, trackId: String) = dispatcher.firstVideoFrame(uid, trackId)
 
         override fun onMediaError(code: Int, message: String) = dispatcher.error(code, message)
     }

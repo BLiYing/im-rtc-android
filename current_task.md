@@ -7,29 +7,50 @@
 
 ## 当前焦点
 
-**2026-09-15：宿主对接 M1 → M2 → M8（群通话 chat_group_id / IMInviteMemberProvider / call.join）落地。未提交；`./scripts/test.sh` 全绿（6 步，单测 engine 164 / webrtc 36 / uikit 64 / demo 26）；真机未验（无设备可用，本轮只验到编译 + JVM 单测）。**
-契约见 `../im-rtc-server/docs/design/HOST_INTEGRATION_DESIGN.md` §3.2/§3.3/§3.4，一致性向量已由另一人改好（`call_fsm.json` 两条新用例 + `member_joins_ongoing_group_call` 补字段、`envelope.json` 两条新默认值用例、`error_codes.json` 加 1409）。
+**2026-09-15（第二轮）：四端 API 命名核对，本仓不一致项最多，逐条对齐。未提交；`./scripts/test.sh` 全绿（6 步，单测 engine 165 / webrtc 36 / uikit 67 / demo 26）；真机未验（本轮只是签名/命名改动，编译 + JVM 单测覆盖，媒体行为未变不需要重验）。**
+
+对齐结果（对照 Web `packages/call-engine/src/events.ts` 与 iOS `IMCallEngineDelegate`）：
+- 删 `onCallMediaTypeChanged`/`mediaTypeChanged`（确认无调用方、协议无此帧）。
+- `onDisconnected(code, reason: String)` → `onDisconnected(code, willReconnect: Boolean)`：判定挪到 `IMSignalConnection.handleClosed`，抛回调前当场算好（新增纯函数 `IMReconnectPolicy.willReconnect`），`IMKitListener` 顺带把「LOST」判据从硬编码 `code==4403` 换成 `!willReconnect`——4401 用尽也能立刻判对了，不用等下一条 onKickedOut。
+- `onError(code, message)` → `onError(code, name, message)`：`name` 由 `IMEventDispatcher` 按 `IMErrorCode.fromCode(code)` 反查兜底，调用方不用逐个改。
+- `onCallBegin` 参数顺序改成 `(callId, roomId, mediaType, isGroup, role, caller, chatGroupId, userData)`。
+- `onFirstVideoFrame(uid)` → `onFirstVideoFrame(uid, trackId)`：`IMWebRTCAdapter` 新增 `trackIdFor(uid)`，远端反查 `trackOwners`、本端预览用 `videoTrack/previewTrack` 自己的 id，拿不到给空串不造假值。
+- `onCallEnd` 的 `reason: String` → `reason: IMCallEndReason`：枚举从 `protocol` 包移到 `com.imrtc.engine`（对齐 `IMKickedOutReason` 的位置）转正为公开 API，`wire` 公开、`canBeConnected`/`durationPositive`/整个 companion 收成 `internal`；枚举顺序本来就与规格一致，未改。**本仓没找到为它生成代码的脚本**（类注释说"从向量生成"，但仓内 `scripts/` 与 server 仓都没有对应生成器），这次是手改的产物，回报见下方③。
+- `IMCallEngine.call`/`inviteMore` 与 `IMCallKit.placeCall` 的被叫参数统一改名 `calleeIds`（纯改名，Kotlin 位置参数不受影响，Java 侧本来就是位置调用）。
+- `openMic/closeMic` → `openMicrophone/closeMicrophone`：确认麦克风轨道进房时无条件发布（`IMLocalPublisher.publishDefaults` 音频那支不看摄像头式的「有没有发」意图），所以不需要照 `openCamera` 那样补 `publishIfMissing`；补了一条「关闭又打开、以最后一次为准」的单测。
+- 本端预览 `startLocalPreview(): cid` + `attachLocalView(cid, view)`：**评估后没做**，原因见「下一步」。
 
 - **M1（call-engine）**：`CallFrames.INVITE/INCOMING` 加 `chat_group_id`，`CONNECTED` 加 `caller`/`chat_group_id`/`user_data`；`IMCallContext` 记 `caller`/`chatGroupId`/`userData`，`handleConnected` 取 `call.connected` 的值、为空回落到 `call()` 选项 / `call.incoming` 记下的值；新增 `IMCallOptions`（`@JvmOverloads`：isGroup/chatGroupId/userData/timeoutSec）与 `call(userIds, mediaType, options)`（校验拆在 `IMCallInvite.kt`，超限走 `IMCallOptionsGuard`，本地先拦、不上线路、与「callee 里有自己」同一出口）；`IMErrorCode.INVITE_DENIED=1409`；`onCallReceived`/`onCallBegin` 改签名加 isGroup/caller/chatGroupId/userData（**不留旧签名**）。
 - **M2（call-uikit）**：新增 `IMInviteContext`、`IMInviteCandidate` 扩字段（avatarUrl/subtitle/selectable/unselectableReason）、`IMInviteMemberProvider`（loadCandidates/presentInvitePicker/canInvite）、`IMPickedCallback`；`IMCallKitConfig` 加 `inviteMemberProvider`/`allowsManualUidInput`；`IMInvitePicker` 按 `IMInviteFlow` 的优先级（宿主接管 > provider > 静态 inviteCandidates > 空态）重写：300ms 防抖、generation 计数作废旧请求、滚到底翻页、加载中/失败(重试)/10s 超时三态、participantUids 已在通话中不可选、selectable=false 置灰。`IMCallViewState` 加 `chatGroupId`/`userData`；`incoming`/`outgoing`/`begin` 三个 reducer 带上这两个字段（`begin` 用可空参数「不传不改」，保留旧 5 参数测试调用点）。
 - **M8（本仓部分）**：`IMCallEngine.joinCall` 已有（M1 前就在）；新增 `IMCallKit.joinCall(callId)`（直接进 CONNECTING「接通中…」，`IMCallViewReducer.joining`）；`IMJoinCallState.joining` 记状态，`IMKitListener.onError` 按它把 1409 分成「对方暂时无法被邀请」（加人）/「无法加入该通话」（加入）两句文案，其余 join 失败码统一给后一句。
 - **Demo**：`DemoInviteProvider`（真实联系人排前 + 40 个假成员分页，`fail`/`slow` 模拟失败/超时）挂到 `kitConfig.inviteMemberProvider`；`DialerScreen` 加「加入进行中的群通话」卡片（call_id 输入框 + 按钮）；群呼带 `chatGroupId="demo-group"`；`JavaApiCheck.java` 补 `IMCallOptions`、新 `onCallBegin`/`onCallReceived` 签名、Java 版 `IMInviteMemberProvider`、`IMCallKit.joinCall`。
 
-**体量**：`IMCallEngine.kt` 595（拆出 `IMCallInvite.kt` 才压回 600 以内，之前一度 612 超标）、`IMCallKit.kt` 584（`showInvitePicker` 逻辑搬进新的 `IMInviteFlow.kt`）、`IMCallViewState.kt` 541、`IMSignalConnection.kt` 598、`IMCallView.kt` 591——**都在红线内，但没余量了**，下次改这几个文件之前先想好拆哪块。
+**体量**：`IMCallEngine.kt` 599、`IMSignalConnection.kt` 600（2026-09-15 命名对齐这轮，`onDisconnected` 的 `willReconnect` 判定逻辑已经抽成 `IMReconnectPolicy.willReconnect` 纯函数才压住）、`IMCallKit.kt` 584、`IMCallViewState.kt` 541、`IMCallView.kt` 591——**都在红线内，`IMCallEngine.kt`/`IMSignalConnection.kt` 基本没余量了（600 已到硬顶）**，下次改这两个文件之前先想好拆哪块，别指望还能塞得下新逻辑。
 
 ## 下一步
 
-**真机验收（本轮完全没做，环境不允许连真机/起服务端）**：
+**本端预览对齐（`startLocalPreview(): cid` + `attachLocalView(cid, view)`）没做，原因**：
+现在的 `IMWebRTCAdapter` 里，本端预览用的是一个**固定常量** `PREVIEW_TRACK_ID`（不是每次生成的 cid），
+与真正发布时 `IMLocalPublisher.publish()` 现生成的 cid（`local-$kind-$nowMs`）是两套不相干的 id、
+在两个不同层（media 层 / engine 层）。要做成 Web/iOS 那种「`startLocalPreview()` 返回 cid，
+之后一路 `attachLocalView(cid, ...)` 认到底、含发布后」，得把 cid 生成从 `IMLocalPublisher` 挪到
+预览发起的更早时刻、让预览与发布共用同一个 cid，这会牵动 `IMMediaAdapter` 接口、
+`IMWebRTCAdapter.attachLocalPreview` 的采集/挂载时序、以及 `IMCallKit.localPreviewView`/`wantsLocalPreview`
+的整套权限门时序——是媒体层改动，而**媒体功能改了要真机验收**（CONVENTIONS §10），
+这轮没有设备可用，贸然改时序风险太高。先不做，等有真机窗口再单独立项评估。
+
+**真机验收（本轮是纯签名/命名改动，媒体与状态机逻辑未动，暂不需要重验；下一次真机窗口仍按下表走）**：
 1. **M1**：group 通话下发 `chat_group_id`/`user_data`/`timeout_sec`，被叫 `onCallReceived` 与接通后 `onCallBegin` 真的带到；`call.join` 场景（frank 在另一台设备加入）`onCallBegin` 能拿到 caller/chatGroupId。
 2. **M2**：`IMInvitePicker` 真机走一遍——300ms 防抖是不是真的等到停手才发请求、滚到底是否稳定触发下一页、`slow` 搜索词 10 秒后是不是真的转成失败态、`fail` 搜索词的重试按钮能不能把请求发出去。
-3. **M8**：Demo 两台设备各登一个账号，A 发群通话，B 用 A 日志里的 call_id 在「加入进行中的群通话」里加入，确认不振铃直接接通；服务端配了邀请鉴权回调时验 1409 两句文案分得开（本仓这轮没法配服务端，等服务端那位实现完 `call.invite_check` 回调后再联调）。
+3. **M8**：Demo 两台设备各登一个账号，A 发群通话，B 用 A 日志里的 call_id 在「加入进行中的群通话」里加入，确认不振铃直接接通；服务端配了邀请鉴权回调时验 1409 两句文案分得开。
 4. 老批次真机项（forceEnd 断网/秒挂、后台重连节奏、1v1 视频细节）见 `current_task.archive.md` 与 server 仓「跨端待验」，本轮没有动它们。
 
 **待办**：
-- **`IMCallKit.notifyOutgoing` 没有带 `IMCallOptions` 的重载**（`IMCallKit.kt` 体量已经到顶，这次先省了）：宿主自己调 `engine.call(options)` 又想用 Kit 画拨出界面时，`notifyOutgoing` 目前带不出 chatGroupId，界面上加人入口会看不到候选——这类宿主目前的替代路径是 `placeCall(peers, mediaType, options)` 直接经 Kit 拨出。
+- **`IMCallKit.notifyOutgoing` 没有带 `IMCallOptions` 的重载**（`IMCallKit.kt` 体量已经到顶，这次先省了）：宿主自己调 `engine.call(options)` 又想用 Kit 画拨出界面时，`notifyOutgoing` 目前带不出 chatGroupId，界面上加人入口会看不到候选——这类宿主目前的替代路径是 `placeCall(calleeIds, mediaType, options)` 直接经 Kit 拨出。
 - 静默失败点清单：`../im-rtc-server/docs/ops/silent-failure/android.md`（逐条状态只在那里）。`ensureCapture` 缓存死 source 那条排在 server「下一步」第 2 条。
 - `call-engine/build.gradle.kts` 找向量仍「逐级往上找」，会捡到上层旧克隆（web 已修同类问题）。
 - `CLIENT_PARITY.md` 真机验完再改，验之前停 🟡。
+- 本端预览对齐 cid（见上）——等真机窗口。
 
 ## 已知坑 / 限制
 
@@ -69,7 +90,7 @@
 - `IMActivityTracker.foreground()` 拿不到通话页，通话中要 Context 一律用 `appContext`。
 - 前台服务：通话中必须起（`IMCallForegroundService`）；类型不能降级；类型不能超出已授权权限（Android 14+ 否则在 `onStartCommand` 里循环崩），`start()` 先判 `IMForegroundTypes.granted`。
 - 悬浮球默认走应用内浮层、不申请 `SYSTEM_ALERT_WINDOW`（CONVENTIONS §8）。
-- `onDisconnected(code, reason)` 只有 4403 当「断开」，其余关闭码当「正在重连」。
+- `onDisconnected(code, willReconnect)`（2026-09-15 由 `(code, reason)` 改名改类型）：`willReconnect` 由 `IMSignalConnection` 当场裁决，`IMKitListener` 直接用 `!willReconnect` 判「已放弃」，不用再猜 4403。
 - SDK 版本号只改 `call-engine/.../IMCallEngineVersion.kt`（五端统一 1.0.0，握手 `android/1.0.0`）；`demo/build.gradle.kts` 的 `versionName` 是写死的，发版要手动同号。
 
 ## 关联工程 / 常用命令

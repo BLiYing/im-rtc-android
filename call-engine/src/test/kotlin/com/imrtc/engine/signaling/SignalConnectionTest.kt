@@ -654,7 +654,7 @@ class SignalConnectionTest {
             connected += sessionId to resumed
         }
 
-        override fun onDisconnected(code: Int, reason: String) {
+        override fun onDisconnected(code: Int, willReconnect: Boolean) {
             disconnects++
         }
 

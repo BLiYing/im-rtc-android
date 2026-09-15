@@ -19,8 +19,14 @@ interface IMCallEngineListener {
     /** 信令通道建立。`resumed=true` 表示是断线恢复，房间与通话都还在。 */
     fun onConnected(sessionId: String, resumed: Boolean) {}
 
-    /** 信令通道断开。`code` 是 WebSocket 关闭码，0 表示网络异常没拿到码。 */
-    fun onDisconnected(code: Int, reason: String) {}
+    /**
+     * 信令通道断开。`code` 是 WebSocket 关闭码，0 表示网络异常没拿到码。
+     *
+     * `willReconnect` 是连接层**当场**给出的裁决：还会不会自动重连。4401 用尽、被踢（4403）、
+     * 宿主主动 `logout()` 都是 false；其余（含普通网络抖动）是 true。**别再用 `code == 4403`
+     * 猜**——4401 用尽时 code 还是 4401，猜不出「这次不会再重连」。
+     */
+    fun onDisconnected(code: Int, willReconnect: Boolean) {}
 
     /**
      * 别再重连了，回登录页。
@@ -42,8 +48,12 @@ interface IMCallEngineListener {
      */
     fun onTokenWillExpire(expiresAtMs: Long) {}
 
-    /** 任意内部错误。`code` 取自五仓共用的错误码表；`message` 是英文短语，**别直接显示给用户**。 */
-    fun onError(code: Int, message: String) {}
+    /**
+     * 任意内部错误。`code` 取自五仓共用的错误码表；`name` 是错误码的机读名
+     * （snake_case，如 `bad_params`，内部 `IMErrorCode` 已有的直接用它的 `wireName`）；
+     * `message` 是英文短语，**别直接显示给用户**。
+     */
+    fun onError(code: Int, name: String, message: String) {}
 
     // ── 来电与拨出 ────────────────────────────────────────────────────
 
@@ -80,8 +90,8 @@ interface IMCallEngineListener {
         callId: String,
         roomId: String,
         mediaType: String,
-        role: String,
         isGroup: Boolean,
+        role: String,
         caller: String,
         chatGroupId: String,
         userData: String,
@@ -91,10 +101,10 @@ interface IMCallEngineListener {
      * **所有结束分支的唯一出口**。
      *
      * 宿主只监听这一个回调也必须能完整记录一通电话：`reason` 取值见协议 §6
-     * （表外的值已经被 Engine 折成 `error`），`durationSec` 未接通恒为 0——
+     * （表外的值已经被 Engine 折成 [IMCallEndReason.ERROR]），`durationSec` 未接通恒为 0——
      * **别自己算时长**，时钟偏移会让两端算出不同的数。
      */
-    fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {}
+    fun onCallEnd(callId: String, reason: IMCallEndReason, durationSec: Long, endedBy: String) {}
 
     /** 未接通的四种裁决之一，**只在 1v1 抛**，随后必有 [onCallEnd]。 */
     fun onCallCancelled(uid: String) {}
@@ -148,11 +158,11 @@ interface IMCallEngineListener {
     /** 各方网络质量，服务端节流 2s。 */
     fun onNetworkQuality(entries: List<IMNetworkQuality>) {}
 
-    /** 语音 ↔ 视频切换。 */
-    fun onCallMediaTypeChanged(callId: String, from: String, to: String) {}
-
-    /** 某人的第一帧画面到了，UI 用来撤 loading。 */
-    fun onFirstVideoFrame(uid: String) {}
+    /**
+     * 某人的第一帧画面到了，UI 用来撤 loading。`trackId` 是那条视频轨道的 track_id；
+     * 媒体层拿不到时给空串（**不是假值**——拿不到的场景见媒体层实现的类注释）。
+     */
+    fun onFirstVideoFrame(uid: String, trackId: String) {}
 
     // ── 房间（会议） ──────────────────────────────────────────────────
 

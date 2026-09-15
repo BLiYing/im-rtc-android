@@ -1,6 +1,5 @@
 package com.imrtc.engine
 
-import com.imrtc.engine.protocol.IMCallEndReason
 import com.imrtc.engine.protocol.IMCallOptionsGuard
 import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMJson
@@ -25,7 +24,7 @@ internal object IMCallInvite {
      */
     fun act(
         dispatcher: IMEventDispatcher,
-        userIds: List<String>,
+        calleeIds: List<String>,
         mediaType: String,
         options: IMCallOptions,
     ): IMMachineInput.Act? {
@@ -45,14 +44,14 @@ internal object IMCallInvite {
             )
             return null
         }
-        return IMMachineInput.Act("call", args(userIds, mediaType, options))
+        return IMMachineInput.Act("call", args(calleeIds, mediaType, options))
     }
 
     /** `call` 动作的完整参数表——**总是带上 chat_group_id / user_data / timeout_sec**。 */
-    private fun args(userIds: List<String>, mediaType: String, options: IMCallOptions): Map<String, IMJson> {
+    private fun args(calleeIds: List<String>, mediaType: String, options: IMCallOptions): Map<String, IMJson> {
         val resolvedTimeoutSec = if (options.timeoutSec > 0) options.timeoutSec.toLong() else DEFAULT_TIMEOUT_SEC
         return mapOf(
-            "callee_ids" to IMJson.Arr(userIds.map { IMJson.Str(it) }),
+            "callee_ids" to IMJson.Arr(calleeIds.map { IMJson.Str(it) }),
             "media_type" to IMJson.Str(mediaType),
             "is_group" to IMJson.Bool(options.isGroup),
             "chat_group_id" to IMJson.Str(options.chatGroupId),

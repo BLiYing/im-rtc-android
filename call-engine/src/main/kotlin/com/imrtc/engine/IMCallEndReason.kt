@@ -1,4 +1,4 @@
-package com.imrtc.engine.protocol
+package com.imrtc.engine
 
 /**
  * 通话结束原因，对应协议 §6 与 `docs/conformance/reasons.json`。
@@ -7,14 +7,18 @@ package com.imrtc.engine.protocol
  * 收到表外的值必须折成 [ERROR]（§2.4 规则 6）——**禁止崩溃、禁止透传给 UI**，
  * 这是「新增枚举值不算破坏兼容」成立的前提。
  *
- * 同样是从向量生成的，理由见 [IMErrorCode]。
+ * **公开面**：类型与 [wire] 是公开 API（[IMCallEngineListener.onCallEnd]），包路径按本仓惯例
+ * 放在 `com.imrtc.engine`（与 [IMKickedOutReason] 同一层）；[canBeConnected] / [durationPositive]
+ * 只给 Engine 内部用，标了 `internal`。
+ *
+ * 同样是从向量生成的，理由见 `IMErrorCode`。
  */
-internal enum class IMCallEndReason(
+enum class IMCallEndReason(
     val wire: String,
-    /** 这个 reason 是否可能出现在**已接通**的通话上。 */
-    val canBeConnected: Boolean,
-    /** 这个 reason 下 `duration_sec` 是否可能 > 0。 */
-    val durationPositive: Boolean,
+    /** 这个 reason 是否可能出现在**已接通**的通话上。Engine 内部用，不对宿主公开。 */
+    internal val canBeConnected: Boolean,
+    /** 这个 reason 下 `duration_sec` 是否可能 > 0。Engine 内部用，不对宿主公开。 */
+    internal val durationPositive: Boolean,
 ) {
     /** 已接通成员主动挂断 */
     HANGUP("hangup", true, true),
@@ -42,7 +46,7 @@ internal enum class IMCallEndReason(
     ERROR("error", true, false),
     ;
 
-    companion object {
+    internal companion object {
         private val byWire = entries.associateBy { it.wire }
 
         /** 表外的值一律折成 [ERROR]（§2.4 规则 6 的兜底）。 */

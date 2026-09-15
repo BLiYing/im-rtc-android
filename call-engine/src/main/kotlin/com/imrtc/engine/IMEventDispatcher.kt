@@ -1,6 +1,7 @@
 package com.imrtc.engine
 
 import com.imrtc.engine.log.IMRTCLog
+import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.statemachine.IMEmittedEvent
 
@@ -40,7 +41,9 @@ internal class IMEventDispatcher(
             */
             "onKickedOut" -> Unit
             "onError" -> onMain {
-                listener.onError(args.num("code").toInt(), args.str("name"))
+                val code = args.num("code").toInt()
+                val name = args.str("name")
+                listener.onError(code, name, IMErrorCode.fromCode(code)?.msg ?: name)
             }
 
             "onCallReceived" -> onMain {
@@ -59,8 +62,8 @@ internal class IMEventDispatcher(
                     args.str("call_id"),
                     args.str("room_id"),
                     args.str("media_type"),
-                    args.str("role"),
                     args.flag("is_group"),
+                    args.str("role"),
                     args.str("caller"),
                     args.str("chat_group_id"),
                     args.str("user_data"),
@@ -69,7 +72,7 @@ internal class IMEventDispatcher(
             "onCallEnd" -> onMain {
                 listener.onCallEnd(
                     args.str("call_id"),
-                    args.str("reason"),
+                    IMCallEndReason.from(args.str("reason")),
                     args.num("duration_sec"),
                     args.str("ended_by"),
                 )
@@ -126,20 +129,22 @@ internal class IMEventDispatcher(
     /**
      * 连接断开。**关闭码只从这里出**——状态机那份 onDisconnected 不带码，
      * 混着报会出现「假的 4403」，宿主想数重连次数就数不对。
+     *
+     * `willReconnect` 由连接层当场裁决（见 `IMSignalConnection.handleClosed`），
+     * 不是这里猜的。
      */
-    fun disconnected(code: Int, reason: String) = onMain { listener.onDisconnected(code, reason) }
+    fun disconnected(code: Int, willReconnect: Boolean) = onMain { listener.onDisconnected(code, willReconnect) }
 
     fun kickedOut(reason: IMKickedOutReason) = onMain { listener.onKickedOut(reason) }
 
     fun tokenWillExpire(expiresAtMs: Long) = onMain { listener.onTokenWillExpire(expiresAtMs) }
 
-    /** 媒体层直接抛的两个，不经过状态机。 */
-    fun firstVideoFrame(uid: String) = onMain { listener.onFirstVideoFrame(uid) }
+    /** 媒体层直接抛的，不经过状态机。 */
+    fun firstVideoFrame(uid: String, trackId: String) = onMain { listener.onFirstVideoFrame(uid, trackId) }
 
-    fun error(code: Int, message: String) = onMain { listener.onError(code, message) }
-
-    fun mediaTypeChanged(callId: String, from: String, to: String) =
-        onMain { listener.onCallMediaTypeChanged(callId, from, to) }
+    /** `name` 从错误码表按 `code` 反查；查不到（未来新码、本端还没升级）就退化成 `message` 本身。 */
+    fun error(code: Int, message: String) =
+        onMain { listener.onError(code, IMErrorCode.fromCode(code)?.wireName ?: "unknown", message) }
 
     private fun onMain(block: () -> Unit) = main.run(block)
 }

@@ -121,22 +121,22 @@ object IMCallKit {
      */
     @JvmOverloads
     @JvmStatic
-    fun placeCall(peers: List<String>, mediaType: String, isGroup: Boolean = false) =
-        placeCallWith(peers, mediaType, isGroup, "", "") { it.call(peers, mediaType, isGroup) }
+    fun placeCall(calleeIds: List<String>, mediaType: String, isGroup: Boolean = false) =
+        placeCallWith(calleeIds, mediaType, isGroup, "", "") { it.call(calleeIds, mediaType, isGroup) }
 
     /**
      * 带 [IMCallOptions] 的重载：群通话要带 `chatGroupId`（宿主自己的群号）时用它
      * （HOST_INTEGRATION_DESIGN §3.3/§3.4）——被叫与中途加入的人靠它知道「添加成员」该列谁。
      */
     @JvmStatic
-    fun placeCall(peers: List<String>, mediaType: String, options: IMCallOptions) =
-        placeCallWith(peers, mediaType, options.isGroup, options.chatGroupId, options.userData) {
-            it.call(peers, mediaType, options)
+    fun placeCall(calleeIds: List<String>, mediaType: String, options: IMCallOptions) =
+        placeCallWith(calleeIds, mediaType, options.isGroup, options.chatGroupId, options.userData) {
+            it.call(calleeIds, mediaType, options)
         }
 
     /** 两个 `placeCall` 重载共用的权限门 + 界面切换，`dispatch` 只是最后真正发帧的那一下不同。 */
     private fun placeCallWith(
-        peers: List<String>,
+        calleeIds: List<String>,
         mediaType: String,
         isGroup: Boolean,
         chatGroupId: String,
@@ -144,7 +144,7 @@ object IMCallKit {
         dispatch: (IMCallEngine) -> Unit,
     ) {
         val instance = engine ?: return
-        update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup, chatGroupId, userData))
+        update(IMCallViewReducer.outgoing(state, calleeIds, mediaType, isGroup, chatGroupId, userData))
         ensurePermissions(IMPermissionGate.devicesForPlacing(mediaType, isGroup)) { outcome ->
             when (outcome) {
                 IMPermissionGate.Outcome.OK -> {
@@ -365,7 +365,7 @@ object IMCallKit {
 
     internal fun toggleMic() {
         val next = !state.micOn
-        if (next) engine?.openMic() else engine?.closeMic()
+        if (next) engine?.openMicrophone() else engine?.closeMicrophone()
         update(IMCallViewReducer.toggleMic(state))
     }
 

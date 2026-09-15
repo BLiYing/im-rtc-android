@@ -87,7 +87,7 @@ class MuteBeforePublishTest {
         loginAndConnect()
         engine.call(listOf("bob"), "audio")
 
-        engine.closeMic()
+        engine.closeMicrophone()
         // 这一刻轨道还不存在，本端这次调用是空操作——但意图必须留住。
         assertTrue(
             "轨道还没发布，不该有 room.mute 帧",
@@ -107,13 +107,39 @@ class MuteBeforePublishTest {
     fun `呼叫中按的静音，接通后要补发 room mute 帧`() {
         loginAndConnect()
         engine.call(listOf("bob"), "audio")
-        engine.closeMic()
+        engine.closeMicrophone()
 
         peerAcceptsAndPublishCompletes()
 
         val mute = transport.lastOf(IMFrameType.ROOM_MUTE) ?: error("没有补发 room.mute")
         assertEquals(true, (mute.data["muted"] as IMJson.Bool).value)
         assertEquals("t-local-audio-1000000", (mute.data["track_id"] as IMJson.Str).value)
+    }
+
+    /**
+     * `openMicrophone()` 是 `closeMicrophone()` 的撤销：以最后一次意图为准，接通后不该静音。
+     *
+     * 与 [IMCallEngine.openCamera] 不同：麦克风轨道不管意图如何都在进房那一刻无条件发布
+     * （[IMLocalPublisher.publishDefaults] 音频那一支不看 [IMMuteBook]），所以这里不需要
+     * `publishXxxIfMissing` 那一套——`openMicrophone` 唯一要做的就是把意图翻回「不静音」。
+     */
+    @Test
+    fun `呼叫中关闭又打开麦克风，以最后一次意图为准，接通后不静音`() {
+        loginAndConnect()
+        engine.call(listOf("bob"), "audio")
+        engine.closeMicrophone()
+        engine.openMicrophone()
+
+        peerAcceptsAndPublishCompletes()
+
+        // `closeMicrophone()` 那一下已经**无条件**落到本端轨道上（media.mutes 里留着一条
+        // "audio" to true，轨道还不存在时这是空操作，见 IMCallEngine.applyMuted 的类注释）——
+        // 这不是 bug。真正要紧的是**最后一条**：`openMicrophone()` 之后本端与补发的
+        // room.mute 都要落在「不静音」，不能是关闭时那次的残留。
+        assertEquals("最后一次是 openMicrophone，本端最终状态不该是静音", false, media.mutes.last { it.first == "audio" }.second)
+        transport.lastOf(IMFrameType.ROOM_MUTE)?.let { mute ->
+            assertEquals(false, (mute.data["muted"] as IMJson.Bool).value)
+        }
     }
 
     /** 没按过静音的，**不许无中生有**地补一条。 */
@@ -133,7 +159,7 @@ class MuteBeforePublishTest {
     fun `补做过之后不再重复补`() {
         loginAndConnect()
         engine.call(listOf("bob"), "audio")
-        engine.closeMic()
+        engine.closeMicrophone()
         peerAcceptsAndPublishCompletes()
         val after = transport.countOf(IMFrameType.ROOM_MUTE)
 
@@ -149,7 +175,7 @@ class MuteBeforePublishTest {
     fun `挂断之后静音意图不许漏到下一通`() {
         loginAndConnect()
         engine.call(listOf("bob"), "audio")
-        engine.closeMic()
+        engine.closeMicrophone()
         peerAcceptsAndPublishCompletes()
 
         transport.deliver(

@@ -1,5 +1,6 @@
 package com.imrtc.uikit
 
+import com.imrtc.engine.IMCallEndReason
 import com.imrtc.engine.IMKickedOutReason
 import com.imrtc.engine.IMCallEngineListener
 import com.imrtc.engine.IMNetworkQuality
@@ -21,16 +22,14 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         host.onConnected(sessionId, resumed)
     }
 
-    override fun onDisconnected(code: Int, reason: String) {
-        // 4401 是「换票再来」、4403 是被踢，其余都是会自己回来的断线。
+    override fun onDisconnected(code: Int, willReconnect: Boolean) {
+        // `willReconnect=false` 覆盖被踢、4401 用尽、主动 logout 三种放弃场景——
+        // 不必再靠 `code == 4403` 猜（4401 用尽时 code 还是 4401，猜不出来）。
         //
-        // **已经是 LOST 就不再翻回 RECONNECTING**：放弃是终态，而 onKickedOut 与
-        // onDisconnected 的先后在不同放弃路径上并不一致——收到 close 那两条是先断后踢，
-        // 而握手当场被拒是先踢、close 后到。翻回去的症状是顶条上永远写着「正在重连」，
-        // 底下那条连接却根本不会再重连。重连成功时 onConnected 会把它拨回 OK。
-        val lost = code == 4403 || state.connection == IMCallViewState.Connection.LOST
+        // **已经是 LOST 就不再翻回 RECONNECTING**：放弃是终态。重连成功时 onConnected 会把它拨回 OK。
+        val lost = !willReconnect || state.connection == IMCallViewState.Connection.LOST
         IMCallKit.update(IMCallViewReducer.connection(state, if (lost) IMCallViewState.Connection.LOST else IMCallViewState.Connection.RECONNECTING))
-        host.onDisconnected(code, reason)
+        host.onDisconnected(code, willReconnect)
     }
 
     override fun onKickedOut(reason: IMKickedOutReason) {
@@ -49,7 +48,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
      * 满员出提示；本端已不在通话里（1407，只会来自加人）把入口藏掉；
      * 1409（宿主邀请鉴权回调拒绝）按「加人」还是「加入」分两句文案。别的错误码由宿主处理。
      */
-    override fun onError(code: Int, message: String) {
+    override fun onError(code: Int, name: String, message: String) {
         when (code) {
             // 加人 / 加入被拒都可能满员：出提示，**并且把刚摆上去的占位格收回来**（加入没有占位格，空操作）。
             1202 -> {
@@ -74,7 +73,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
             // onCallEnd(error) 会把界面收起，不必在这里另外处理状态。
             else -> if (IMJoinCallState.joining) IMCallKit.hint("无法加入该通话")
         }
-        host.onError(code, message)
+        host.onError(code, name, message)
     }
 
     override fun onCallReceived(
@@ -104,8 +103,8 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         callId: String,
         roomId: String,
         mediaType: String,
-        role: String,
         isGroup: Boolean,
+        role: String,
         caller: String,
         chatGroupId: String,
         userData: String,
@@ -114,19 +113,19 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         IMCallKit.update(
             IMCallViewReducer.begin(state, callId, roomId, mediaType, role, isGroup, caller, chatGroupId, userData),
         )
-        host.onCallBegin(callId, roomId, mediaType, role, isGroup, caller, chatGroupId, userData)
+        host.onCallBegin(callId, roomId, mediaType, isGroup, role, caller, chatGroupId, userData)
     }
 
-    override fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {
+    override fun onCallEnd(callId: String, reason: IMCallEndReason, durationSec: Long, endedBy: String) {
         IMJoinCallState.joining = false
         IMCallKit.stopTimer()
         // 还在响铃的来电直接收起，不留结束画面：被叫这一侧什么都还没做。主叫那一侧要停一下说明原因。
         if (state.phase == IMCallViewState.Phase.INCOMING) {
             IMCallKit.update(IMCallViewReducer.reset())
         } else {
-            IMCallKit.update(IMCallViewReducer.ended(state, reason, durationSec))
+            IMCallKit.update(IMCallViewReducer.ended(state, reason.wire, durationSec))
             // 停一会让用户看清结束原因再收场。**说不清原因的那几种要停久一点**（与 iOS / Web 同一张表）。
-            val hold = if (reason == "hangup" || reason == "cancel") 1_500L else 3_000L
+            val hold = if (reason == IMCallEndReason.HANGUP || reason == IMCallEndReason.CANCEL) 1_500L else 3_000L
             IMCallKit.main.postDelayed({ if (state.phase == IMCallViewState.Phase.ENDED) IMCallKit.update(IMCallViewReducer.reset()) }, hold)
         }
         host.onCallEnd(callId, reason, durationSec, endedBy)
@@ -223,15 +222,13 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         host.onNetworkQuality(entries)
     }
 
-    override fun onCallMediaTypeChanged(callId: String, from: String, to: String) = host.onCallMediaTypeChanged(callId, from, to)
-
-    override fun onFirstVideoFrame(uid: String) {
+    override fun onFirstVideoFrame(uid: String, trackId: String) {
         // 新画面上屏了，揭示格子（见 Member.videoPending）。**顺带重报一次层上界**——
         // 到这一步轨道一定在了，而人进来那一刻报的那次多半是空转。
         IMCallKit.invalidateReportedLayer(uid)
         revealFallbacks.remove(uid)?.let { IMCallKit.main.removeCallbacks(it) }
         IMCallKit.update(IMCallViewReducer.firstVideoFrame(state, uid))
-        host.onFirstVideoFrame(uid)
+        host.onFirstVideoFrame(uid, trackId)
     }
 
     override fun onRoomJoined(roomId: String) {
@@ -240,7 +237,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         // Kit 自己拨出 / 接听时，关摄像头的意图进房之前就给过 Engine（`IMCallKit.syncCameraIntent`），视频根本没发。
         // 这里再关一遍，兜的是宿主自己调 `engine.call` / `accept` 的路径——**用户表示不出镜，指示灯就不该亮**。
         if (state.mediaType == "video" && !state.cameraOn) IMCallKit.engine?.closeCamera()
-        if (!state.micOn) IMCallKit.engine?.closeMic()
+        if (!state.micOn) IMCallKit.engine?.closeMicrophone()
         /*
          **把「视频通话默认外放」真的应用到音频路由上。**
 

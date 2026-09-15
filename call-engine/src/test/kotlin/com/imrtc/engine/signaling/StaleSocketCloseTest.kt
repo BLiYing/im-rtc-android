@@ -157,7 +157,7 @@ class StaleSocketCloseTest {
         val kicks = mutableListOf<IMKickedOutReason>()
 
         override fun onConnected(sessionId: String, resumed: Boolean) = Unit
-        override fun onDisconnected(code: Int, reason: String) { disconnects++ }
+        override fun onDisconnected(code: Int, willReconnect: Boolean) { disconnects++ }
         override fun onFrame(type: String, data: Map<String, IMJson>) = Unit
         override fun onKickedOut(reason: IMKickedOutReason) { kicks += reason }
         override fun onTokenWillExpire(expiresAtMs: Long) = Unit

@@ -46,8 +46,8 @@ internal class IMSignalConnection(
         /** 握手成功。`resumed` 决定房间要不要归零（§1.4）。 */
         fun onConnected(sessionId: String, resumed: Boolean)
 
-        /** 连接断开。`code` 是**真实关闭码**，没有就给 0。 */
-        fun onDisconnected(code: Int, reason: String)
+        /** 连接断开。`code` 是**真实关闭码**，没有就给 0；`willReconnect` 见 [handleClosed]。 */
+        fun onDisconnected(code: Int, willReconnect: Boolean)
 
         /** 一条下行帧（事件或双向帧；应答已经在本层配对掉了）。 */
         fun onFrame(type: String, data: Map<String, IMJson>)
@@ -392,8 +392,10 @@ internal class IMSignalConnection(
             "signal",
             "断开 code=$code reason=$reason aliveMs=${aliveMs ?: -1} foreground=$foreground",
         )
-        // 关闭码由这一层独占上报（类注释第 4 条）。
-        if (wasConnected || code != 0) events.onDisconnected(code, reason)
+
+        // 抛 onDisconnected 前先当场判「会不会重连」，判据要跟下面真实走的分支同步（类注释第 4 条）。
+        val willReconnect = IMReconnectPolicy.willReconnect(stopped, pendingGiveUp != null, code, authFailures + 1, MAX_AUTH_FAILURES)
+        if (wasConnected || code != 0) events.onDisconnected(code, willReconnect)
 
         if (stopped) return
 

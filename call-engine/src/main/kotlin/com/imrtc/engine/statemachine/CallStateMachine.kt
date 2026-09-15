@@ -1,6 +1,6 @@
 package com.imrtc.engine.statemachine
 
-import com.imrtc.engine.protocol.IMCallEndReason
+import com.imrtc.engine.IMCallEndReason
 import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMEnvelope
 import com.imrtc.engine.protocol.IMFrameType

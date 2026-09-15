@@ -27,8 +27,11 @@ interface IMMediaAdapter {
         /** sub 侧连通 = 媒体就绪，通话状态机据此从 connecting 走到 connected。 */
         fun onMediaReady()
 
-        /** 某个远端第一帧画面到达，UI 用来撤掉 loading。对端关摄像头再开后（[awaitFirstVideoFrame]）会再报一次。 */
-        fun onFirstVideoFrame(uid: String)
+        /**
+         * 某个远端第一帧画面到达，UI 用来撤掉 loading。对端关摄像头再开后（[awaitFirstVideoFrame]）会再报一次。
+         * `trackId` 是那条视频轨道的 track_id；实现拿不到就给空串，**不许传假值**。
+         */
+        fun onFirstVideoFrame(uid: String, trackId: String)
 
         /** 媒体层出错（协商失败、ICE failed、采集权限被拒）。 */
         fun onMediaError(code: Int, message: String)

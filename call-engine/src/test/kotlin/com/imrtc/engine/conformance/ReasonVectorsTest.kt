@@ -1,6 +1,6 @@
 package com.imrtc.engine.conformance
 
-import com.imrtc.engine.protocol.IMCallEndReason
+import com.imrtc.engine.IMCallEndReason
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.protocol.optObjArr
 import com.imrtc.engine.protocol.optString

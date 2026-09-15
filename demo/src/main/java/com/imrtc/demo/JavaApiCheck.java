@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.graphics.drawable.Drawable;
 import android.content.Context;
 
+import com.imrtc.engine.IMCallEndReason;
 import com.imrtc.engine.IMCallEngine;
 import com.imrtc.engine.IMCallEngineListener;
 import com.imrtc.engine.IMCallEngineVersion;
@@ -52,8 +53,12 @@ final class JavaApiCheck {
         String sdkVersion = IMCallEngineVersion.VERSION + " " + IMCallEngineVersion.SDK;
         IMCallEngineListener listener = new IMCallEngineListener() {
             @Override
-            public void onCallEnd(String callId, String reason, long durationSec, String endedBy) {
+            public void onCallEnd(String callId, IMCallEndReason reason, long durationSec, String endedBy) {
                 // 只覆盖关心的那几个：其余回调有默认实现（-Xjvm-default=all）。
+                // 枚举在 Java 侧要能 switch/比较——这正是不用字符串的理由。
+                if (reason == IMCallEndReason.HANGUP) {
+                    // 正常挂断
+                }
             }
 
             @Override
@@ -61,8 +66,8 @@ final class JavaApiCheck {
                     String callId,
                     String roomId,
                     String mediaType,
-                    String role,
                     boolean isGroup,
+                    String role,
                     String caller,
                     String chatGroupId,
                     String userData) {
@@ -160,8 +165,8 @@ final class JavaApiCheck {
         engine.leaveRoom();
 
         // 设备与画面
-        engine.openMic();
-        engine.closeMic();
+        engine.openMicrophone();
+        engine.closeMicrophone();
         engine.openCamera();
         engine.closeCamera();
         engine.switchCamera();

@@ -1,5 +1,7 @@
 package com.imrtc.engine.protocol
 
+import com.imrtc.engine.IMCallEndReason
+
 /**
  * 协议枚举：**封闭的小写字符串集合**（§2.4 规则 6）。
  *

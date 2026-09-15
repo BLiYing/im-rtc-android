@@ -95,7 +95,20 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     private val fitter = IMVideoFitter(main) { renderers[it] }
 
     /** 对端摄像头重开后，等新画面真的上屏再报首帧。见 [IMFirstFrameGate]。 */
-    private val firstFrames = IMFirstFrameGate(main) { events?.onFirstVideoFrame(it) }
+    private val firstFrames = IMFirstFrameGate(main) { uid -> events?.onFirstVideoFrame(uid, trackIdFor(uid)) }
+
+    /**
+     * `uid`（渲染器的钥匙）反查它对应的 track_id，喂给 [IMMediaAdapter.Events.onFirstVideoFrame]。
+     *
+     * 远端：[trackOwners] 是 track_id → uid，反着找。**理论上一个 uid 可能挂多条视频轨道**，
+     * v1 一人一条，取第一条命中的即可；真拿不到（归属还没到）就给空串，不造假值。
+     * 本端预览（`uid == LOCAL`）：轨道 id 就是 [videoTrack] / [previewTrack] 自己的 id。
+     */
+    private fun trackIdFor(uid: String): String = if (uid == LOCAL) {
+        videoTrack?.id() ?: previewTrack?.id() ?: ""
+    } else {
+        trackOwners.entries.firstOrNull { it.value == uid }?.key ?: ""
+    }
 
     private var audioTrack: AudioTrack? = null
 

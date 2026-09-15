@@ -1,5 +1,6 @@
 package com.imrtc.demo
 
+import com.imrtc.engine.IMCallEndReason
 import com.imrtc.engine.IMKickedOutReason
 import android.content.Context
 import android.content.SharedPreferences
@@ -423,9 +424,9 @@ internal object DemoSession {
             notifyChanged()
         }
 
-        override fun onDisconnected(code: Int, reason: String) {
+        override fun onDisconnected(code: Int, willReconnect: Boolean) {
             if (stale) return
-            connectionText = "已断开（$code $reason）"
+            connectionText = "已断开（$code，${if (willReconnect) "重连中…" else "不再重连"}）"
             notifyChanged()
         }
 
@@ -480,9 +481,9 @@ internal object DemoSession {
             }
         }
 
-        override fun onError(code: Int, message: String) {
+        override fun onError(code: Int, name: String, message: String) {
             if (stale) return
-            IMRTCLog.w("demo", "错误 $code $message")
+            IMRTCLog.w("demo", "错误 $code $name $message")
         }
 
         override fun onCallReceived(
@@ -502,8 +503,8 @@ internal object DemoSession {
             callId: String,
             roomId: String,
             mediaType: String,
-            role: String,
             isGroup: Boolean,
+            role: String,
             caller: String,
             chatGroupId: String,
             userData: String,
@@ -514,7 +515,7 @@ internal object DemoSession {
             if (pending == null) pending = Meta(caller, mediaType, isGroup, role)
         }
 
-        override fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {
+        override fun onCallEnd(callId: String, reason: IMCallEndReason, durationSec: Long, endedBy: String) {
             if (stale) return
             val meta = pending ?: Meta("", "audio", false, "caller")
             records = listOf(
@@ -524,7 +525,7 @@ internal object DemoSession {
                     mediaType = meta.mediaType,
                     isGroup = meta.isGroup,
                     role = meta.role,
-                    reason = reason,
+                    reason = reason.wire,
                     durationSec = durationSec,
                     endedAtMs = System.currentTimeMillis(),
                 ),
