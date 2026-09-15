@@ -7,28 +7,27 @@
 
 ## 当前焦点
 
-**2026-09-11 夜：修「Android 看 iOS 重开摄像头，那格画面出来又刷新一下」。已提交 `cc111f0`，用户 20:04 真机验过不再刷新。**
-上一刀「后台重连节奏」已提交 `2c9c2fe`，**还没真机验**。
+**2026-09-15：对齐 iOS 的 `forceEnd`（红键等不到结束事件时引擎也收场）+ 拨出中没 call_id 的补救。未提交；`./scripts/test.sh` 全绿（6 步，单测 engine 148 / webrtc 36 / uikit 63 / demo 26）；PKD130 真机 10:08 验过看门狗 → `forceEnd`（见下一步 0）。**
+起因 09-13 14:53~14:58 iOS frank：挂断帧没到服务端，看门狗只收了界面，Engine 留在通话与房间里，其余端一直看得见他。本端看门狗原先同一个缺口。
+上一件（对端重开摄像头刷新）已提交 `cc111f0`、20:04 真机验过；「后台重连节奏」`2c9c2fe` 还没真机验。
 
-**根因**（19:17 真机日志）：Kit 按 `onUserVideoAvailable(true)`（`room.track_muted`）揭示格子，而信令比新画面早 450–900ms。
-渲染器按 uid 整通复用，Surface 留着关摄像头前的最后一帧，`EglRenderer` 不清也不重画，`onFirstFrameRendered` 每次 `init` 只来一次——先露旧帧、新帧到了跳一下。不是编码 / 分辨率问题。
+- `IMCallEngine.forceEnd()`（Java 可调、任何线程）→ `IMForceEnd`：读 `@Volatile ctx` 挑帧（纯函数 `IMEngineMachine.forceEnd`，`EngineStateMachineForceEnd.kt`），
+  `IMSignalConnection.fire` 在调用方线程直发（req_id `f-N` 不登记，应答当迟到丢掉）；本地收场排回 engine 线程，先比对 call_id / room_id，拨出中 invite.ok 刚到则补发 cancel。
+- 状态机 idle 分支：房间机 `room.join.ok` → 补 `room.leave`、其余房间帧丢；通话机 `call.invite.ok` → 补 `call.cancel`、`call.connected` → 补 `call.hangup`，其余照旧丢。
+- 门面：房间 idle 时迟到的候选 / SDP 不交给媒体层；请求往返 ≥ 2s 记 `请求往返慢`。
+- UIKit：红键整块拆到 `IMRedButton.kt`（按下记 `按下红键 action= phase=`，看门狗到点 `endLocally` 后 `engine.forceEnd()`）；`IMCallViewReducer.ended` 在 IDLE 下原样返回。
+- 拆分：`IMMediaDriver.kt`（driveMedia / 补静音）、`IMForceEnd.kt`、`signaling/IMHandshakeGiveUp.kt`。
+- 日志：`强制收场 call_id= … frames=` · `强制收场：没有进行中的通话或房间` · `房间已不在，丢弃迟到的媒体帧` · `请求往返慢` · `按下红键`。
 
-改了什么：
-- Engine：`media/IMMediaAdapter.kt` 加 `awaitFirstVideoFrame(uid)`（默认空实现）；`IMCallEngine` 在 `dispatchAll` **之后**按 `videoTurnedOn(emit)`（`IMVideoTurnedOn.kt`）调它——顺序反了首帧会被吞。
-- webrtc：新增 `IMFirstFrameGate.kt`（`addFrameListener(…, 0f)` 一次性，真 swap 后才报 `onFirstVideoFrame`，与 `onFirstFrameRendered` 去重）；缩放拆成 `IMVideoFitter.kt`（适配器 600→549 行）。
-- Kit：`IMCallViewState.Member.videoPending` / `showsVideo`（从无到有才挂起）；`IMCallView` 两处只认 `showsVideo`；`IMKitListener` 2 秒兜底。
-- 回调表没加项，`onFirstVideoFrame` 语义扩成「重开后再报一次」（server 设计 §7.5 已改）。单测 `EngineLoopTest`、`CallViewStateTest` 各一条；`./scripts/test.sh` 全绿（6 步）。
-- 日志：`远端画面重开后新帧上屏 key= waitMs=`（每次重开 1 行）· `新画面 2000ms 没上屏，照样揭示 uid=`（不该出现）。
-- **限制**：首次进房也变成「首帧上屏前露头像」（原先黑底）；iOS / Web / 桌面没做「重开再报」；SFU 开摄像头不主动要关键帧（次要，没做）。
-- 上一轮接收侧诊断（`IMFrameGapTracker` / `IMRemoteVideoDiagnostics`，每帧多一次 JNI 回调）真机确认修好后已拆掉；还要查就从 git 历史捞回来。
-
-**体量欠账（下次动它之前先拆）**：`IMCallEngine.kt` 599、`IMSignalConnection.kt` 598、`IMCallView.kt` 591、`IMCallKit.kt` 589。
+**体量欠账**：`IMSignalConnection.kt` 598、`IMCallView.kt` 591、`IMCallEngine.kt` 583、`IMCallKit.kt` 549。
 `IMSignalConnection` 还能挪：socket 代际（`generation` / `closedGeneration` / `TransportListener`）连同心跳。
 
 ## 下一步
 
 **真机验收（报通话时间）**：
-0. ~~对端重开摄像头不再闪~~：20:04 真机已验（`IMFirstFrameGate`，已提交 `cc111f0`）；再回归看 logcat 有 `远端画面重开后新帧上屏 waitMs=`、没有 `没上屏，照样揭示`。
+0. **`forceEnd`**：~~挂断被拒时看门狗兜底~~（09-15 10:08 PKD130 已验：服务端故障注入拒掉 alice 的 hangup 10:08:15.278 → 10:08:18.236 `f-1` 补发被受理、通话结束、alice 回首页）。
+   还没验：断网（飞行模式）后按红键——3 秒后 logcat 有 `强制收场` + `没有信令连接`；拨号后立刻按红键（invite 还没回）——被叫不再一直响（Web 端 10:09 已验同一路径）。
+   联测做法（adb 坐标、故障注入 curl）见 server 仓 `scripts/dev.sh` 的 `FAULT_INJECTION=1` 与 `/v1/dev/faults`。
 1. **后台重连节奏**（`2c9c2fe`）：登录后切后台约 1 分钟（ColorOS 最好），`adb logcat | grep -i signal` 断开→重连间隔走 1,2,3,3,3… 秒（约每分钟 10 次，不是原来的 20 次）。
 2. 期间切回前台：立刻重连一次（不等定时器），退避归零。通话中切后台（前台服务在跑）也该走后台节奏。ColorOS 秒杀间隔是否稳定、服务端 5 秒窗口是否接得住，都还没实机数据。
 3. 1v1 视频上一轮：控制条收起后点底部叫回控制条（不静音 / 挂断）；挂断后结束画面标题栏不淡掉；开局清晰度——服务端进房 1 秒内有 `上行层已接入 … rid=h`、整通无 `layer=h live=False`。

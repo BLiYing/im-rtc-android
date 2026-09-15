@@ -11,10 +11,10 @@ import com.imrtc.engine.signaling.IMScheduler
 import com.imrtc.engine.signaling.IMSignalConnection
 import com.imrtc.engine.signaling.IMTransport
 import com.imrtc.engine.signaling.IMOkHttpTransport
-import com.imrtc.engine.statemachine.IMCallState
 import com.imrtc.engine.statemachine.IMEngineContext
 import com.imrtc.engine.statemachine.IMEngineMachine
 import com.imrtc.engine.statemachine.IMMachineInput
+import com.imrtc.engine.statemachine.IMMachineOutput
 import com.imrtc.engine.statemachine.IMOutgoingFrame
 import com.imrtc.engine.statemachine.IMRoomState
 
@@ -112,8 +112,23 @@ class IMCallEngine private constructor(
             scheduler: IMScheduler,
             transport: IMTransport,
         ) = IMCallEngine(config, listener, media, scheduler, transport, IMMainThread { it() })
+
+        /** 交给媒体层之前要先看房间还在不在的那几帧。见 [ConnectionEvents.onFrame]。 */
+        private val MEDIA_FRAMES = setOf(
+            IMFrameType.ROOM_ICE_CANDIDATE, IMFrameType.ROOM_OFFER, IMFrameType.ROOM_ANSWER,
+        )
+
+        /** 请求往返超过这么久记一条。正常是几十毫秒。 */
+        private const val SLOW_REQUEST_MS = 2_000L
     }
     private val connection = IMSignalConnection(transport, scheduler, ConnectionEvents())
+
+    /**
+     * 状态机的当前快照。**只在 engine 线程上写**（[applyOutput]），`@Volatile` 是给
+     * [forceEnd] 在调用方线程上同步读的——它是不可变的 data class，读到的最多比 engine 线程晚一拍，
+     * 晚的那一拍由 [IMForceEnd] 落地时的比对兜住。
+     */
+    @Volatile
     private var ctx = IMEngineContext()
 
     /** 本端轨道怎么发布、发了哪些（cid → kind）。见 [IMLocalPublisher]。 */
@@ -121,6 +136,9 @@ class IMCallEngine private constructor(
 
     /** 发布之前按下的静音，攒在这儿等 track_id 回来再补做。见 [IMMuteBook]。 */
     private val muteBook = IMMuteBook()
+
+    /** 状态迁移带来的媒体动作。见 [IMMediaDriver]。 */
+    private val mediaDriver = IMMediaDriver(media, publisher, muteBook) { trackId, muted -> sendMute(trackId, muted) }
 
     init {
         media?.attachEvents(MediaEvents())
@@ -202,6 +220,37 @@ class IMCallEngine private constructor(
     fun cancel() = act("cancel")
 
     fun hangup() = act("hangup")
+
+    /**
+     * 强制结束当前这一场：**结束帧立刻上线路，本地收场，不等服务端。**
+     *
+     * 给「红键按下去、等不到结束事件」用——UIKit 的看门狗到点就调它。自画 UI 的宿主同理：
+     * [hangup] 发出去几秒没收到 `onCallEnd`，就调这个。任何线程都能调，不阻塞、不抛。
+     *
+     * ## 与 hangup 的区别
+     *
+     * [hangup] 只发帧，状态由服务端的 `call.ended` 推进（§5.1）。帧没发出去或被拒了，这一场就收不掉。
+     * 这里不等：
+     * 1. 在调用方线程上按此刻状态挑结束帧（通话中 hangup、响铃中 reject、会议里 room.leave，
+     *    见 `forceEndFrames`），**不经过 engine 线程**直接交给信令连接——2026-09-13 iOS frank 那次，
+     *    正常路径上的 room.join 晚了 28.6 秒、call.hangup 一帧没到服务端，卡的就是排队那一段。
+     * 2. 本地收场排回 engine 线程：通话机、房间机归零，停媒体，抛 `onCallEnd`（会议抛 `onRoomLeft`）。
+     *    服务端随后的 `call.ended` 因为本地已是 idle 被丢掉，不会抛第二次。
+     *
+     * ## 收场之后才到的东西
+     *
+     * - 卡在路上的 room.join 可能比 hangup 更晚到服务端并被放进房（服务端只验房票）：
+     *   收到迟到的 `room.join.ok` 补发 `room.leave`（`RoomStateMachineRecv` 的 idle 分支）。
+     * - 拨出时 invite.ok 还没回来：此刻没有 call_id 发不了 cancel；它回来后补发 `call.cancel`，
+     *   被叫已经接起来（回来的是 `call.connected`）就补发 `call.hangup`（`CallStateMachineRecv`）。
+     * - 迟到的候选、SDP 不交给媒体层（[ConnectionEvents.onFrame]）。
+     *
+     * 连接断着时帧发不出去，只做本地收场；服务端那边由恢复窗口到期兜底。
+     */
+    fun forceEnd() = forceEnder.run()
+
+    /** 强制收场的两段（直发结束帧 / 落地本地收场），见 [IMForceEnd]。 */
+    private val forceEnder = IMForceEnd(scheduler, connection, { ctx }) { before, output -> applyOutput(before, output) }
 
     /** 群通话中途加邀，仅主叫可发。 */
     fun inviteMore(userIds: List<String>) =
@@ -305,14 +354,14 @@ class IMCallEngine private constructor(
      *
      * **本地静音与那条 `room.mute` 帧是两件事，不能绑死**：关掉本端轨道根本不需要
      * `track_id`（那是服务端分配的），只有帧需要。原先两者绑在一起，拿不到 track_id
-     * 就连本端也不关——而「拿不到」恰恰发生在最该静音的时候（还没发布）。见 [desiredMuted]。
+     * 就连本端也不关——而「拿不到」恰恰发生在最该静音的时候（还没发布）。见 [IMMuteBook]。
      */
     private fun setMuted(kind: String, muted: Boolean) = scheduler.post { applyMuted(kind, muted) }
 
     private fun applyMuted(kind: String, muted: Boolean) {
         // 意图先记下：轨道还没发布时，这是唯一留得住它的地方。
         muteBook.want(kind, muted)
-        // **无条件应用到本端**。轨道还不存在时它是空操作，随后 [flushPendingMutes] 会补。
+        // **无条件应用到本端**。轨道还不存在时它是空操作，随后 [IMMediaDriver.flushPendingMutes] 会补。
         media?.setMuted(kind, muted)
 
         val cid = publisher.tracks.entries.firstOrNull { it.value == kind }?.key
@@ -332,39 +381,21 @@ class IMCallEngine private constructor(
         ),
     )
 
-    /**
-     * 拿到 `track_id` 的那一刻，把攒下的静音意图补做一遍。
-     *
-     * **两件事都要补**：一是再 `media.setMuted` 一次——轨道是刚才 `publishDefaults`
-     * 现造的，造出来默认是开着的，之前那次调用落在了一个还不存在的轨道上；
-     * 二是补发 `room.mute`，让服务端与对端的界面也对上。
-     */
-    private fun flushPendingMutes(before: IMEngineContext, after: IMEngineContext) {
-        val pending = muteBook.pending(
-            publisher.tracks,
-            before.room.publishTrackIds,
-            after.room.publishTrackIds,
-        )
-        for ((kind, trackId, muted) in pending) {
-            IMRTCLog.i("engine", "补做发布前攒下的静音 kind=$kind muted=$muted")
-            media?.setMuted(kind, muted)
-            sendMute(trackId, muted)
-        }
-    }
-
     // ── 内部：核心循环 ────────────────────────────────────────────────
 
     private fun act(op: String, args: Map<String, IMJson> = emptyMap()) =
         scheduler.post { input(IMMachineInput.Act(op, args)) }
 
+    /** 输入进状态机，结果交给 [applyOutput] 落地。 */
+    private fun input(machineInput: IMMachineInput) =
+        applyOutput(ctx, IMEngineMachine.reduce(ctx, machineInput, scheduler.nowMs()))
+
     /**
-     * **唯一的状态推进入口**：输入进状态机 → 发帧 → 抛回调 → 驱动媒体。
+     * **唯一的状态落地入口**：记状态 → 发帧 → 抛回调 → 驱动媒体。
      *
      * 只有这一条路径能改 [ctx]。多一条就会出现「帧发了但本地记账没跟上」。
      */
-    private fun input(machineInput: IMMachineInput) {
-        val before = ctx
-        val output = IMEngineMachine.reduce(ctx, machineInput, scheduler.nowMs())
+    private fun applyOutput(before: IMEngineContext, output: IMMachineOutput<IMEngineContext>) {
         ctx = output.state
 
         // 每推进一步就把「哪条轨道是谁的」同步给媒体层。**轨道与归属谁先到都可能**，
@@ -375,10 +406,10 @@ class IMCallEngine private constructor(
         for (frame in output.send) sendFrame(frame)
         dispatcher.dispatchAll(output.emit)
         for (uid in videoTurnedOn(output.emit)) media?.awaitFirstVideoFrame(uid)
-        driveMedia(before, output.state)
-        // **排在 driveMedia 之后**：新进房那一步正是在它里面发布轨道的，
+        mediaDriver.drive(before, output.state)
+        // **排在 drive 之后**：新进房那一步正是在它里面发布轨道的，
         // 而要补的静音得等那些轨道的 track_id 回来（下一轮 input）才做得成。
-        flushPendingMutes(before, output.state)
+        mediaDriver.flushPendingMutes(before, output.state)
     }
 
     private fun sendFrame(frame: IMOutgoingFrame) {
@@ -396,13 +427,27 @@ class IMCallEngine private constructor(
             connection.send(frame.type, frame.data)
             return
         }
+        val startedMs = scheduler.nowMs()
         connection.request(frame.type, frame.data) { ok, data, code, message ->
+            noteSlowRequest(frame.type, startedMs, failed = !ok)
             if (ok) {
                 input(IMMachineInput.Recv(frame.type + ".ok", data))
             } else {
                 onRequestFailed(frame.type, code, message)
             }
         }
+    }
+
+    /**
+     * 记下「请求发出到拿回应答（或失败）」慢得不正常的那几次。
+     *
+     * 2026-09-13 iOS frank 的 room.join 从状态机产出到服务端收到隔了 28.6 秒，而端上一个字都没留下。
+     * 拿这条的 `elapsed_ms` 对服务端的受理时刻，分得清慢在本端发出之前还是服务端那边。
+     */
+    private fun noteSlowRequest(type: String, startedMs: Long, failed: Boolean) {
+        val elapsedMs = scheduler.nowMs() - startedMs
+        if (elapsedMs < SLOW_REQUEST_MS) return
+        IMRTCLog.w("engine", "请求往返慢 type=$type elapsed_ms=$elapsedMs failed=$failed")
     }
 
     /**
@@ -426,77 +471,6 @@ class IMCallEngine private constructor(
             IMFrameType.ROOM_LEAVE -> input(IMMachineInput.Internal("leave_failed"))
         }
     }
-
-    /** 状态迁移带来的媒体动作。**媒体只跟着状态走，不自己决定什么时候起停。** */
-    private fun driveMedia(before: IMEngineContext, after: IMEngineContext) {
-        val adapter = media ?: return
-
-        // 拿到 room_token 的那一刻把媒体拉起来。
-        // **判据是 room_token 从无到有，不是「进入某个状态」**：主叫的 idle→inviting 那一步
-        // 还没有票，等 call.connected 到了才有；按状态判会一次都不触发（第一版就是这么错的）。
-        if (before.call.roomToken.isEmpty() && after.call.roomToken.isNotEmpty()) {
-            adapter.start(emptyList())
-        }
-
-        // 进房成功：先确保媒体起来了，再发布本端 Track（视频发不发看摄像头意图，见 [IMLocalPublisher]）。
-        // **会议房是直接 joinRoom 的，压根不经过 call**——只按 room_token 判的话这里一次都不会起，
-        // 真机上的症状是「还没 start 就 publish，忽略」，人进了房但谁也听不见谁。
-        //
-        // **「新进房」不包括「重连恢复」**：`resumed=true` 时房间机把 reconnecting 推回 joined
-        // （`IMRoomMachine.resume`），只看「不是 joined → 是 joined」会把它也当成刚进房，
-        // 于是每恢复一次就重复发一整套 audio+video：多两条 `room.publish`、pub 上多挂一组
-        // transceiver，`startCapture()` 还会在旧 capturer 没停的情况下再开一个摄像头采集
-        // （`capturer` 字段被覆盖，旧的那个再也停不掉）。**恢复的前提就是服务端那边的发布关系还在**，
-        // 本来什么都不用补。
-        if (isFreshJoin(before, after)) {
-            adapter.start(emptyList())
-            publisher.publishDefaults(after, cameraMuted = muteBook.wanted("video") == true)
-        } else if (after.room.state == IMRoomState.JOINED && before.room.state != IMRoomState.JOINED) {
-            /*
-              **刚变成 joined 却不发布，要留一条。**
-
-              这是本端唯一会跳过发布的地方（恢复回来时那边的发布关系还在，本来就不该补）。
-              但「进了房却没发布」也正是一整类静默故障的样子：web 端同一件事就因为
-              房号没被清零而一声不响地吃掉整个发布——界面正常、日志空白、
-              对端只看到首字母头像（真机 2026-09-09 14:43）。
-
-              判据取「刚变成 joined」而不是「没发布」，所以一次恢复只出现一条，不吵。
-            */
-            IMRTCLog.d("engine", "进房但不发布：从 ${before.room.state.wire} 恢复回来的，发布关系还在")
-            // 断线期间点了「开摄像头」的，那一路视频还没发过——不补的话按钮亮着却没有画面。
-            if (muteBook.wanted("video") == false) publisher.publishCameraIfMissing(after)
-        }
-
-        // 通话结束 / 离房：停掉媒体。**必须可重入**，挂断与被踢会先后到达。
-        //
-        // **判据是「媒体还有没有人要」，不是某一步的 joined→idle**：会议房离房走的是
-        // `joined →(leave)→ leaving →(leave.ok)→ idle` **两次 input**，没有任何一次同时
-        // 满足 before=joined 且 after=idle，于是 stop() 一次都不会调。后果不是「多占点内存」——
-        // 两条 PeerConnection 开着 GATHER_CONTINUALLY 继续活着，每 5 分钟重采一轮候选，
-        // 一路发上去换回 `1203 not_in_room`（真机日志里从 20:39 一直刷到 21:24）。
-        // 「断线 → reconnecting → 被踢 → idle」也是同一个漏法，一并被这条判据盖住。
-        if (mediaWanted(before) && !mediaWanted(after)) {
-            adapter.stop()
-            publisher.clear()
-            // 意图跟着这一轮媒体一起作废：下一通电话的开关由界面重新决定，
-            // 留着的话会变成「上一通静音过，这一通莫名其妙也是静音的」。
-            muteBook.clear()
-        }
-    }
-
-    /** 媒体该不该活着：房间与通话只要还有一个不在 idle，就还有人要它。 */
-    private fun mediaWanted(ctx: IMEngineContext) =
-        ctx.room.state != IMRoomState.IDLE || ctx.call.state != IMCallState.IDLE
-
-    /**
-     * 这一步是不是**真的新进了一个房间**——要发布本端 Track 的那种。
-     *
-     * 从 reconnecting 回到 joined 是**恢复**，不是新进房：那边的发布关系一直都在。
-     */
-    private fun isFreshJoin(before: IMEngineContext, after: IMEngineContext) =
-        after.room.state == IMRoomState.JOINED &&
-            before.room.state != IMRoomState.JOINED &&
-            before.room.state != IMRoomState.RECONNECTING
 
     private fun requireMedia(): IMMediaAdapter? {
         if (media == null) {
@@ -539,6 +513,16 @@ class IMCallEngine private constructor(
         }
 
         override fun onFrame(type: String, data: Map<String, IMJson>) {
+            /*
+             **房间已经不在了，迟到的媒体帧不许交给媒体层。**
+
+             强制收场、通话结束之后才到的候选或 SDP 照常交下去，媒体层会在一个没人要的房间上
+             重新协商、甚至再拉起一对 PC，一直挂到下一次停媒体。状态机那一侧由房间机的 idle 分支丢弃。
+            */
+            if (ctx.room.state == IMRoomState.IDLE && type in MEDIA_FRAMES) {
+                IMRTCLog.d("engine", "房间已不在，丢弃迟到的媒体帧 type=$type")
+                return
+            }
             media?.applyNegotiationFrame(type, data)
             input(IMMachineInput.Recv(type, data))
         }
@@ -571,7 +555,7 @@ class IMCallEngine private constructor(
                 // **不在房里就不往上发**。候选只对「我们此刻正待在里面的那个房间」有意义，
                 // 发上去只会换回一条 `1203 not_in_room`，对谁都没用。
                 //
-                // 这是第二道防线：媒体层理应在离房时就被停掉（见 [driveMedia]），但候选是
+                // 这是第二道防线：媒体层理应在离房时就被停掉（见 [IMMediaDriver]），但候选是
                 // **从 native 的 signaling 线程冒上来的异步事件**，天生可能比 stop() 晚一拍；
                 // libwebrtc 又开着 GATHER_CONTINUALLY，网络一变就重采一轮。出口这一道挡住的
                 // 正是这段时间差，也顺带保证「媒体层哪天再漏一次」不会又变成服务端的 WARN 刷屏。

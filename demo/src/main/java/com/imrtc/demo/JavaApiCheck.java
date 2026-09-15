@@ -115,6 +115,7 @@ final class JavaApiCheck {
         engine.reject();
         engine.cancel();
         engine.hangup();
+        engine.forceEnd();
         engine.inviteMore(Arrays.asList("dave"));
         engine.joinCall("call-1");
 

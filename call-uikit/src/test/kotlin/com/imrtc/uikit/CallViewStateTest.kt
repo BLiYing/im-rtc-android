@@ -79,9 +79,21 @@ class CallViewStateTest {
     fun `结束原因翻译成人话，且表外的值不会漏出去`() {
         val caller = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
         assertEquals("对方无人接听", IMCallViewReducer.ended(caller, "no_answer").statusText)
-        assertEquals("未接来电", IMCallViewReducer.ended(IMCallViewState(), "no_answer").statusText)
+        // 起点用「接通中的被叫」而不是空状态：界面上什么都没有时 ended 不再进结束画面（见下一条）。
+        val callee = IMCallViewReducer.begin(
+            IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", emptyList(), "audio", false),
+            "c-1", "r-1", "audio", "callee",
+        )
+        assertEquals("未接来电", IMCallViewReducer.ended(callee, "no_answer").statusText)
         // 协议 §2.4 规则 6：表外的值 Engine 已经折成 error 了；即便漏进来也不能把生值显给用户。
-        assertEquals("已结束", IMCallViewReducer.ended(IMCallViewState(), "supernova").statusText)
+        assertEquals("已结束", IMCallViewReducer.ended(callee, "supernova").statusText)
+    }
+
+    /** 红键看门狗本地收场、界面收起之后，Engine 的 onCallEnd 还会再来一次——**不能再弹结束画面**。 */
+    @Test
+    fun `收起之后迟到的结束事件被忽略`() {
+        val state = IMCallViewReducer.ended(IMCallViewReducer.reset(), "hangup", 5)
+        assertEquals("2026-09-13 iOS frank 14:58:21：已经收起的界面又闪出 1.5 秒「通话已结束」", IMCallViewState(), state)
     }
 
     @Test

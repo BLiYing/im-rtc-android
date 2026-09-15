@@ -317,23 +317,8 @@ object IMCallKit {
         }
     }
 
-    /** 红键的看门狗（为什么要有它、判据为什么是「走没走」，见 [IMRedButtonWatchdog]）。 */
-    private val redButton = IMRedButtonWatchdog(
-        schedule = { delayMs, task -> main.postDelayed(task, delayMs) },
-        unschedule = { task -> main.removeCallbacks(task) },
-    )
-
-    /** 看门狗到点了：这一屏还在就本地收场。 */
-    private fun armedEnd(reason: String) {
-        if (IMLateGuard.stillInCall(state)) endLocally("${redButton.timeoutMs}ms 没等到结束事件", reason)
-    }
-
-    /** 结束这一屏，**不依赖服务端应答**（为什么必须能本地走完，见 [IMRedButtonWatchdog]）。 */
-    private fun endLocally(why: String, reason: String) {
-        IMRTCLog.w("kit", "红按钮本地收场：$why（phase=${state.phase} reason=$reason）")
-        update(IMCallViewReducer.ended(state, reason))
-        main.postDelayed({ if (state.phase == IMCallViewState.Phase.ENDED) update(IMCallViewReducer.reset()) }, 1_500)
-    }
+    /** 红键：分派结束动作、看门狗、本地收场与强制收场，见 [IMRedButton]。 */
+    private val redButton = IMRedButton(main, { state }, ::update, { engine })
 
     /** 过完权限门拨出那一屏还在不在（判据与理由都在 [IMLateGuard]），不在就记一笔。 */
     private fun stillPlacing(): Boolean = IMLateGuard.stillPlacing(state).also {
@@ -345,32 +330,7 @@ object IMCallKit {
         if (!it) IMRTCLog.w("kit", "过完权限门时来电已经不在了，accept 不发（phase=${state.phase}）")
     }
 
-    internal fun hangup() {
-        // 认得出动作的那四条也要盯着——**帧发不出去与认不出动作是两回事**。
-        val action = state.hangupAction
-        val reason = IMCallViewState.watchdogReason(action)
-        if (action != IMCallViewState.Action.NONE) {
-            redButton.arm { armedEnd(reason) }
-        }
-        when (action) {
-            // **会议房里没有 call，结束动作是 leaveRoom**。红按钮无条件走 hangup 的话，通话机会把它本地拒成 2005。
-            IMCallViewState.Action.LEAVE_ROOM -> engine?.leaveRoom()
-            IMCallViewState.Action.REJECT -> engine?.reject()
-            IMCallViewState.Action.CANCEL -> engine?.cancel()
-            IMCallViewState.Action.HANGUP -> engine?.hangup()
-            /*
-             **红按钮永远不许是静默空转。**
-
-             用户按挂断时的意图是没有歧义的：把我弄出去。如果这一刻状态机认不出
-             该发哪一种结束帧（phase 已经不是 incoming/outgoing/connecting/connected），
-             那说明本地记账已经和服务端对不上了——继续挂在这一屏只会让用户**困在
-             一个不存在的通话里**：真机 2026-09-07 就是这样，通话早在 19 秒前结束、
-             服务端只回 1203，而界面还在，点什么都没反应。
-             这时唯一正确的动作是**本地收场**，而不是什么都不做。
-            */
-            IMCallViewState.Action.NONE -> endLocally("认不出该发哪种结束帧", reason)
-        }
-    }
+    internal fun hangup() = redButton.press()
 
     internal fun toggleMic() {
         val next = !state.micOn

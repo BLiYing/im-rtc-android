@@ -21,6 +21,8 @@ internal class IMOkHttpTransport(
     private val client: OkHttpClient = defaultClient(),
 ) : IMTransport {
 
+    /** `@Volatile`：[send] 可能不在 engine 线程上调（`IMSignalConnection.fire`）。OkHttp 的 send 本身线程安全。 */
+    @Volatile
     private var socket: WebSocket? = null
 
     override fun connect(url: String, listener: IMTransport.Listener) {

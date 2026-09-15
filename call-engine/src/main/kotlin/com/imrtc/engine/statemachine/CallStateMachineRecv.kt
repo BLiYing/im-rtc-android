@@ -12,12 +12,38 @@ import com.imrtc.engine.protocol.IMJson
  */
 
 /**
+ * idle 下迟到的通话帧：**一律丢弃，只有两个例外**（不改状态、不抛回调）。
+ *
+ * 本地已经收场（强制收场、请求被拒回滚），服务端那边这通电话却还在往前走——
+ * 不补一帧的话，服务端一直把本端当成在通话里：
+ * - `call.invite.ok`：拨出时 invite 还在路上就强制收场，此刻才拿到 call_id → 补发 `call.cancel`，
+ *   被叫才不会一直响到超时；
+ * - `call.connected`：cancel 来不及、被叫已经接起来了 → 补发 `call.hangup`。
+ *
+ * 其余照旧丢弃（向量 `late_frames_in_idle_are_dropped`）。iOS `IMCallMachine.handleLateFrame` 同一张表。
+ */
+private fun handleLateFrame(
+    ctx: IMCallContext,
+    type: String,
+    data: Map<String, IMJson>,
+): IMMachineOutput<IMCallContext> {
+    val callId = Wire.str(data, "call_id")
+    val reply = when (type) {
+        IMCallMachine.okType(IMFrameType.CALL_INVITE) -> IMFrameType.CALL_CANCEL
+        IMFrameType.CALL_CONNECTED -> IMFrameType.CALL_HANGUP
+        else -> null
+    }
+    if (reply == null || callId.isEmpty()) return IMCallMachine.out(ctx)
+    return IMCallMachine.out(ctx, send = listOf(IMOutgoingFrame(reply, mapOf("call_id" to s(callId)))))
+}
+
+/**
  * 处理一条下行帧。
  *
  * 两条优先级规则写在最前面，**别挪**：
  * 1. **终态帧优先**——任何非 idle 状态收到 `call.ended` 都直达 idle（§5.1）。
- * 2. **idle 下的迟到帧一律静默丢弃**：不抛回调、不发帧、不报错。
- *    本地状态与服务端赛跑是正常的，客户端得容忍。
+ * 2. **idle 下的迟到帧静默丢弃**：不抛回调、不报错。本地状态与服务端赛跑是正常的，客户端得容忍。
+ *    例外只有补一帧善后的那两种，见 [handleLateFrame]。
  */
 internal fun reduceCallRecv(
     ctx: IMCallContext,
@@ -26,7 +52,7 @@ internal fun reduceCallRecv(
 ): IMMachineOutput<IMCallContext> {
     if (isForAnotherCall(ctx, data)) return handleForeignCall(ctx, type, data)
     if (type == IMFrameType.CALL_ENDED) return handleEnded(ctx, data)
-    if (ctx.state == IMCallState.IDLE && type != IMFrameType.CALL_INCOMING) return IMCallMachine.out(ctx)
+    if (ctx.state == IMCallState.IDLE && type != IMFrameType.CALL_INCOMING) return handleLateFrame(ctx, type, data)
 
     return when (type) {
         IMFrameType.CALL_INCOMING -> handleIncoming(ctx, data)

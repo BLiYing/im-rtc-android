@@ -9,6 +9,7 @@ import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.protocol.IMRtcException
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 信令连接：握手、心跳、按 req_id 配对、退避重连。协议 §1。
@@ -110,6 +111,9 @@ internal class IMSignalConnection(
      */
     private var pendingGiveUp: IMKickedOutReason? = null
     private var connecting = false
+
+    /** `@Volatile`：[fire] 与 `IMCallEngine.forceEnd` 在调用方线程上读它，写只在 engine 线程。 */
+    @Volatile
     private var connected = false
 
     /**
@@ -242,6 +246,35 @@ internal class IMSignalConnection(
         sendFrame(type, "", data)
     }
 
+    /** [fire] 的 req_id 序号。**原子的**：[fire] 不在 engine 线程上调。 */
+    private val fireSequence = AtomicLong()
+
+    /**
+     * 发一条请求但**不等应答**，**任何线程都能调**（不经过 engine 线程）。
+     *
+     * 只给 `IMCallEngine.forceEnd()` 用：红键等不到结束事件时，结束帧不能再排在一条
+     * 可能已经卡住的队列后面（2026-09-13 iOS frank：join 晚了 28.6 秒、hangup 一帧没到服务端）。
+     * req_id 不登记进 [pending]：应答回来对不上号，[handleText] 当迟到的应答丢掉，不会漏进事件流。
+     *
+     * @return 没连上时不发，返回 false。
+     */
+    fun fire(type: String, data: Map<String, IMJson>): Boolean {
+        if (!connected) {
+            IMRTCLog.w("signal", "帧没发出去：连接不可用 type=$type")
+            return false
+        }
+        return try {
+            // 从全默认值起手再覆盖（发送侧默认值陷阱，见 [IMEnvelope.request]）。
+            val reqId = "f-${fireSequence.incrementAndGet()}"
+            transport.send(IMEnvelope.request(type, reqId, scheduler.nowMs()) { it.putAll(data) }.encode())
+            IMRTCLog.d("signal", "↑ $type${reqSuffix(reqId)}${idSuffix(data)}（不等应答）")
+            true
+        } catch (e: IMRtcException) {
+            IMRTCLog.e("signal", "发送失败 $type：${e.detail}")
+            false
+        }
+    }
+
     // ── 内部：连接生命周期 ──────────────────────────────────────────────
 
     private fun openSocket() {
@@ -272,45 +305,12 @@ internal class IMSignalConnection(
                 // 一处「关连接 → 清定时器 → 结掉在飞请求 → 报关闭码」的地方（类注释第 4 条）。
                 // 自己在这儿闩上再抛，会留下一个 connecting=true 的半开连接，
                 // 宿主照着 onKickedOut 的建议改完配置再 login() 就会被 openSocket 静默挡掉。
-                pendingGiveUp = giveUpReason(code, payload)
+                // 判定规则见 [handshakeGiveUpReason]（不可重试 ≠ 参数不对，三类处置不同）。
+                pendingGiveUp = handshakeGiveUpReason(code, payload)
                 closeAndReconnect(0, "hello failed")
             }
         }
         sendFrame(IMFrameType.HELLO, reqId, data)
-    }
-
-    /**
-     * 握手失败该不该一次就放弃，放弃的话按哪种原因抛给宿主。返回 `null` = 照常退避重连。
-     *
-     * **不可重试 ≠ 参数不对**，三类的处置完全不同，合成一类就等于给宿主一条错的建议：
-     *
-     * | 码 | 抛什么 | 宿主该做什么 |
-     * |---|---|---|
-     * | 1101 `token_invalid` | [IMKickedOutReason.AUTH_EXPIRED] | **换一枚票再来**。签名密钥轮换、票被吊销都长这样，而换票正好救得了——类注释第 1 条那次 Web 事故就是它 |
-     * | 1104 `kicked_out` | [IMKickedOutReason.TAKEN_OVER] | 回登录页。服务端的吊销名单走的就是「`sys.error{1104}` + 4403」这一对 |
-     * | 1004 / 1006 / 1106 … | [IMKickedOutReason.CONFIG_REJECTED] | 去改配置。换票和重试都救不了——`device_id` 里那个空格不会因为再来一次就没了 |
-     *
-     * 两条边界：
-     *
-     * 1. **local 组的码不是服务端的裁决。** [stop] 会拿 `2007 not_logged_in` 把在飞的握手
-     *    结掉，那是宿主自己按的退出；不挡掉的话，一次正常的 `logout()` 会报成
-     *    「服务端拒了你的参数」，而 `relogin()` 正是先 `logout()` 再换票的——
-     *    静默续期会当场变成把人踹回登录页。
-     * 2. **本端不认识的码信帧上自带的 `retryable`。** 本端这张表是上次同步时的快照，
-     *    漏一个新码就退回「无限重连」——本仓漏过 1106 一次，症状正是这里要根治的那个。
-     */
-    private fun giveUpReason(code: IMErrorCode?, payload: Map<String, IMJson>): IMKickedOutReason? {
-        if (code != null && !code.isWire) return null
-        val retryable = code?.retryable
-            ?: (payload["retryable"] as? IMJson.Bool)?.value
-            // 连码带标志都读不出来：当可重试处理，维持「不认识就先退避着」的老行为。
-            ?: true
-        if (retryable) return null
-        return when (code) {
-            IMErrorCode.TOKEN_INVALID -> IMKickedOutReason.AUTH_EXPIRED
-            IMErrorCode.KICKED_OUT -> IMKickedOutReason.TAKEN_OVER
-            else -> IMKickedOutReason.CONFIG_REJECTED
-        }
     }
 
     private fun onHelloOk(data: Map<String, IMJson>) {

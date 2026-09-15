@@ -363,14 +363,20 @@ internal object IMCallViewReducer {
      *   不变量 I8：四端禁止自己算时长（时钟对不齐）。传 -1 表示「沿用本地计时」——
      *   会议房没有 `call.ended`，那一条只能靠本地的计数器。
      */
-    fun ended(state: IMCallViewState, reason: String, durationSec: Long = -1) = state.copy(
-        phase = IMCallViewState.Phase.ENDED,
-        endReason = reason,
-        durationSec = if (durationSec >= 0) durationSec else state.durationSec,
-        speakingUid = "",
-        isMinimized = false,
-        hint = "",
-    )
+    fun ended(state: IMCallViewState, reason: String, durationSec: Long = -1): IMCallViewState {
+        // **已经收起来了就不再弹结束画面。** 红键看门狗本地收场、界面收起之后，Engine 的
+        // onCallEnd（强制收场那条，或服务端迟到的那条）还会再来一次；照样进 ENDED 的话，
+        // 「通话已结束」又闪 1.5 秒（2026-09-13 iOS frank 14:58:21 那一下）。
+        if (state.phase == IMCallViewState.Phase.IDLE) return state
+        return state.copy(
+            phase = IMCallViewState.Phase.ENDED,
+            endReason = reason,
+            durationSec = if (durationSec >= 0) durationSec else state.durationSec,
+            speakingUid = "",
+            isMinimized = false,
+            hint = "",
+        )
+    }
 
     fun userEnter(state: IMCallViewState, uid: String) = withMember(state, uid) { it.copy(accepted = true, settled = IMCallViewState.Settled.NONE) }
 

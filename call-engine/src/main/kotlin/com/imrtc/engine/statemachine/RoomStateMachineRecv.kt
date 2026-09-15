@@ -11,11 +11,30 @@ import com.imrtc.engine.protocol.IMJson
  「上行动作」与「下行帧」本来也是两组独立的关注点。
  */
 
+/**
+ * **idle 下迟到的房间帧一律丢弃**，与通话机的第 2 条规则同一个道理——
+ * 本地已经不在房里，这些帧说的是一个本端不再关心的房间。
+ *
+ * 唯一例外是 `room.join.ok`：它说明**服务端已经把我们放进房了**，而本地早就收场了
+ * （强制收场时还卡在路上的那条 join）。认领它会把一个没人要的房间捡回来；不理它，
+ * 服务端就一直挂着这个人——服务端只验房票、不查通话成员。所以补发一条 `room.leave`，
+ * 本地状态不动。那条 leave 的 `.ok` 回来时同样落在这里被丢掉，不会多抛一次 onRoomLeft。
+ */
+private fun handleLateRoomFrame(
+    ctx: IMRoomContext,
+    type: String,
+    data: Map<String, IMJson>,
+): IMMachineOutput<IMRoomContext> {
+    val roomId = Wire.str(data, "room_id")
+    if (type != IMEnvelope.okType(IMFrameType.ROOM_JOIN) || roomId.isEmpty()) return IMRoomMachine.out(ctx)
+    return IMRoomMachine.out(ctx, send = listOf(IMOutgoingFrame(IMFrameType.ROOM_LEAVE, mapOf("room_id" to s(roomId)))))
+}
+
 internal fun reduceRoomRecv(
     ctx: IMRoomContext,
     type: String,
     data: Map<String, IMJson>,
-): IMMachineOutput<IMRoomContext> = when (type) {
+): IMMachineOutput<IMRoomContext> = if (ctx.state == IMRoomState.IDLE) handleLateRoomFrame(ctx, type, data) else when (type) {
 
     IMEnvelope.okType(IMFrameType.ROOM_JOIN) -> handleJoinOk(ctx, data)
 

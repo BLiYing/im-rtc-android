@@ -616,6 +616,30 @@ class SignalConnectionTest {
         assertTrue("通话中切后台也该在3秒内重连", transport.connectCount > before)
     }
 
+    /** fire：**立刻发、应答对不上号就丢**。应答要是漏进事件流，门面会把 `.ok` 当事件喂给状态机。 */
+    @Test
+    fun `fire 不等应答：立刻发出，应答不进事件流`() {
+        connect()
+        assertTrue(connection.fire(IMFrameType.CALL_HANGUP, mapOf("call_id" to IMJson.Str("c-1"))))
+
+        val sent = transport.lastOf(IMFrameType.CALL_HANGUP) ?: error("fire 没发出去")
+        assertEquals("c-1", (sent.data["call_id"] as IMJson.Str).value)
+        assertTrue("请求帧必须带 req_id，服务端才回得了应答", sent.reqId.isNotEmpty())
+
+        transport.deliver(IMFrameType.CALL_HANGUP + ".ok", sent.reqId)
+        transport.deliver("sys.error", sent.reqId, mapOf("code" to IMJson.Num(1401), "name" to IMJson.Str("call_not_found")))
+        assertTrue("应答不许漏进事件流", events.frames.none { it.first.startsWith(IMFrameType.CALL_HANGUP) })
+        assertTrue("被拒也不该变成宿主的 onError", events.errors.isEmpty())
+    }
+
+    @Test
+    fun `fire 在没连上时一帧都不发`() {
+        assertEquals(false, connection.fire(IMFrameType.CALL_HANGUP, mapOf("call_id" to IMJson.Str("c-1"))))
+        connection.start(config, "tk-1")
+        assertEquals(false, connection.fire(IMFrameType.CALL_HANGUP, mapOf("call_id" to IMJson.Str("c-1"))))
+        assertEquals("握手之前发业务帧会被服务端当成协议错误", 0, transport.countOf(IMFrameType.CALL_HANGUP))
+    }
+
     private class RecordingEvents : IMSignalConnection.Events {
         val connected = mutableListOf<Pair<String, Boolean>>()
         val frames = mutableListOf<Pair<String, Map<String, IMJson>>>()

@@ -442,6 +442,94 @@ class EngineLoopTest {
         assertTrue(transport.lastOf(IMFrameType.CALL_INVITE) != null)
     }
 
+    /**
+     * 红键看门狗到点 → `forceEnd()`。复现 2026-09-13 14:53 iOS frank 那一刻的形状：
+     * `call.connected` 到了、`room.join` 发出去还没回，这时强制收场。
+     *
+     * 结束帧不等 join 回来就发出去；本地收场只抛一次 onCallEnd、媒体停掉；
+     * 迟到的 join.ok 不认领、补发 room.leave；迟到的候选不进媒体层；服务端随后的 call.ended 不再抛。
+     */
+    @Test
+    fun `join 在飞时强制收场：挂断立刻发出，迟到的进房被退回去`() {
+        loginAndConnect()
+        transport.deliver(
+            IMFrameType.CALL_INCOMING,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("c-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "caller" to IMJson.Str("bob"),
+                "media_type" to IMJson.Str("video"),
+                "is_group" to IMJson.Bool(true),
+            ),
+        )
+        engine.accept()
+        transport.replyOk(IMFrameType.CALL_ACCEPT)
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("c-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "room_token" to IMJson.Str("tk-room"),
+                "media_type" to IMJson.Str("video"),
+                "connected_at_ms" to IMJson.Num(scheduler.nowMs()),
+            ),
+        )
+        val join = transport.lastOf(IMFrameType.ROOM_JOIN) ?: error("没发 room.join")
+
+        engine.forceEnd()
+
+        val hangup = transport.lastOf(IMFrameType.CALL_HANGUP) ?: error("强制收场没发 call.hangup")
+        assertEquals("c-1", (hangup.data["call_id"] as IMJson.Str).value)
+        assertEquals(listOf("hangup:0"), listener.callEnds)
+        assertTrue("摄像头、麦克风要跟着停", media.stopped)
+
+        // 迟到的 join.ok：服务端已经放他进房了，得退出来，而且不许抛 onRoomJoined。
+        transport.deliver(
+            IMFrameType.ROOM_JOIN + ".ok",
+            join.reqId,
+            mapOf("room_id" to IMJson.Str("r-1"), "participant_id" to IMJson.Str("p-6")),
+        )
+        val leave = transport.lastOf(IMFrameType.ROOM_LEAVE) ?: error("迟到的 join.ok 没补发 room.leave")
+        assertEquals("r-1", (leave.data["room_id"] as IMJson.Str).value)
+        transport.replyOk(IMFrameType.ROOM_LEAVE)
+        assertTrue(listener.roomJoins.isEmpty())
+        assertTrue("补发的 leave 是善后，不是宿主要知道的离房", listener.roomLeaves.isEmpty())
+
+        transport.deliver(
+            IMFrameType.ROOM_ICE_CANDIDATE,
+            "",
+            mapOf("pc" to IMJson.Str("sub"), "candidate" to IMJson.Str("candidate:1 1 udp 1 10.0.0.9 7881 typ host")),
+        )
+        assertEquals("迟到的候选不许交给媒体层", 0, media.remoteCandidates)
+        transport.deliver(
+            IMFrameType.CALL_ENDED,
+            "",
+            mapOf("call_id" to IMJson.Str("c-1"), "reason" to IMJson.Str("hangup"), "duration_sec" to IMJson.Num(3)),
+        )
+        assertEquals("服务端那条 call.ended 不能再抛一次", listOf("hangup:0"), listener.callEnds)
+    }
+
+    /** 拨出时 invite 还在路上就强制收场：本地立刻收场，invite.ok 回来后补发 cancel。 */
+    @Test
+    fun `invite 在飞时强制收场：本地先收，call id 回来后补发 cancel`() {
+        loginAndConnect()
+        engine.call(listOf("bob"), "video", isGroup = true)
+
+        engine.forceEnd()
+        assertEquals("此刻没有 call_id，发不了 cancel", 0, transport.countOf(IMFrameType.CALL_CANCEL))
+        assertEquals(listOf("cancel:0"), listener.callEnds)
+
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("c-7"), "room_id" to IMJson.Str("r-7")),
+        )
+        val cancel = transport.lastOf(IMFrameType.CALL_CANCEL) ?: error("invite.ok 回来了却没补发 cancel")
+        assertEquals("c-7", (cancel.data["call_id"] as IMJson.Str).value)
+        assertEquals("本地早就收过场了，不能再抛一次", listOf("cancel:0"), listener.callEnds)
+    }
+
     // ── 记录用的假实现 ────────────────────────────────────────────────
 
     /** internal 而不是 private：`MuteBeforePublishTest` 也要一个只收不看的 listener，
@@ -518,7 +606,11 @@ class EngineLoopTest {
         var pubIceRestarts = 0
         override fun restartPubICE() { pubIceRestarts += 1 }
         override fun applyRemoteSdp(pc: String, type: String, sdp: String) = Unit
-        override fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) = Unit
+        /** 交到媒体层的远端候选条数。房间已经不在时一条都不该进来。 */
+        var remoteCandidates = 0
+        override fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) {
+            remoteCandidates += 1
+        }
         override fun createVideoView(context: android.content.Context): android.view.View? = null
         override fun attachView(uid: String, view: Any?) = Unit
 
