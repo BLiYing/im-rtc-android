@@ -18,7 +18,7 @@ import com.imrtc.uikit.IMInviteMemberProvider
  *
  * **这一层完全是宿主代码**——真实宿主会换成群成员接口（分页、搜索都交给自己的后端）。
  */
-internal class DemoInviteProvider(private val selfUid: String) : IMInviteMemberProvider {
+internal class DemoInviteProvider : IMInviteMemberProvider {
 
     private val main = Handler(Looper.getMainLooper())
 
@@ -42,7 +42,7 @@ internal class DemoInviteProvider(private val selfUid: String) : IMInviteMemberP
 
     private fun matching(query: String): List<String> {
         val q = query.trim()
-        return ALL_UIDS.filter { it != selfUid && (q.isEmpty() || it.contains(q, ignoreCase = true)) }
+        return ALL_UIDS.filter { q.isEmpty() || it.contains(q, ignoreCase = true) }
     }
 
     private fun pageFor(query: String, cursor: String?): List<IMInviteCandidate> {

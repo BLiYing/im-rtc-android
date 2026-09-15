@@ -147,4 +147,5 @@ internal enum class IMKitIcon(val resId: Int) {
     SCREEN_SHARE(R.drawable.ic_im_screen_share),
     GRID(R.drawable.ic_im_grid),
     SETTINGS(R.drawable.ic_im_settings),
+    MAGNIFYING_GLASS(R.drawable.ic_im_magnifyingglass),
 }

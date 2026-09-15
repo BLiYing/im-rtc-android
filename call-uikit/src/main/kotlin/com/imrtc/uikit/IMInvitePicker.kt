@@ -141,6 +141,12 @@ internal class IMInvitePicker(
         setHintTextColor(IMKitTheme.secondaryText)
         background = IMKitTheme.roundedDrawable(IMKitTheme.controlOff, dp(9))
         setPadding(dp(10), 0, dp(10), 0)
+        activity.getDrawable(IMKitIcon.MAGNIFYING_GLASS.resId)?.mutate()?.let { icon ->
+            icon.setBounds(0, 0, dp(15), dp(15))
+            icon.setTint(IMKitTheme.secondaryText)
+            setCompoundDrawablesRelative(icon, null, null, null)
+            compoundDrawablePadding = dp(6)
+        }
         maxLines = 1
         addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable?) {
@@ -219,9 +225,7 @@ internal class IMInvitePicker(
     private fun onLoaded(gen: Int, reset: Boolean, fetched: List<IMInviteCandidate>, cursor: String?) {
         if (gen != generation) return // 新请求已经作废了这次结果
         timeoutRunnable?.let { main.removeCallbacks(it) }
-        // 发起人不列：他离场后服务端拉不回来，列出来只会留下一个永远转不停的占位格。
-        val filtered = fetched.filter { it.uid != ctx.callerUid }
-        items = if (reset) filtered else items + filtered
+        items = if (reset) fetched else items + fetched
         nextCursor = cursor
         loadingMore = false
         pageError = null
@@ -244,7 +248,7 @@ internal class IMInvitePicker(
     // ── 展示 ──────────────────────────────────────────────────────────
 
     private sealed class Row {
-        data class Item(val candidate: IMInviteCandidate, val blocked: Boolean, val reason: String) : Row()
+        data class Item(val candidate: IMInviteCandidate, val blocked: Boolean, val reason: String, val inCall: Boolean = blocked) : Row()
         data class Typed(val uid: String) : Row()
         object LoadingMore : Row()
         data class PageError(val message: String) : Row()
@@ -259,8 +263,15 @@ internal class IMInvitePicker(
             result += Row.Item(IMInviteCandidate(uid), blocked = uid in ctx.participantUids, reason = "已在通话中")
         }
         items.forEach { c ->
-            val blocked = c.uid in ctx.participantUids
-            result += Row.Item(c, blocked = blocked, reason = if (blocked) "已在通话中" else c.unselectableReason.orEmpty())
+            val inCall = c.uid in ctx.participantUids
+            // 离场的发起人服务端拉不回来（invite_more 回 bad_params），只能置灰。
+            val callerLeft = !inCall && c.uid == ctx.callerUid
+            val reason = when {
+                inCall -> "已在通话中"
+                callerLeft -> "暂时无法邀请"
+                else -> c.unselectableReason.orEmpty()
+            }
+            result += Row.Item(c, blocked = inCall || callerLeft, reason = reason, inCall = inCall)
         }
         // uid 输入框：仅在允许、且这一页（含搜索）确实什么都没有时才出现（§3.4：只出现在空态里）。
         if (allowManualInput && items.isEmpty() && q.isNotEmpty() && q !in ctx.participantUids) {
@@ -329,7 +340,7 @@ internal class IMInvitePicker(
                     row.candidate.name,
                     row.candidate.uid,
                     sub = if (row.blocked) row.reason else row.candidate.subtitle.orEmpty().ifEmpty { row.reason },
-                    checked = row.blocked || row.candidate.uid in picked,
+                    checked = row.inCall || row.candidate.uid in picked,
                     blocked = row.blocked || !row.candidate.selectable,
                 )
             }

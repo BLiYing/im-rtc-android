@@ -300,7 +300,7 @@ internal object DemoSession {
         engine = instance
         // 「添加成员」按通话向宿主要候选人（HOST_INTEGRATION_DESIGN §3.4）：真实的 Demo 联系人
         // 排前面，后面凑几十个假成员分页；搜索词 fail/slow 演示失败/超时三态。见 DemoInviteProvider。
-        kitConfig.inviteMemberProvider = DemoInviteProvider(user)
+        kitConfig.inviteMemberProvider = DemoInviteProvider()
         kitConfig.allowsManualUidInput = true
         IMCallKit.start(applicationContext, instance, kitConfig)
         instance.login(newToken)

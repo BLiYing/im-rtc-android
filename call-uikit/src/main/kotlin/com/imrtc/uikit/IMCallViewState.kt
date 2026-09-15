@@ -19,7 +19,7 @@ internal data class IMCallViewState(
     val mediaType: String = "audio",
     val role: String = "",
     val peer: String = "",
-    /** 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它不列发起人：他离场后服务端拉不回来。 */
+    /** 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它认出离场的发起人：服务端拉不回来，只能置灰。 */
     val caller: String = "",
     /**
      * 宿主自己的群号，来自 `onCallReceived` / `onCallBegin`（可能为空——不是每通电话都属于某个群）。

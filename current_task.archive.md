@@ -1143,3 +1143,31 @@ JDK 17（`/usr/libexec/java_home -v 17`）· SDK 到 android-36 / build-tools 36
 `IMCallKit.kt` 549。`IMSignalConnection` 还能挪：socket 代际（`generation` / `closedGeneration` /
 `TransportListener`）连同心跳。（后续宿主对接改动把 `IMCallEngine.kt`/`IMCallKit.kt` 又往上顶了一截，
 见 `current_task.md` 最新的体量段落。）
+
+---
+
+## 2026-09-15（第二轮）：四端 API 命名对齐 + 宿主对接 M1/M2/M8（已提交 `cf8c18f` / `7e02e50`）
+
+2026-09-16 从 current_task.md 移出，原文照录（当时写的「未提交」已过时）。
+
+### 当时的「当前焦点」
+
+**2026-09-15（第二轮）：四端 API 命名核对，本仓不一致项最多，逐条对齐。未提交；`./scripts/test.sh` 全绿（6 步，单测 engine 165 / webrtc 36 / uikit 67 / demo 26）；真机未验（本轮只是签名/命名改动，编译 + JVM 单测覆盖，媒体行为未变不需要重验）。**
+
+对齐结果（对照 Web `packages/call-engine/src/events.ts` 与 iOS `IMCallEngineDelegate`）：
+- 删 `onCallMediaTypeChanged`/`mediaTypeChanged`（确认无调用方、协议无此帧）。
+- `onDisconnected(code, reason: String)` → `onDisconnected(code, willReconnect: Boolean)`：判定挪到 `IMSignalConnection.handleClosed`，抛回调前当场算好（新增纯函数 `IMReconnectPolicy.willReconnect`），`IMKitListener` 顺带把「LOST」判据从硬编码 `code==4403` 换成 `!willReconnect`——4401 用尽也能立刻判对了，不用等下一条 onKickedOut。
+- `onError(code, message)` → `onError(code, name, message)`：`name` 由 `IMEventDispatcher` 按 `IMErrorCode.fromCode(code)` 反查兜底，调用方不用逐个改。
+- `onCallBegin` 参数顺序改成 `(callId, roomId, mediaType, isGroup, role, caller, chatGroupId, userData)`。
+- `onFirstVideoFrame(uid)` → `onFirstVideoFrame(uid, trackId)`：`IMWebRTCAdapter` 新增 `trackIdFor(uid)`，远端反查 `trackOwners`、本端预览用 `videoTrack/previewTrack` 自己的 id，拿不到给空串不造假值。
+- `onCallEnd` 的 `reason: String` → `reason: IMCallEndReason`：枚举从 `protocol` 包移到 `com.imrtc.engine`（对齐 `IMKickedOutReason` 的位置）转正为公开 API，`wire` 公开、`canBeConnected`/`durationPositive`/整个 companion 收成 `internal`；枚举顺序本来就与规格一致，未改。**本仓没找到为它生成代码的脚本**（类注释说"从向量生成"，但仓内 `scripts/` 与 server 仓都没有对应生成器），这次是手改的产物，回报见下方③。
+- `IMCallEngine.call`/`inviteMore` 与 `IMCallKit.placeCall` 的被叫参数统一改名 `calleeIds`（纯改名，Kotlin 位置参数不受影响，Java 侧本来就是位置调用）。
+- `openMic/closeMic` → `openMicrophone/closeMicrophone`：确认麦克风轨道进房时无条件发布（`IMLocalPublisher.publishDefaults` 音频那支不看摄像头式的「有没有发」意图），所以不需要照 `openCamera` 那样补 `publishIfMissing`；补了一条「关闭又打开、以最后一次为准」的单测。
+- 本端预览 `startLocalPreview(): cid` + `attachLocalView(cid, view)`：**评估后没做**，原因见「下一步」。
+
+- **M1（call-engine）**：`CallFrames.INVITE/INCOMING` 加 `chat_group_id`，`CONNECTED` 加 `caller`/`chat_group_id`/`user_data`；`IMCallContext` 记 `caller`/`chatGroupId`/`userData`，`handleConnected` 取 `call.connected` 的值、为空回落到 `call()` 选项 / `call.incoming` 记下的值；新增 `IMCallOptions`（`@JvmOverloads`：isGroup/chatGroupId/userData/timeoutSec）与 `call(userIds, mediaType, options)`（校验拆在 `IMCallInvite.kt`，超限走 `IMCallOptionsGuard`，本地先拦、不上线路、与「callee 里有自己」同一出口）；`IMErrorCode.INVITE_DENIED=1409`；`onCallReceived`/`onCallBegin` 改签名加 isGroup/caller/chatGroupId/userData（**不留旧签名**）。
+- **M2（call-uikit）**：新增 `IMInviteContext`、`IMInviteCandidate` 扩字段（avatarUrl/subtitle/selectable/unselectableReason）、`IMInviteMemberProvider`（loadCandidates/presentInvitePicker/canInvite）、`IMPickedCallback`；`IMCallKitConfig` 加 `inviteMemberProvider`/`allowsManualUidInput`；`IMInvitePicker` 按 `IMInviteFlow` 的优先级（宿主接管 > provider > 静态 inviteCandidates > 空态）重写：300ms 防抖、generation 计数作废旧请求、滚到底翻页、加载中/失败(重试)/10s 超时三态、participantUids 已在通话中不可选、selectable=false 置灰。`IMCallViewState` 加 `chatGroupId`/`userData`；`incoming`/`outgoing`/`begin` 三个 reducer 带上这两个字段（`begin` 用可空参数「不传不改」，保留旧 5 参数测试调用点）。
+- **M8（本仓部分）**：`IMCallEngine.joinCall` 已有（M1 前就在）；新增 `IMCallKit.joinCall(callId)`（直接进 CONNECTING「接通中…」，`IMCallViewReducer.joining`）；`IMJoinCallState.joining` 记状态，`IMKitListener.onError` 按它把 1409 分成「对方暂时无法被邀请」（加人）/「无法加入该通话」（加入）两句文案，其余 join 失败码统一给后一句。
+- **Demo**：`DemoInviteProvider`（真实联系人排前 + 40 个假成员分页，`fail`/`slow` 模拟失败/超时）挂到 `kitConfig.inviteMemberProvider`；`DialerScreen` 加「加入进行中的群通话」卡片（call_id 输入框 + 按钮）；群呼带 `chatGroupId="demo-group"`；`JavaApiCheck.java` 补 `IMCallOptions`、新 `onCallBegin`/`onCallReceived` 签名、Java 版 `IMInviteMemberProvider`、`IMCallKit.joinCall`。
+
+**体量**：`IMCallEngine.kt` 599、`IMSignalConnection.kt` 600（2026-09-15 命名对齐这轮，`onDisconnected` 的 `willReconnect` 判定逻辑已经抽成 `IMReconnectPolicy.willReconnect` 纯函数才压住）、`IMCallKit.kt` 584、`IMCallViewState.kt` 541、`IMCallView.kt` 591——**都在红线内，`IMCallEngine.kt`/`IMSignalConnection.kt` 基本没余量了（600 已到硬顶）**，下次改这两个文件之前先想好拆哪块，别指望还能塞得下新逻辑。
