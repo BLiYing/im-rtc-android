@@ -23,13 +23,15 @@ import com.imrtc.engine.protocol.IMFrameType
 /**
  * 算出强制收场的结果。没有进行中的通话也不在房里时原样返回（`emit` 为空）。
  *
- * 时长按服务端给的 `connected_at_ms` 估算，与恢复失败时 I8 的那条例外同一个算法：
- * 本地已经收场，服务端那条带真值的 `call.ended` 随后会因为 idle 被丢掉，没有更准的值可用。
+ * 时长本地估算（服务端那条带真值的 `call.ended` 随后会因为 idle 被丢掉，没有更准的值可用）：
+ * 从**本端**进来那一刻算（[IMEngineContext.callStartedAtMs]），没记到才退回整通接通的 `connected_at_ms`——
+ * 后者对群通话里中途被拉进来的人偏大（2026-09-15 10:05 iOS frank：约 6 秒写成 124 秒）。
  */
 internal fun IMEngineMachine.forceEnd(ctx: IMEngineContext, nowMs: Long): IMMachineOutput<IMEngineContext> {
     if (ctx.call.state != IMCallState.IDLE) {
         val call = ctx.call
         val (frames, reason) = forceEndFrames(call)
+        val startedAtMs = if (ctx.callStartedAtMs > 0) ctx.callStartedAtMs else call.connectedAtMs
         return IMMachineOutput(
             IMEngineContext(room = IMRoomMachine.cleared(IMRoomState.IDLE), call = IMCallContext()),
             send = frames,
@@ -39,7 +41,7 @@ internal fun IMEngineMachine.forceEnd(ctx: IMEngineContext, nowMs: Long): IMMach
                     mapOf(
                         "call_id" to s(call.callId),
                         "reason" to s(reason.wire),
-                        "duration_sec" to n(IMCallEndReason.durationSec(call.connectedAtMs, nowMs)),
+                        "duration_sec" to n(IMCallEndReason.durationSec(startedAtMs, nowMs)),
                         "ended_by" to s(""),
                     ),
                 ),

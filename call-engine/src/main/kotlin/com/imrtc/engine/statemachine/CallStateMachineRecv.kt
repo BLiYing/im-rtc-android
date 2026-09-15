@@ -38,6 +38,23 @@ private fun handleLateFrame(
 }
 
 /**
+ * 邀请落地：记下 call_id / room_id。
+ *
+ * invite.ok 回来之前按过取消的（[IMCallContext.cancelPending]），**这一刻补发 `call.cancel`**——
+ * 不必等红键看门狗 3 秒到点，也不会发出一条没有 call_id、只换回 1401 的 cancel。
+ */
+private fun handleInviteOk(ctx: IMCallContext, data: Map<String, IMJson>): IMMachineOutput<IMCallContext> {
+    val callId = Wire.str(data, "call_id")
+    val next = ctx.copy(
+        callId = callId,
+        roomId = Wire.str(data, "room_id"),
+        cancelPending = ctx.cancelPending && callId.isEmpty(),
+    )
+    if (!ctx.cancelPending || callId.isEmpty()) return IMCallMachine.out(next)
+    return IMCallMachine.out(next, send = listOf(IMCallMachine.callIdFrame(IMFrameType.CALL_CANCEL, next)))
+}
+
+/**
  * 处理一条下行帧。
  *
  * 两条优先级规则写在最前面，**别挪**：
@@ -57,12 +74,7 @@ internal fun reduceCallRecv(
     return when (type) {
         IMFrameType.CALL_INCOMING -> handleIncoming(ctx, data)
 
-        IMCallMachine.okType(IMFrameType.CALL_INVITE) -> IMCallMachine.out(
-            ctx.copy(
-                callId = Wire.str(data, "call_id"),
-                roomId = Wire.str(data, "room_id"),
-            ),
-        )
+        IMCallMachine.okType(IMFrameType.CALL_INVITE) -> handleInviteOk(ctx, data)
 
         IMFrameType.CALL_CONNECTED -> handleConnected(ctx, data)
 

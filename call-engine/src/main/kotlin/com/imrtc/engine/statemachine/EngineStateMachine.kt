@@ -22,6 +22,14 @@ import com.imrtc.engine.protocol.IMJson
 internal data class IMEngineContext(
     val room: IMRoomContext = IMRoomContext(),
     val call: IMCallContext = IMCallContext(),
+    /**
+     * **本端**这一场从哪一刻开始（本机时钟，抛 `onCallBegin` 那一刻），给强制收场算时长用。0 = 不在通话里。
+     *
+     * `call.connectedAtMs` 是整通电话第一次接通的时刻——群通话里中途被拉进来的人拿它算，
+     * 会把他进来之前的那段也算进去（真机 2026-09-15 10:05 iOS frank：待了约 6 秒，本地收场写成 124 秒）。
+     * 由 [IMEngineMachine.reduce] 统一维护，见 `stampCallStart`。
+     */
+    val callStartedAtMs: Long = 0L,
 )
 
 internal object IMEngineMachine {
@@ -39,6 +47,30 @@ internal object IMEngineMachine {
         ctx: IMEngineContext,
         input: IMMachineInput,
         nowMs: Long = System.currentTimeMillis(),
+    ): IMMachineOutput<IMEngineContext> = stampCallStart(ctx, route(ctx, input, nowMs), nowMs)
+
+    /**
+     * 维护 [IMEngineContext.callStartedAtMs]：本次抛了 `onCallBegin` 就记成 [nowMs]，通话机回 idle 就清零，
+     * 其余沿用输入的值。**放在入口统一做**：好几个分支会新建 context（`liftCall`、被踢），逐个带过去迟早漏一个。
+     */
+    private fun stampCallStart(
+        ctx: IMEngineContext,
+        out: IMMachineOutput<IMEngineContext>,
+        nowMs: Long,
+    ): IMMachineOutput<IMEngineContext> {
+        val startedAt = when {
+            out.state.call.state == IMCallState.IDLE -> 0L
+            out.emit.any { it.callback == "onCallBegin" } -> nowMs
+            else -> ctx.callStartedAtMs
+        }
+        if (startedAt == out.state.callStartedAtMs) return out
+        return out.copy(state = out.state.copy(callStartedAtMs = startedAt))
+    }
+
+    private fun route(
+        ctx: IMEngineContext,
+        input: IMMachineInput,
+        nowMs: Long,
     ): IMMachineOutput<IMEngineContext> = when (input) {
         is IMMachineInput.Recv ->
             if (input.type == IMEnvelope.okType(IMFrameType.HELLO)) {

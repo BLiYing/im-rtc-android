@@ -530,6 +530,25 @@ class EngineLoopTest {
         assertEquals("本地早就收过场了，不能再抛一次", listOf("cancel:0"), listener.callEnds)
     }
 
+    /** 拨出中还没拿到 call_id 就按取消：此刻不发帧、不报错；invite.ok 回来立刻补发带 call_id 的 cancel。 */
+    @Test
+    fun `拨出中没 call id 时取消：先挂起，invite ok 回来立刻补发`() {
+        loginAndConnect()
+        engine.call(listOf("bob"), "video", isGroup = true)
+
+        engine.cancel()
+        assertEquals("没有 call_id 的 cancel 只会换回 1401", 0, transport.countOf(IMFrameType.CALL_CANCEL))
+        assertTrue("不许本地拒成 2005", listener.errors.isEmpty())
+
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("c-8"), "room_id" to IMJson.Str("r-8")),
+        )
+        val cancel = transport.lastOf(IMFrameType.CALL_CANCEL) ?: error("invite.ok 回来了却没补发 cancel")
+        assertEquals("c-8", (cancel.data["call_id"] as IMJson.Str).value)
+        assertTrue(listener.errors.isEmpty())
+    }
+
     // ── 记录用的假实现 ────────────────────────────────────────────────
 
     /** internal 而不是 private：`MuteBeforePublishTest` 也要一个只收不看的 listener，

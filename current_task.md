@@ -7,7 +7,7 @@
 
 ## 当前焦点
 
-**2026-09-15：对齐 iOS 的 `forceEnd`（红键等不到结束事件时引擎也收场）+ 拨出中没 call_id 的补救。未提交；`./scripts/test.sh` 全绿（6 步，单测 engine 148 / webrtc 36 / uikit 63 / demo 26）；PKD130 真机 10:08 验过看门狗 → `forceEnd`（见下一步 0）。**
+**2026-09-15：对齐 iOS 的 `forceEnd`（红键等不到结束事件时引擎也收场）+ 拨出中没 call_id 的补救。已提交 `b9e2977`，两笔小账随后单独一笔；`./scripts/test.sh` 全绿（6 步，单测 engine 155 / webrtc 36 / uikit 63 / demo 26）；PKD130 真机 10:08 验过看门狗 → `forceEnd`（见下一步 0）。**
 起因 09-13 14:53~14:58 iOS frank：挂断帧没到服务端，看门狗只收了界面，Engine 留在通话与房间里，其余端一直看得见他。本端看门狗原先同一个缺口。
 上一件（对端重开摄像头刷新）已提交 `cc111f0`、20:04 真机验过；「后台重连节奏」`2c9c2fe` 还没真机验。
 
@@ -18,6 +18,8 @@
 - UIKit：红键整块拆到 `IMRedButton.kt`（按下记 `按下红键 action= phase=`，看门狗到点 `endLocally` 后 `engine.forceEnd()`）；`IMCallViewReducer.ended` 在 IDLE 下原样返回。
 - 拆分：`IMMediaDriver.kt`（driveMedia / 补静音）、`IMForceEnd.kt`、`signaling/IMHandshakeGiveUp.kt`。
 - 日志：`强制收场 call_id= … frames=` · `强制收场：没有进行中的通话或房间` · `房间已不在，丢弃迟到的媒体帧` · `请求往返慢` · `按下红键`。
+- **两个小账已修**（单测覆盖，真机未验）：① 强制收场时长从本端 `onCallBegin` 那一刻算（`IMEngineContext.callStartedAtMs`，`reduce` 统一维护），不再用整通的 `connected_at_ms`；
+  ② 拨出中没 call_id 时按取消不发帧、记 `IMCallContext.cancelPending`，`call.invite.ok` 一回来立刻补发 `call.cancel`（不再换回 1401）。
 
 **体量欠账**：`IMSignalConnection.kt` 598、`IMCallView.kt` 591、`IMCallEngine.kt` 583、`IMCallKit.kt` 549。
 `IMSignalConnection` 还能挪：socket 代际（`generation` / `closedGeneration` / `TransportListener`）连同心跳。

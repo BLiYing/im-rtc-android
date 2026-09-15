@@ -177,4 +177,105 @@ class ForceEndTest {
         assertTrue(out.send.isEmpty())
         assertTrue(out.emit.isEmpty())
     }
+
+    // ── 时长从本端进来算 ──────────────────────────────────────────────
+
+    /** 中途被拉进群通话的人：时长从**他自己**进来算（2026-09-15 10:05 iOS frank 待了约 6 秒，写成 124 秒）。 */
+    @Test
+    fun `强制收场时长从本端开始时刻算，不从整通接通算`() {
+        val base = inCall(IMCallState.CONNECTED, room = IMRoomState.JOINED)
+        val ctx = base.copy(call = base.call.copy(connectedAtMs = 1_000), callStartedAtMs = 119_000)
+
+        val out = IMEngineMachine.forceEnd(ctx, nowMs = 125_500)
+        assertEquals(IMJson.Num(6), out.emit.first().args["duration_sec"])
+    }
+
+    @Test
+    fun `没记到本端开始时刻：退回整通的 connected_at_ms`() {
+        val base = inCall(IMCallState.CONNECTED, room = IMRoomState.JOINED)
+        val ctx = base.copy(call = base.call.copy(connectedAtMs = 1_000))
+
+        val out = IMEngineMachine.forceEnd(ctx, nowMs = 125_500)
+        assertEquals(IMJson.Num(124), out.emit.first().args["duration_sec"])
+    }
+
+    /** 抛 onCallBegin 那一刻记下本端开始时刻，中间的推进不冲掉，通话结束清零。 */
+    @Test
+    fun `engine 在 onCallBegin 那一刻记下本端开始时刻，结束清零`() {
+        val accepting = IMEngineContext(call = IMCallContext(state = IMCallState.ACCEPTING, callId = "c-1"))
+
+        val began = IMEngineMachine.reduce(
+            accepting,
+            IMMachineInput.Recv(
+                IMFrameType.CALL_CONNECTED,
+                mapOf(
+                    "call_id" to IMJson.Str("c-1"),
+                    "room_id" to IMJson.Str("r-1"),
+                    "room_token" to IMJson.Str("rt"),
+                    "connected_at_ms" to IMJson.Num(1_000),
+                ),
+            ),
+            nowMs = 119_000,
+        )
+        assertEquals(listOf("onCallBegin"), began.emit.map { it.callback })
+        assertEquals(119_000L, began.state.callStartedAtMs)
+
+        val later = IMEngineMachine.reduce(began.state, IMMachineInput.Internal("media_ready"), nowMs = 120_000)
+        assertEquals("中间的推进不能冲掉开始时刻", 119_000L, later.state.callStartedAtMs)
+
+        val ended = IMEngineMachine.reduce(
+            later.state,
+            IMMachineInput.Recv(
+                IMFrameType.CALL_ENDED,
+                mapOf("call_id" to IMJson.Str("c-1"), "reason" to IMJson.Str("hangup"), "duration_sec" to IMJson.Num(5)),
+            ),
+            nowMs = 125_000,
+        )
+        assertEquals(IMCallState.IDLE, ended.state.call.state)
+        assertEquals(0L, ended.state.callStartedAtMs)
+    }
+
+    // ── 拨出中没 call_id 时取消 ───────────────────────────────────────
+
+    /** 没有 call_id 的 cancel 只会换回 1401（Web 真机 2026-09-15 10:09）：先挂起，invite.ok 回来立刻补发。 */
+    @Test
+    fun `拨出中没 call_id 时取消：不发帧不报错，invite ok 回来立刻补发`() {
+        val inviting = IMCallContext(state = IMCallState.INVITING, role = IMCallRole.CALLER)
+
+        val pressed = IMCallMachine.reduce(inviting, IMMachineInput.Act("cancel", emptyMap()))
+        assertTrue(pressed.send.isEmpty())
+        assertTrue("不许本地拒成 2005", pressed.emit.isEmpty())
+        assertTrue(pressed.state.cancelPending)
+
+        val landed = IMCallMachine.reduce(
+            pressed.state,
+            IMMachineInput.Recv("call.invite.ok", mapOf("call_id" to IMJson.Str("c-8"), "room_id" to IMJson.Str("r-8"))),
+        )
+        assertEquals(listOf(IMFrameType.CALL_CANCEL), landed.send.map { it.type })
+        assertEquals("c-8", str(landed.send.first().data, "call_id"))
+        assertEquals(IMCallState.INVITING, landed.state.state)
+        assertEquals("c-8", landed.state.callId)
+        assertTrue("补发过就清掉", !landed.state.cancelPending)
+    }
+
+    @Test
+    fun `已有 call_id 时取消照旧立刻发 cancel`() {
+        val out = IMCallMachine.reduce(
+            IMCallContext(state = IMCallState.INVITING, callId = "c-1"),
+            IMMachineInput.Act("cancel", emptyMap()),
+        )
+        assertEquals(listOf(IMFrameType.CALL_CANCEL), out.send.map { it.type })
+        assertEquals("c-1", str(out.send.first().data, "call_id"))
+        assertTrue(!out.state.cancelPending)
+    }
+
+    @Test
+    fun `没按取消时 invite ok 照常只记 call_id`() {
+        val out = IMCallMachine.reduce(
+            IMCallContext(state = IMCallState.INVITING),
+            IMMachineInput.Recv("call.invite.ok", mapOf("call_id" to IMJson.Str("c-2"), "room_id" to IMJson.Str("r-2"))),
+        )
+        assertTrue(out.send.isEmpty())
+        assertEquals("c-2", out.state.callId)
+    }
 }

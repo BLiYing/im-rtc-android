@@ -53,6 +53,13 @@ internal data class IMCallContext(
     val role: IMCallRole = IMCallRole.NONE,
     /** 通话时长的起点，来自服务端。**客户端不自己算时长**（I8）。 */
     val connectedAtMs: Long = 0L,
+    /**
+     * 拨出中、`call.invite.ok` 还没回来（手里没有 call_id）时按了取消。
+     *
+     * 那一刻发不出一条像样的 `call.cancel`——没有 call_id 只会换回 1401、宿主多收一条 error
+     * （Web 真机 2026-09-15 10:09）。先记下，invite.ok 一回来就补发（见 `reduceCallRecv`）。
+     */
+    val cancelPending: Boolean = false,
 )
 
 internal object IMCallMachine {
@@ -117,10 +124,11 @@ internal object IMCallMachine {
         } else {
             invalidState(ctx)
         }
-        "cancel" -> if (ctx.state == IMCallState.INVITING) {
-            out(ctx, send = listOf(callIdFrame(IMFrameType.CALL_CANCEL, ctx)))
-        } else {
-            invalidState(ctx)
+        // 拨出中还没拿到 call_id：不发一条注定被拒的 cancel，挂起到 invite.ok 回来（见 IMCallContext.cancelPending）。
+        "cancel" -> when {
+            ctx.state != IMCallState.INVITING -> invalidState(ctx)
+            ctx.callId.isEmpty() -> out(ctx.copy(cancelPending = true))
+            else -> out(ctx, send = listOf(callIdFrame(IMFrameType.CALL_CANCEL, ctx)))
         }
         "hangup" -> if (ctx.state == IMCallState.CONNECTED || ctx.state == IMCallState.CONNECTING) {
             out(ctx, send = listOf(callIdFrame(IMFrameType.CALL_HANGUP, ctx)))
