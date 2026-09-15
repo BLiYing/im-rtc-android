@@ -50,6 +50,8 @@ internal class IMEventDispatcher(
                     args.strs("callee_ids"),
                     args.str("media_type"),
                     args.flag("is_group"),
+                    args.str("chat_group_id"),
+                    args.str("user_data"),
                 )
             }
             "onCallBegin" -> onMain {
@@ -58,6 +60,10 @@ internal class IMEventDispatcher(
                     args.str("room_id"),
                     args.str("media_type"),
                     args.str("role"),
+                    args.flag("is_group"),
+                    args.str("caller"),
+                    args.str("chat_group_id"),
+                    args.str("user_data"),
                 )
             }
             "onCallEnd" -> onMain {

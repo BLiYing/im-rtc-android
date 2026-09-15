@@ -20,6 +20,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
     private val userField = DemoUI.field(activity, "用户 ID", DemoSession.form.defaultUsername)
     private val calleeField = DemoUI.field(activity, "对方 ID", DemoSession.form.defaultCallee)
     private val roomField = DemoUI.field(activity, "房间号（留空则新建）", DemoSession.form.defaultRoom)
+    private val callIdField = DemoUI.field(activity, "call_id（从另一台设备的日志里抄）", "")
 
     private val statusLabel = DemoUI.label(activity, "", 13f, DemoUI.SECONDARY)
 
@@ -51,7 +52,10 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         val pick = DemoUI.button(activity, "选人 ›") { onPickGroup() }
         val group = DemoUI.button(activity, "发起群通话") { onGroupCall() }
         val join = DemoUI.button(activity, "加入房间") { onJoinMeeting() }
-        callButtons = listOf(audio, video, pick, group, join)
+        // M8：主动加入一通进行中的群通话（call.join）。真实宿主靠 webhook / 群横幅知道
+        // 「有通话在进行中」，Demo 图简单，直接让人把 call_id 抄过来。
+        val joinCall = DemoUI.button(activity, "加入这通电话") { onJoinCall() }
+        callButtons = listOf(audio, video, pick, group, join, joinCall)
 
         errorLabel.maxLines = 4
         // 隧道那段提示是三行起步（见 LoginHint），4 行会被截掉命令那行。
@@ -81,6 +85,14 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
                     DemoUI.card(
                         activity, "多人通话（最多 ${ContactPicker.LIMIT} 人）",
                         listOf(groupRow(pick), group),
+                    ),
+                    DemoUI.card(
+                        activity, "加入进行中的群通话",
+                        listOf(
+                            callIdField,
+                            joinCall,
+                            DemoUI.note(activity, "对应 call.join（M8）：群里任何人都能凭 call_id 直接加进去，不振铃。"),
+                        ),
                     ),
                     DemoUI.card(
                         activity, "会议房间",
@@ -170,6 +182,17 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
             return
         }
         DemoSession.placeCall(DemoSession.groupPick, "video", isGroup = true)
+    }
+
+    /** M8：凭 call_id 直接加入一通进行中的群通话，不振铃。 */
+    private fun onJoinCall() {
+        errorLabel.text = ""
+        val callId = callIdField.text.toString().trim()
+        if (callId.isEmpty()) {
+            errorLabel.text = "先填 call_id"
+            return
+        }
+        DemoSession.joinCall(callId)
     }
 
     /**

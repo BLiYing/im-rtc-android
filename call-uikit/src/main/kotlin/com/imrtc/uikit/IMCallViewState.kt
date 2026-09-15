@@ -21,6 +21,14 @@ internal data class IMCallViewState(
     val peer: String = "",
     /** 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它不列发起人：他离场后服务端拉不回来。 */
     val caller: String = "",
+    /**
+     * 宿主自己的群号，来自 `onCallReceived` / `onCallBegin`（可能为空——不是每通电话都属于某个群）。
+     * `IMInviteMemberProvider` 靠它决定「添加成员」该向宿主要哪个群的候选人
+     * （`HOST_INTEGRATION_DESIGN.md` §3.4）。
+     */
+    val chatGroupId: String = "",
+    /** 同 [chatGroupId]，主叫在 `IMCallOptions.userData` 里塞的 opaque 数据，原样透传给 provider。 */
+    val userData: String = "",
     val durationSec: Long = 0,
     val micOn: Boolean = true,
     val cameraOn: Boolean = false,
@@ -302,11 +310,15 @@ internal object IMCallViewReducer {
         calleeIds: List<String>,
         mediaType: String,
         isGroup: Boolean,
+        chatGroupId: String = "",
+        userData: String = "",
     ) = IMCallViewState(
         phase = IMCallViewState.Phase.INCOMING,
         callId = callId,
         peer = if (isGroup) "" else caller,
         caller = caller,
+        chatGroupId = chatGroupId,
+        userData = userData,
         mediaType = mediaType,
         isGroup = isGroup,
         cameraOn = defaultCameraOn(mediaType, isGroup),
@@ -318,20 +330,28 @@ internal object IMCallViewReducer {
         connection = state.connection,
     )
 
-    fun outgoing(state: IMCallViewState, peers: List<String>, mediaType: String, isGroup: Boolean) =
-        IMCallViewState(
-            phase = IMCallViewState.Phase.OUTGOING,
-            peer = if (isGroup) "" else peers.firstOrNull().orEmpty(),
-            mediaType = mediaType,
-            isGroup = isGroup,
-            role = "caller",
-            cameraOn = defaultCameraOn(mediaType, isGroup),
-            // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
-            speakerOn = false,
-            // 呼出时对方还没接——**先摆上去且标成未接听**，界面才有「呼叫中…」的占位格。
-            members = peers.associateWith { IMCallViewState.Member(it, accepted = false) },
-            connection = state.connection,
-        )
+    fun outgoing(
+        state: IMCallViewState,
+        peers: List<String>,
+        mediaType: String,
+        isGroup: Boolean,
+        chatGroupId: String = "",
+        userData: String = "",
+    ) = IMCallViewState(
+        phase = IMCallViewState.Phase.OUTGOING,
+        peer = if (isGroup) "" else peers.firstOrNull().orEmpty(),
+        mediaType = mediaType,
+        isGroup = isGroup,
+        chatGroupId = chatGroupId,
+        userData = userData,
+        role = "caller",
+        cameraOn = defaultCameraOn(mediaType, isGroup),
+        // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
+        speakerOn = false,
+        // 呼出时对方还没接——**先摆上去且标成未接听**，界面才有「呼叫中…」的占位格。
+        members = peers.associateWith { IMCallViewState.Member(it, accepted = false) },
+        connection = state.connection,
+    )
 
     fun meeting(state: IMCallViewState, roomId: String) = IMCallViewState(
         phase = IMCallViewState.Phase.CONNECTING,
@@ -345,15 +365,50 @@ internal object IMCallViewReducer {
         connection = state.connection,
     )
 
-    fun begin(state: IMCallViewState, callId: String, roomId: String, mediaType: String, role: String) =
-        state.copy(
-            phase = IMCallViewState.Phase.CONNECTING,
-            callId = callId,
-            roomId = roomId,
-            mediaType = mediaType,
-            role = role,
-            hint = "",
-        )
+    /**
+     * `caller` / `chatGroupId` / `userData` 传 null 表示「不改」——**只有旧测试的 5 参数调用点用得到**：
+     * production 里 [IMKitListener.onCallBegin] 永远原样传 `onCallBegin` 回调给的值（引擎已经做过
+     * §3.3 的回落，绝不会平白把已经记下的 `state.caller` 冲掉）。
+     */
+    fun begin(
+        state: IMCallViewState,
+        callId: String,
+        roomId: String,
+        mediaType: String,
+        role: String,
+        isGroup: Boolean = false,
+        caller: String? = null,
+        chatGroupId: String? = null,
+        userData: String? = null,
+    ) = state.copy(
+        phase = IMCallViewState.Phase.CONNECTING,
+        callId = callId,
+        roomId = roomId,
+        mediaType = mediaType,
+        role = role,
+        // `call.join` 进来的人没经过 outgoing/incoming，isGroup 只有这里第一次拿得到；
+        // 已经是群通话的（incoming 记过）不会被它翻回 false。
+        isGroup = state.isGroup || isGroup,
+        caller = caller ?: state.caller,
+        chatGroupId = chatGroupId ?: state.chatGroupId,
+        userData = userData ?: state.userData,
+        hint = "",
+    )
+
+    /**
+     * 主动加入一通进行中的群通话（`IMCallKit.joinCall`，HOST_INTEGRATION_DESIGN §3.4）。
+     *
+     * 直接进「接通中…」（CONNECTING 阶段的文案本来就是它），不等 `call.join.ok`；
+     * `chatGroupId` / `caller` 要等 [begin]（`onCallBegin`）才拿得到——加入者没收过 `onCallReceived`。
+     */
+    fun joining(state: IMCallViewState, callId: String) = IMCallViewState(
+        phase = IMCallViewState.Phase.CONNECTING,
+        callId = callId,
+        isGroup = true,
+        role = "callee",
+        speakerOn = false,
+        connection = state.connection,
+    )
 
     fun connected(state: IMCallViewState) = state.copy(phase = IMCallViewState.Phase.CONNECTED)
 

@@ -8,6 +8,7 @@ import android.os.Looper
 import android.view.View
 import com.imrtc.engine.IMCallEngine
 import com.imrtc.engine.IMCallEngineListener
+import com.imrtc.engine.IMCallOptions
 import com.imrtc.engine.log.IMRTCLog
 
 /**
@@ -120,9 +121,30 @@ object IMCallKit {
      */
     @JvmOverloads
     @JvmStatic
-    fun placeCall(peers: List<String>, mediaType: String, isGroup: Boolean = false) {
+    fun placeCall(peers: List<String>, mediaType: String, isGroup: Boolean = false) =
+        placeCallWith(peers, mediaType, isGroup, "", "") { it.call(peers, mediaType, isGroup) }
+
+    /**
+     * 带 [IMCallOptions] 的重载：群通话要带 `chatGroupId`（宿主自己的群号）时用它
+     * （HOST_INTEGRATION_DESIGN §3.3/§3.4）——被叫与中途加入的人靠它知道「添加成员」该列谁。
+     */
+    @JvmStatic
+    fun placeCall(peers: List<String>, mediaType: String, options: IMCallOptions) =
+        placeCallWith(peers, mediaType, options.isGroup, options.chatGroupId, options.userData) {
+            it.call(peers, mediaType, options)
+        }
+
+    /** 两个 `placeCall` 重载共用的权限门 + 界面切换，`dispatch` 只是最后真正发帧的那一下不同。 */
+    private fun placeCallWith(
+        peers: List<String>,
+        mediaType: String,
+        isGroup: Boolean,
+        chatGroupId: String,
+        userData: String,
+        dispatch: (IMCallEngine) -> Unit,
+    ) {
         val instance = engine ?: return
-        update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup))
+        update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup, chatGroupId, userData))
         ensurePermissions(IMPermissionGate.devicesForPlacing(mediaType, isGroup)) { outcome ->
             when (outcome) {
                 IMPermissionGate.Outcome.OK -> {
@@ -130,13 +152,13 @@ object IMCallKit {
                     // 摄像头到手、而且开着才接采集——**拨出中就该看见自己**（草图 §03-E）。
                     onLocalMediaStarted()
                     syncCameraIntent(instance)
-                    instance.call(peers, mediaType, isGroup)
+                    dispatch(instance)
                 }
                 IMPermissionGate.Outcome.CAMERA_BLOCKED -> {
                     if (!stillPlacing()) return@ensurePermissions
                     update(IMCallViewReducer.cameraBlocked(state))
                     syncCameraIntent(instance)
-                    instance.call(peers, mediaType, isGroup)
+                    dispatch(instance)
                 }
                 // 同上先看一眼：这一屏可能已经不在了，reset() 会把无关的当前状态整个抹掉。
                 IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED ->
@@ -144,6 +166,15 @@ object IMCallKit {
             }
         }
     }
+
+    /**
+     * 主动加入一通进行中的群通话（HOST_INTEGRATION_DESIGN §3.4 / §4.1）。
+     *
+     * **已经在一场里时不接**（只提示）；否则立刻进「接通中…」，过麦克风权限门再发 `call.join`。
+     * 被拒时走 [IMKitListener.onError]（1409 等）与随后的 `onCallEnd(error)`。实现见 [IMJoinCallState.start]。
+     */
+    @JvmStatic
+    fun joinCall(callId: String) = IMJoinCallState.start(callId)
 
     /** 进会议房（不走振铃）。同样先过权限门。 */
     @JvmStatic
@@ -174,7 +205,7 @@ object IMCallKit {
         update(IMCallViewReducer.meeting(state, roomId))
     }
 
-    private fun ensurePermissions(devices: List<IMPermissionGate.Device>, done: (IMPermissionGate.Outcome) -> Unit) {
+    internal fun ensurePermissions(devices: List<IMPermissionGate.Device>, done: (IMPermissionGate.Outcome) -> Unit) {
         val asker = asker ?: IMPermissionGate.Asker { _, cb -> cb(IMPermissionGate.Result.GRANTED) }
         IMPermissionGate.ensure(devices, asker) { outcome -> main.post { done(outcome) } }
     }
@@ -441,13 +472,8 @@ object IMCallKit {
         hintExpiry.arm(text) { mine -> if (state.hint == mine) update(IMCallViewReducer.hint(state, "")) }
     }
 
-    internal fun showInvitePicker(activity: Activity) {
-        // 发起人不列：他不在服务端成员表里，离场后拉不回来（回 bad_params），列出来只会留下一个转不停的占位格。
-        // 也塞进「不可选」那一组，连手输 uid 那条路一起挡住。
-        val candidates = config.inviteCandidates.filter { it.uid != state.caller }
-        val blocked = if (state.caller.isEmpty()) state.members.keys else state.members.keys + state.caller
-        IMInvitePicker(activity, candidates, blocked, state.inviteSlotsLeft) { inviteMore(it) }.show()
-    }
+    /** 取名单的优先级（宿主接管选人页 > provider > 静态 inviteCandidates > 空态）见 [IMInviteFlow]。 */
+    internal fun showInvitePicker(activity: Activity) = IMInviteFlow.show(activity, state, config) { inviteMore(it) }
 
     /** 收进小窗。接通之前不许收，见 [IMCallViewState.canMinimize]。 */
     internal fun minimize() = update(IMCallViewReducer.minimize(state))

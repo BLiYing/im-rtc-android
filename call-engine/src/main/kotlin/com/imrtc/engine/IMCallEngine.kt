@@ -212,6 +212,18 @@ class IMCallEngine private constructor(
         ),
     )
 
+    /**
+     * 拨出（带选项）。群通话要带 `chatGroupId`（宿主自己的群号）或 `userData` 时用这个重载。
+     *
+     * **本地先拦**：`options.chatGroupId` 超 64 字节或含空白、`options.userData` 超 4096 字节——
+     * 与「callee_ids 里有自己」服务端拒绝走同一个出口，`onError(1004)` 之后紧跟
+     * `onCallEnd(reason="error", durationSec=0)`，**不上线路**（`HOST_INTEGRATION_DESIGN.md` §3.3）。
+     * 校验与参数拼装见 [IMCallInvite]——这里已经踩着体量红线，不能再堆逻辑。
+     */
+    fun call(userIds: List<String>, mediaType: String, options: IMCallOptions) = scheduler.post {
+        IMCallInvite.act(dispatcher, userIds, mediaType, options)?.let { input(it) }
+    }
+
     fun accept() = act("accept")
 
     fun reject() = act("reject")

@@ -1119,3 +1119,27 @@ JDK 17（`/usr/libexec/java_home -v 17`）· SDK 到 android-36 / build-tools 36
   ./scripts/test.sh                # 唯一测试入口：门禁 ×3 + 向量可达 + assembleDebug + 纯 JVM 单测
   BUILD_ONLY=1 ./scripts/test.sh   # 只编译
   ```
+
+## 2026-09-15：forceEnd / 后台重连节奏 / 1v1 视频细节——真机验收清单（从 current_task.md 移出，未完成，非本次改动）
+
+被 2026-09-15 稍晚的「宿主对接 M1→M2→M8」覆盖掉之前，`current_task.md`「下一步」还挂着这些没验完的项，
+先搬到这里免得丢：
+
+0. **`forceEnd`**：挂断被拒时看门狗兜底已于 09-15 10:08 PKD130 验过（服务端故障注入拒掉 alice 的 hangup
+   10:08:15.278 → 10:08:18.236 `f-1` 补发被受理、通话结束、alice 回首页）。
+   还没验：断网（飞行模式）后按红键——3 秒后 logcat 有 `强制收场` + `没有信令连接`；
+   拨号后立刻按红键（invite 还没回）——被叫不再一直响（Web 端 10:09 已验同一路径）。
+   联测做法（adb 坐标、故障注入 curl）见 server 仓 `scripts/dev.sh` 的 `FAULT_INJECTION=1` 与 `/v1/dev/faults`。
+1. **后台重连节奏**（`2c9c2fe`）：登录后切后台约 1 分钟（ColorOS 最好），`adb logcat | grep -i signal`
+   断开→重连间隔走 1,2,3,3,3… 秒（约每分钟 10 次，不是原来的 20 次）。
+2. 期间切回前台：立刻重连一次（不等定时器），退避归零。通话中切后台（前台服务在跑）也该走后台节奏。
+   ColorOS 秒杀间隔是否稳定、服务端 5 秒窗口是否接得住，都还没实机数据。
+3. 1v1 视频上一轮：控制条收起后点底部叫回控制条（不静音 / 挂断）；挂断后结束画面标题栏不淡掉；
+   开局清晰度——服务端进房 1 秒内有 `上行层已接入 … rid=h`、整通无 `layer=h live=False`。
+   自动隐藏那刀已合入 main（`f7cfb05`），未验收。
+4. 跨端老批次（含本端「接通前按静音」）清单见 `../im-rtc-server/current_task.md`「跨端待验」。
+
+**体量欠账（2026-09-15 早）**：`IMSignalConnection.kt` 598、`IMCallView.kt` 591、`IMCallEngine.kt` 583、
+`IMCallKit.kt` 549。`IMSignalConnection` 还能挪：socket 代际（`generation` / `closedGeneration` /
+`TransportListener`）连同心跳。（后续宿主对接改动把 `IMCallEngine.kt`/`IMCallKit.kt` 又往上顶了一截，
+见 `current_task.md` 最新的体量段落。）

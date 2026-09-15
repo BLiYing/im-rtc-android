@@ -27,6 +27,9 @@ internal object CallFrames {
             max = E.MAX_TIMEOUT_SEC,
         ),
         "user_data" to IMFieldKind.Str(),
+        // 宿主自己的群号，服务端不解析、不校验群成员关系（HOST_INTEGRATION_DESIGN §3.2）。
+        // Kit 靠它决定「添加成员」列谁；通话期间不可改，invite_more / join 都不带它。
+        "chat_group_id" to IMFieldKind.Str(),
     )
 
     /** **主叫此时禁止 room.join**——接听前不进 SFU（§4.1）。 */
@@ -65,6 +68,8 @@ internal object CallFrames {
         ),
         "invited_at_ms" to IMFieldKind.Num(),
         "user_data" to IMFieldKind.Str(),
+        // 同 INVITE 的 chat_group_id，原样带出去。被叫靠它把「添加成员」指向哪个群。
+        "chat_group_id" to IMFieldKind.Str(),
     )
 
     /**
@@ -101,6 +106,15 @@ internal object CallFrames {
         // 通话时长的起点，服务端时钟。
         "connected_at_ms" to IMFieldKind.Num(),
         "accepted_by" to IMFieldKind.Str(),
+        /*
+         2026-09-15 起补的三个字段（HOST_INTEGRATION_DESIGN §3.2）：`call.join` 进来的人没收过
+         `call.incoming`，断线恢复后的端也可能丢了它，只有这里能原样拿到。
+         onCallBegin 里取这里的值，为空时（老服务端）回落到本通 call.incoming / call() 选项记下的值
+         ——见 CallStateMachineRecv.handleConnected。
+        */
+        "caller" to IMFieldKind.Str(),
+        "chat_group_id" to IMFieldKind.Str(),
+        "user_data" to IMFieldKind.Str(),
     )
 
     /** 本账号另一台设备处理了这通电话。 */

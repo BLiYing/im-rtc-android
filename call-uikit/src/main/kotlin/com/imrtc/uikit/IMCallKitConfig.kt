@@ -1,12 +1,21 @@
 package com.imrtc.uikit
 
 /**
- * 「添加成员」的候选人。**名单是宿主给的**——Kit 不内置联系人系统（CONVENTIONS §12）。
- * 与 iOS 的 `IMInviteCandidate` 同名同义。
+ * 「添加成员」的候选人（`HOST_INTEGRATION_DESIGN.md` §3.4）。**名单是宿主给的**——
+ * Kit 不内置联系人系统（CONVENTIONS §12）。与 iOS 的 `IMInviteCandidate` 同名同义。
  */
-class IMInviteCandidate @JvmOverloads constructor(
+class IMInviteCandidate
+@JvmOverloads
+constructor(
     val uid: String,
     name: String = "",
+    /** 头像 URL，可空——Kit 目前只按首字母画占位圆，不下载图片。 */
+    val avatarUrl: String? = null,
+    /** 名字下面那行小字（部门、备注之类），可空。 */
+    val subtitle: String? = null,
+    /** 能不能勾选。默认 true；置灰时配 [unselectableReason] 说明原因（例：已被禁言）。 */
+    val selectable: Boolean = true,
+    val unselectableReason: String? = null,
 ) {
     val name: String = name.ifEmpty { uid }
 }
@@ -37,10 +46,26 @@ class IMCallKitConfig {
     var floatingWindow: Boolean = true
 
     /**
-     * 群通话里「添加成员」的候选名单（交互稿 §05）。**名单是宿主给的**；不给就退化成 uid 输入框。
+     * 群通话里「添加成员」的**静态**候选名单（交互稿 §05）。**名单是宿主给的**；
      * 自己不要放进来——呼叫名单里含主叫会被服务端拒掉。
+     *
+     * **取名单优先级最低**：[inviteMemberProvider] 挂了就不会再用它。
+     * 保留只是为了兼容——按通话分页 / 搜索的场景应该用 provider。
      */
     var inviteCandidates: List<IMInviteCandidate> = emptyList()
+
+    /**
+     * 按通话向宿主要候选人的钩子（`HOST_INTEGRATION_DESIGN.md` §3.4），取代静态 [inviteCandidates]。
+     *
+     * **取名单优先级**：`presentInvitePicker` 接管 > 这个 provider > 静态 [inviteCandidates] > 空态。
+     */
+    var inviteMemberProvider: IMInviteMemberProvider? = null
+
+    /**
+     * 名单为空时是否退化成 uid 输入框。**默认关**——第三方的 uid 往往是不该露出的内部 ID；
+     * 打开后也只出现在空态里，只给 Demo / 内部联调用（`HOST_INTEGRATION_DESIGN.md` §3.4）。
+     */
+    var allowsManualUidInput: Boolean = false
 
     /**
      * uid → 本机该显示的名字与头像（见 [IMProfileResolver]）。

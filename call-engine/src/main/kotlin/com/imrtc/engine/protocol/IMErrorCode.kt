@@ -90,7 +90,7 @@ internal enum class IMErrorCode(
     CALLEE_OFFLINE(1403, "callee_offline", "callee offline", "call", false),
     /** 保留：v1 走 call.ended{busy} 而非报错 */
     CALLEE_BUSY(1404, "callee_busy", "callee busy", "call", false),
-    /** 在错误状态下 accept/reject/cancel/hangup */
+    /** 在错误状态下 accept/reject/cancel/hangup/join */
     INVALID_CALL_STATE(1405, "invalid_call_state", "invalid call state", "call", false),
     /** callee_ids 超上限 */
     TOO_MANY_CALLEES(1406, "too_many_callees", "too many callees", "call", false),
@@ -98,6 +98,8 @@ internal enum class IMErrorCode(
     NOT_CALL_OWNER(1407, "not_call_owner", "not call owner", "call", false),
     /** 自己已在别的通话中 */
     ALREADY_IN_CALL(1408, "already_in_call", "already in call", "call", false),
+    /** 宿主的邀请鉴权回调拒绝了 call.invite / call.invite_more / call.join（或回调失败且应用配成拒绝） */
+    INVITE_DENIED(1409, "invite_denied", "invite denied by host", "call", false),
     /** 内部错误兜底 */
     INTERNAL(1501, "internal", "internal error", "server", true),
     /** 无可用 SFU 节点 */

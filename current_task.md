@@ -7,40 +7,26 @@
 
 ## 当前焦点
 
-**2026-09-15：群通话里的任何人都能加人（服务端同日放开）。未提交；单测已跑，真机未验。**
-`IMCallViewState.canShowInvite` 去掉 `role == "caller"`；新字段 `caller`（被叫侧记发起人）→ `IMCallKit.showInvitePicker` 不列发起人（离场后服务端拉不回来）；1407 提示改「你已不在通话中，无法添加成员」。
-真机验：被叫接通后右上角有加人按钮，加人后对方响铃接通。
+**2026-09-15：宿主对接 M1 → M2 → M8（群通话 chat_group_id / IMInviteMemberProvider / call.join）落地。未提交；`./scripts/test.sh` 全绿（6 步，单测 engine 164 / webrtc 36 / uikit 64 / demo 26）；真机未验（无设备可用，本轮只验到编译 + JVM 单测）。**
+契约见 `../im-rtc-server/docs/design/HOST_INTEGRATION_DESIGN.md` §3.2/§3.3/§3.4，一致性向量已由另一人改好（`call_fsm.json` 两条新用例 + `member_joins_ongoing_group_call` 补字段、`envelope.json` 两条新默认值用例、`error_codes.json` 加 1409）。
 
-**2026-09-15：对齐 iOS 的 `forceEnd`（红键等不到结束事件时引擎也收场）+ 拨出中没 call_id 的补救。已提交 `b9e2977`，两笔小账随后单独一笔；`./scripts/test.sh` 全绿（6 步，单测 engine 155 / webrtc 36 / uikit 63 / demo 26）；PKD130 真机 10:08 验过看门狗 → `forceEnd`（见下一步 0）。**
-起因 09-13 14:53~14:58 iOS frank：挂断帧没到服务端，看门狗只收了界面，Engine 留在通话与房间里，其余端一直看得见他。本端看门狗原先同一个缺口。
-上一件（对端重开摄像头刷新）已提交 `cc111f0`、20:04 真机验过；「后台重连节奏」`2c9c2fe` 还没真机验。
+- **M1（call-engine）**：`CallFrames.INVITE/INCOMING` 加 `chat_group_id`，`CONNECTED` 加 `caller`/`chat_group_id`/`user_data`；`IMCallContext` 记 `caller`/`chatGroupId`/`userData`，`handleConnected` 取 `call.connected` 的值、为空回落到 `call()` 选项 / `call.incoming` 记下的值；新增 `IMCallOptions`（`@JvmOverloads`：isGroup/chatGroupId/userData/timeoutSec）与 `call(userIds, mediaType, options)`（校验拆在 `IMCallInvite.kt`，超限走 `IMCallOptionsGuard`，本地先拦、不上线路、与「callee 里有自己」同一出口）；`IMErrorCode.INVITE_DENIED=1409`；`onCallReceived`/`onCallBegin` 改签名加 isGroup/caller/chatGroupId/userData（**不留旧签名**）。
+- **M2（call-uikit）**：新增 `IMInviteContext`、`IMInviteCandidate` 扩字段（avatarUrl/subtitle/selectable/unselectableReason）、`IMInviteMemberProvider`（loadCandidates/presentInvitePicker/canInvite）、`IMPickedCallback`；`IMCallKitConfig` 加 `inviteMemberProvider`/`allowsManualUidInput`；`IMInvitePicker` 按 `IMInviteFlow` 的优先级（宿主接管 > provider > 静态 inviteCandidates > 空态）重写：300ms 防抖、generation 计数作废旧请求、滚到底翻页、加载中/失败(重试)/10s 超时三态、participantUids 已在通话中不可选、selectable=false 置灰。`IMCallViewState` 加 `chatGroupId`/`userData`；`incoming`/`outgoing`/`begin` 三个 reducer 带上这两个字段（`begin` 用可空参数「不传不改」，保留旧 5 参数测试调用点）。
+- **M8（本仓部分）**：`IMCallEngine.joinCall` 已有（M1 前就在）；新增 `IMCallKit.joinCall(callId)`（直接进 CONNECTING「接通中…」，`IMCallViewReducer.joining`）；`IMJoinCallState.joining` 记状态，`IMKitListener.onError` 按它把 1409 分成「对方暂时无法被邀请」（加人）/「无法加入该通话」（加入）两句文案，其余 join 失败码统一给后一句。
+- **Demo**：`DemoInviteProvider`（真实联系人排前 + 40 个假成员分页，`fail`/`slow` 模拟失败/超时）挂到 `kitConfig.inviteMemberProvider`；`DialerScreen` 加「加入进行中的群通话」卡片（call_id 输入框 + 按钮）；群呼带 `chatGroupId="demo-group"`；`JavaApiCheck.java` 补 `IMCallOptions`、新 `onCallBegin`/`onCallReceived` 签名、Java 版 `IMInviteMemberProvider`、`IMCallKit.joinCall`。
 
-- `IMCallEngine.forceEnd()`（Java 可调、任何线程）→ `IMForceEnd`：读 `@Volatile ctx` 挑帧（纯函数 `IMEngineMachine.forceEnd`，`EngineStateMachineForceEnd.kt`），
-  `IMSignalConnection.fire` 在调用方线程直发（req_id `f-N` 不登记，应答当迟到丢掉）；本地收场排回 engine 线程，先比对 call_id / room_id，拨出中 invite.ok 刚到则补发 cancel。
-- 状态机 idle 分支：房间机 `room.join.ok` → 补 `room.leave`、其余房间帧丢；通话机 `call.invite.ok` → 补 `call.cancel`、`call.connected` → 补 `call.hangup`，其余照旧丢。
-- 门面：房间 idle 时迟到的候选 / SDP 不交给媒体层；请求往返 ≥ 2s 记 `请求往返慢`。
-- UIKit：红键整块拆到 `IMRedButton.kt`（按下记 `按下红键 action= phase=`，看门狗到点 `endLocally` 后 `engine.forceEnd()`）；`IMCallViewReducer.ended` 在 IDLE 下原样返回。
-- 拆分：`IMMediaDriver.kt`（driveMedia / 补静音）、`IMForceEnd.kt`、`signaling/IMHandshakeGiveUp.kt`。
-- 日志：`强制收场 call_id= … frames=` · `强制收场：没有进行中的通话或房间` · `房间已不在，丢弃迟到的媒体帧` · `请求往返慢` · `按下红键`。
-- **两个小账已修**（单测覆盖，真机未验）：① 强制收场时长从本端 `onCallBegin` 那一刻算（`IMEngineContext.callStartedAtMs`，`reduce` 统一维护），不再用整通的 `connected_at_ms`；
-  ② 拨出中没 call_id 时按取消不发帧、记 `IMCallContext.cancelPending`，`call.invite.ok` 一回来立刻补发 `call.cancel`（不再换回 1401）。
-
-**体量欠账**：`IMSignalConnection.kt` 598、`IMCallView.kt` 591、`IMCallEngine.kt` 583、`IMCallKit.kt` 549。
-`IMSignalConnection` 还能挪：socket 代际（`generation` / `closedGeneration` / `TransportListener`）连同心跳。
+**体量**：`IMCallEngine.kt` 595（拆出 `IMCallInvite.kt` 才压回 600 以内，之前一度 612 超标）、`IMCallKit.kt` 584（`showInvitePicker` 逻辑搬进新的 `IMInviteFlow.kt`）、`IMCallViewState.kt` 541、`IMSignalConnection.kt` 598、`IMCallView.kt` 591——**都在红线内，但没余量了**，下次改这几个文件之前先想好拆哪块。
 
 ## 下一步
 
-**真机验收（报通话时间）**：
-0. **`forceEnd`**：~~挂断被拒时看门狗兜底~~（09-15 10:08 PKD130 已验：服务端故障注入拒掉 alice 的 hangup 10:08:15.278 → 10:08:18.236 `f-1` 补发被受理、通话结束、alice 回首页）。
-   还没验：断网（飞行模式）后按红键——3 秒后 logcat 有 `强制收场` + `没有信令连接`；拨号后立刻按红键（invite 还没回）——被叫不再一直响（Web 端 10:09 已验同一路径）。
-   联测做法（adb 坐标、故障注入 curl）见 server 仓 `scripts/dev.sh` 的 `FAULT_INJECTION=1` 与 `/v1/dev/faults`。
-1. **后台重连节奏**（`2c9c2fe`）：登录后切后台约 1 分钟（ColorOS 最好），`adb logcat | grep -i signal` 断开→重连间隔走 1,2,3,3,3… 秒（约每分钟 10 次，不是原来的 20 次）。
-2. 期间切回前台：立刻重连一次（不等定时器），退避归零。通话中切后台（前台服务在跑）也该走后台节奏。ColorOS 秒杀间隔是否稳定、服务端 5 秒窗口是否接得住，都还没实机数据。
-3. 1v1 视频上一轮：控制条收起后点底部叫回控制条（不静音 / 挂断）；挂断后结束画面标题栏不淡掉；开局清晰度——服务端进房 1 秒内有 `上行层已接入 … rid=h`、整通无 `layer=h live=False`。
-   自动隐藏那刀已合入 main（`f7cfb05`），未验收。
-4. 跨端老批次（含本端「接通前按静音」）清单见 `../im-rtc-server/current_task.md`「跨端待验」。
+**真机验收（本轮完全没做，环境不允许连真机/起服务端）**：
+1. **M1**：group 通话下发 `chat_group_id`/`user_data`/`timeout_sec`，被叫 `onCallReceived` 与接通后 `onCallBegin` 真的带到；`call.join` 场景（frank 在另一台设备加入）`onCallBegin` 能拿到 caller/chatGroupId。
+2. **M2**：`IMInvitePicker` 真机走一遍——300ms 防抖是不是真的等到停手才发请求、滚到底是否稳定触发下一页、`slow` 搜索词 10 秒后是不是真的转成失败态、`fail` 搜索词的重试按钮能不能把请求发出去。
+3. **M8**：Demo 两台设备各登一个账号，A 发群通话，B 用 A 日志里的 call_id 在「加入进行中的群通话」里加入，确认不振铃直接接通；服务端配了邀请鉴权回调时验 1409 两句文案分得开（本仓这轮没法配服务端，等服务端那位实现完 `call.invite_check` 回调后再联调）。
+4. 老批次真机项（forceEnd 断网/秒挂、后台重连节奏、1v1 视频细节）见 `current_task.archive.md` 与 server 仓「跨端待验」，本轮没有动它们。
 
 **待办**：
+- **`IMCallKit.notifyOutgoing` 没有带 `IMCallOptions` 的重载**（`IMCallKit.kt` 体量已经到顶，这次先省了）：宿主自己调 `engine.call(options)` 又想用 Kit 画拨出界面时，`notifyOutgoing` 目前带不出 chatGroupId，界面上加人入口会看不到候选——这类宿主目前的替代路径是 `placeCall(peers, mediaType, options)` 直接经 Kit 拨出。
 - 静默失败点清单：`../im-rtc-server/docs/ops/silent-failure/android.md`（逐条状态只在那里）。`ensureCapture` 缓存死 source 那条排在 server「下一步」第 2 条。
 - `call-engine/build.gradle.kts` 找向量仍「逐级往上找」，会捡到上层旧克隆（web 已修同类问题）。
 - `CLIENT_PARITY.md` 真机验完再改，验之前停 🟡。

@@ -8,12 +8,12 @@ import android.os.Handler
 import android.os.Looper
 import com.imrtc.engine.IMCallEngine
 import com.imrtc.engine.IMCallEngineListener
+import com.imrtc.engine.IMCallOptions
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMVideoProfile
 import com.imrtc.engine.webrtc.IMWebRTCAdapter
 import com.imrtc.uikit.IMCallKit
 import com.imrtc.uikit.IMCallKitConfig
-import com.imrtc.uikit.IMInviteCandidate
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.concurrent.thread
@@ -297,8 +297,10 @@ internal object DemoSession {
             IMWebRTCAdapter(applicationContext, videoProfile, preferHardwareH264),
         )
         engine = instance
-        // 「添加成员」的候选名单是宿主给的：Demo 用与选人页同一份写死的联系人，自己不放进去。
-        kitConfig.inviteCandidates = ContactPicker.all().filter { it != user }.map { IMInviteCandidate(it) }
+        // 「添加成员」按通话向宿主要候选人（HOST_INTEGRATION_DESIGN §3.4）：真实的 Demo 联系人
+        // 排前面，后面凑几十个假成员分页；搜索词 fail/slow 演示失败/超时三态。见 DemoInviteProvider。
+        kitConfig.inviteMemberProvider = DemoInviteProvider(user)
+        kitConfig.allowsManualUidInput = true
         IMCallKit.start(applicationContext, instance, kitConfig)
         instance.login(newToken)
         connectionText = "连接中…"
@@ -364,7 +366,13 @@ internal object DemoSession {
         )
         // 经 Kit 拨出：它先过权限门（说明卡 → 系统框 → 被拒分支）再发 invite，
         // 拿不到麦克风就不去响别人的铃（交互稿 §01）。拨出侧的界面也由它拉起来。
-        IMCallKit.placeCall(peers, mediaType, isGroup)
+        // 群通话带上一个演示用的 chatGroupId——`DemoInviteProvider` 靠它决定「添加成员」列谁
+        // （宿主真实场景里这是 IM 侧的群 id，HOST_INTEGRATION_DESIGN §3.2）。
+        if (isGroup) {
+            IMCallKit.placeCall(peers, mediaType, IMCallOptions(isGroup = true, chatGroupId = DEMO_CHAT_GROUP_ID))
+        } else {
+            IMCallKit.placeCall(peers, mediaType, isGroup = false)
+        }
     }
 
     fun joinMeeting(roomId: String, roomToken: String) {
@@ -372,6 +380,20 @@ internal object DemoSession {
         // 会议房不产生 call，也就不会有 onCallEnd——记录页看不到它是对的。
         pending = null
         IMCallKit.joinMeeting(roomId, roomToken)
+    }
+
+    /**
+     * 主动加入一通进行中的群通话（M8：`call.join`）。
+     *
+     * **「怎么知道有通话在进行中」是宿主的事**——真实宿主拿 webhook `call.started` 或
+     * `GET /v1/calls?chat_group_id=&active=1` 自己摆「进行中」横幅；Demo 图简单，
+     * 直接给一个「按 call_id 加入」的输入框（`DialerScreen`），call_id 靠人从另一台设备的
+     * 日志里抄过来。
+     */
+    fun joinCall(callId: String) {
+        if (engine == null || callId.isEmpty()) return
+        pending = null
+        IMCallKit.joinCall(callId)
     }
 
     fun clearRecords() {
@@ -469,16 +491,27 @@ internal object DemoSession {
             calleeIds: List<String>,
             mediaType: String,
             isGroup: Boolean,
+            chatGroupId: String,
+            userData: String,
         ) {
             if (stale) return
             pending = Meta(caller, mediaType, isGroup, "callee")
         }
 
-        override fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {
+        override fun onCallBegin(
+            callId: String,
+            roomId: String,
+            mediaType: String,
+            role: String,
+            isGroup: Boolean,
+            caller: String,
+            chatGroupId: String,
+            userData: String,
+        ) {
             if (stale) return
             // 主叫这边 onCallReceived 不会来；正常路径上 placeCall 已经填好了 pending，
             // 但多端登录时这通电话可能是**在别的设备上发起、这台设备接进来的**（joinCall）。
-            if (pending == null) pending = Meta("", mediaType, false, role)
+            if (pending == null) pending = Meta(caller, mediaType, isGroup, role)
         }
 
         override fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {
@@ -507,5 +540,8 @@ internal object DemoSession {
     }
 
     private lateinit var applicationContext: Context
+
+    /** Demo 群呼演示用的固定群号，配合 [DemoInviteProvider]。真实宿主这里传自己 IM 的群 id。 */
+    private const val DEMO_CHAT_GROUP_ID = "demo-group"
 
 }

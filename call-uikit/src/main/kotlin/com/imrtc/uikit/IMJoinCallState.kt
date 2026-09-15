@@ -1,0 +1,59 @@
+package com.imrtc.uikit
+
+/**
+ * `IMCallKit.joinCall` 的状态与流程：**主动加入进行中的群通话**（`HOST_INTEGRATION_DESIGN.md` §3.4）。
+ *
+ * 拆成单独文件是不想让 `IMCallKit.kt` 再长（体量红线，CONVENTIONS §2）。
+ */
+internal object IMJoinCallState {
+    /** 是不是正在等这次加入的结果。[IMKitListener.onError] 靠它挑文案（加入 vs 加人）。 */
+    @Volatile
+    var joining: Boolean = false
+
+    /**
+     * 此刻能不能开始加入：**只有界面空闲、或停在上一通的结束画面时才行**。
+     *
+     * 已经在一场里时 Engine 只会本地回一个 2005、不会有 `onCallEnd`；而加入流程第一步就把界面切成
+     * 「接通中…」——放行的话，正在进行的那通电话的界面被盖掉、再也收不回来（2026-09-15 代码审查，三端同一个坑）。
+     */
+    fun allowedFrom(phase: IMCallViewState.Phase): Boolean =
+        phase == IMCallViewState.Phase.IDLE || phase == IMCallViewState.Phase.ENDED
+
+    /** [IMCallKit.joinCall] 的实现：守门 → 进「接通中…」→ 麦克风权限门 → 发 `call.join`。 */
+    fun start(callId: String) {
+        val instance = IMCallKit.engine ?: return
+        if (!allowedFrom(IMCallKit.state.phase)) {
+            IMCallKit.hint("正在通话中，无法加入")
+            return
+        }
+        joining = true
+        IMCallKit.update(IMCallViewReducer.joining(IMCallKit.state, callId))
+        // 与接听同一道权限门，但只要麦克风：加入之前不知道这通是不是视频，摄像头等用户在通话里再开。
+        IMCallKit.ensurePermissions(IMPermissionGate.devicesFor("audio", withCamera = false)) { outcome ->
+            // 权限门可能停在系统框上好几秒，这期间用户可能已经收起了这一屏。
+            val state = IMCallKit.state
+            val stillJoining = state.phase == IMCallViewState.Phase.CONNECTING && state.callId == callId
+            val blocked = outcome == IMPermissionGate.Outcome.MIC_BLOCKED || outcome == IMPermissionGate.Outcome.CANCELLED
+            when {
+                !stillJoining -> joining = false
+                blocked -> {
+                    joining = false
+                    IMCallKit.update(IMCallViewReducer.reset())
+                }
+                else -> instance.joinCall(callId)
+            }
+        }
+    }
+
+    /**
+     * Engine 本地就拒掉的加入（没登录 2007 / 状态不对 2005）**不会再有 `onCallEnd`**：
+     * 这里收回「接通中…」并清掉标记，否则界面卡死，之后在通话里加人被 1409 拒绝也会被错当成「加入失败」。
+     * 返回 true 表示这条错误已经按加入失败处理掉了。
+     */
+    fun onLocalRejection(code: Int): Boolean {
+        if (!joining || (code != 2005 && code != 2007)) return false
+        joining = false
+        IMCallKit.update(IMCallViewReducer.reset())
+        return true
+    }
+}

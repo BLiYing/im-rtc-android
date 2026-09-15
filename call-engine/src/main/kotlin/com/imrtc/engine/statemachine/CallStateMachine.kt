@@ -54,6 +54,18 @@ internal data class IMCallContext(
     /** 通话时长的起点，来自服务端。**客户端不自己算时长**（I8）。 */
     val connectedAtMs: Long = 0L,
     /**
+     * 这通电话的发起人 uid。主叫发起时不记（自己就是），被叫从 `call.incoming.caller` 记下。
+     *
+     * 只作为 `call.connected.caller` 缺席时的回落值（HOST_INTEGRATION_DESIGN §3.3）：
+     * `call.join` 进来的人没收过 `call.incoming`，这个字段天然是空的，此时只能靠
+     * `call.connected` 本身带出来的值——服务端已经保证了这一点。
+     */
+    val caller: String = "",
+    /** `call()` 选项 / `call.incoming` 里记下的群号，onCallBegin 回落用（同 [caller]）。 */
+    val chatGroupId: String = "",
+    /** 同 [chatGroupId]，记的是 `user_data`。 */
+    val userData: String = "",
+    /**
      * 拨出中、`call.invite.ok` 还没回来（手里没有 call_id）时按了取消。
      *
      * 那一刻发不出一条像样的 `call.cancel`——没有 call_id 只会换回 1401、宿主多收一条 error
@@ -140,12 +152,28 @@ internal object IMCallMachine {
         else -> invalidState(ctx)
     }
 
+    /**
+     * `chat_group_id` / `user_data` / `timeout_sec` 是**可选**的（`IMCallEngine.call` 的老重载不传）：
+     * 只在门面真的给了这些键时才发上线路，**不能无条件带上默认值**——`timeout_sec` 缺省是 0，
+     * 而协议默认是 30；无条件发 0 会把老重载的通话振铃时间从 30s 砍到服务端的最小钳值 5s。
+     */
     private fun startCall(ctx: IMCallContext, args: Map<String, IMJson>): IMMachineOutput<IMCallContext> {
         if (ctx.state != IMCallState.IDLE) return invalidState(ctx)
 
         val calleeIds = Wire.strList(args, "callee_ids")
         val mediaType = if (Wire.str(args, "media_type") == "video") "video" else "audio"
         val isGroup = Wire.flag(args, "is_group")
+        val chatGroupId = Wire.str(args, "chat_group_id")
+        val userData = Wire.str(args, "user_data")
+
+        val data = LinkedHashMap<String, IMJson>().apply {
+            put("callee_ids", arr(calleeIds))
+            put("media_type", s(mediaType))
+            put("is_group", b(isGroup))
+            if (args.containsKey("chat_group_id")) put("chat_group_id", s(chatGroupId))
+            if (args.containsKey("user_data")) put("user_data", s(userData))
+            if (args.containsKey("timeout_sec")) put("timeout_sec", n(Wire.num(args, "timeout_sec")))
+        }
 
         return out(
             ctx.copy(
@@ -153,17 +181,10 @@ internal object IMCallMachine {
                 role = IMCallRole.CALLER,
                 mediaType = mediaType,
                 isGroup = isGroup,
+                chatGroupId = chatGroupId,
+                userData = userData,
             ),
-            send = listOf(
-                IMOutgoingFrame(
-                    IMFrameType.CALL_INVITE,
-                    mapOf(
-                        "callee_ids" to arr(calleeIds),
-                        "media_type" to s(mediaType),
-                        "is_group" to b(isGroup),
-                    ),
-                ),
-            ),
+            send = listOf(IMOutgoingFrame(IMFrameType.CALL_INVITE, data)),
         )
     }
 

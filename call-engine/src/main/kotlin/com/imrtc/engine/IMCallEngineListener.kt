@@ -52,6 +52,11 @@ interface IMCallEngineListener {
      *
      * `calleeIds` 是**这通电话邀了谁**（不含主叫，含自己）。群通话的界面靠它把还没接的人
      * 先摆成占位格——否则主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
+     *
+     * `chatGroupId` 是宿主自己的群号（可能为空串——不是每通电话都属于某个群），
+     * `chatGroupId` 靠它决定「添加成员」该向宿主要哪个群的候选人（见 `call-uikit` 的
+     * `IMInviteMemberProvider`）。`userData` 是主叫在 [IMCallEngine.call] 选项里塞的
+     * opaque 数据，原样透传，Engine 不解析（`HOST_INTEGRATION_DESIGN.md` §3.2/§3.3）。
      */
     fun onCallReceived(
         callId: String,
@@ -59,10 +64,28 @@ interface IMCallEngineListener {
         calleeIds: List<String>,
         mediaType: String,
         isGroup: Boolean,
+        chatGroupId: String,
+        userData: String,
     ) {}
 
-    /** 通话接通，主被叫都抛。`role` 是 "caller" 或 "callee"。 */
-    fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {}
+    /**
+     * 通话接通，主被叫都抛。`role` 是 "caller" 或 "callee"。
+     *
+     * `caller`、`chatGroupId`、`userData` 取自 `call.connected`；`call.join` 进来的人
+     * 没收过 `onCallReceived`，只能从这里第一次拿到群号。老服务端没有这些字段时，
+     * 回落到本通 `onCallReceived` / [IMCallEngine.call] 选项里记下的值
+     * （`HOST_INTEGRATION_DESIGN.md` §3.3）。
+     */
+    fun onCallBegin(
+        callId: String,
+        roomId: String,
+        mediaType: String,
+        role: String,
+        isGroup: Boolean,
+        caller: String,
+        chatGroupId: String,
+        userData: String,
+    ) {}
 
     /**
      * **所有结束分支的唯一出口**。

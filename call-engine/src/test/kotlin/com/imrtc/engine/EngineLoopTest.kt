@@ -134,6 +134,117 @@ class EngineLoopTest {
     }
 
     @Test
+    fun `带选项拨群通话：chat_group_id、user_data、timeout_sec 原样上线路`() {
+        loginAndConnect()
+        engine.call(
+            listOf("bob", "carol"),
+            "audio",
+            IMCallOptions(isGroup = true, chatGroupId = "g-42", userData = "{\"n\":1}", timeoutSec = 45),
+        )
+        val invite = transport.lastOf(IMFrameType.CALL_INVITE) ?: error("没发 call.invite")
+        assertEquals(IMJson.Str("g-42"), invite.data["chat_group_id"])
+        assertEquals(IMJson.Str("{\"n\":1}"), invite.data["user_data"])
+        assertEquals(IMJson.Num(45), invite.data["timeout_sec"])
+        assertEquals(IMJson.Bool(true), invite.data["is_group"])
+
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("call-1"), "room_id" to IMJson.Str("r-1")),
+        )
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "room_token" to IMJson.Str("tk"),
+                "media_type" to IMJson.Str("audio"),
+                "is_group" to IMJson.Bool(true),
+                "connected_at_ms" to IMJson.Num(1_000),
+                "accepted_by" to IMJson.Str("bob"),
+                "caller" to IMJson.Str("alice"),
+                "chat_group_id" to IMJson.Str("g-42"),
+                "user_data" to IMJson.Str("{\"n\":1}"),
+            ),
+        )
+        assertEquals(listOf("alice", "g-42", "{\"n\":1}", true), listener.lastBeginGroupData)
+    }
+
+    @Test
+    fun `带选项拨的老服务端不回群号时，onCallBegin 回落到 call() 选项记下的值`() {
+        loginAndConnect()
+        engine.call(listOf("bob"), "audio", IMCallOptions(chatGroupId = "g-9", userData = "u-9"))
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("call-1"), "room_id" to IMJson.Str("r-1")),
+        )
+        // 老服务端：call.connected 压根没有 caller / chat_group_id / user_data 三个键。
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "room_token" to IMJson.Str("tk"),
+                "media_type" to IMJson.Str("audio"),
+                "connected_at_ms" to IMJson.Num(1_000),
+                "accepted_by" to IMJson.Str("bob"),
+            ),
+        )
+        assertEquals(listOf("", "g-9", "u-9", false), listener.lastBeginGroupData)
+    }
+
+    @Test
+    fun `被叫的 onCallReceived 带群号，接通后回显同一个值`() {
+        loginAndConnect()
+        transport.deliver(
+            IMFrameType.CALL_INCOMING,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-9"),
+                "room_id" to IMJson.Str("r-9"),
+                "caller" to IMJson.Str("alice"),
+                "media_type" to IMJson.Str("audio"),
+                "is_group" to IMJson.Bool(true),
+                "chat_group_id" to IMJson.Str("g-5"),
+                "user_data" to IMJson.Str("u-5"),
+            ),
+        )
+        assertEquals("g-5" to "u-5", listener.lastIncomingGroupData)
+
+        engine.accept()
+        transport.replyOk(IMFrameType.CALL_ACCEPT, emptyMap())
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-9"),
+                "room_id" to IMJson.Str("r-9"),
+                "room_token" to IMJson.Str("tk"),
+                "media_type" to IMJson.Str("audio"),
+                "connected_at_ms" to IMJson.Num(1_000),
+                "accepted_by" to IMJson.Str("bob"),
+            ),
+        )
+        // call.connected 没带这三个字段（老服务端）：回落到 call.incoming 记下的值。
+        assertEquals(listOf("alice", "g-5", "u-5", true), listener.lastBeginGroupData)
+    }
+
+    @Test
+    fun `call() 选项本地校验不过：onError(1004) + onCallEnd(error)，不上线路`() {
+        loginAndConnect()
+        val before = transport.countOf(IMFrameType.CALL_INVITE)
+        engine.call(listOf("bob"), "audio", IMCallOptions(chatGroupId = "has space"))
+        assertEquals("不该发出 call.invite", before, transport.countOf(IMFrameType.CALL_INVITE))
+        assertTrue("本地校验不过要抛 1004", listener.errors.any { it == 1004 })
+        assertEquals(listOf("error:0"), listener.callEnds)
+
+        // 校验失败之后状态机仍是 idle，能正常再拨一次。
+        engine.call(listOf("bob"), "audio")
+        assertEquals(before + 1, transport.countOf(IMFrameType.CALL_INVITE))
+    }
+
+    @Test
     fun `呼叫被服务端拒了要退回 idle，而不是卡在 inviting`() {
         loginAndConnect()
         engine.call(listOf("self"), "audio")
@@ -562,6 +673,10 @@ class EngineLoopTest {
         val roomJoins = mutableListOf<String>()
         val roomLeaves = mutableListOf<String>()
         val errors = mutableListOf<Int>()
+        /** 最近一次 onCallReceived 带的 (chat_group_id, user_data)。 */
+        var lastIncomingGroupData: Pair<String, String>? = null
+        /** 最近一次 onCallBegin 带的 (caller, chat_group_id, user_data, is_group)。 */
+        var lastBeginGroupData: List<Any>? = null
 
         override fun onConnected(sessionId: String, resumed: Boolean) { connected += sessionId }
         override fun onCallReceived(
@@ -570,11 +685,24 @@ class EngineLoopTest {
             calleeIds: List<String>,
             mediaType: String,
             isGroup: Boolean,
+            chatGroupId: String,
+            userData: String,
         ) {
             incoming += "$callId from $caller"
+            lastIncomingGroupData = chatGroupId to userData
         }
-        override fun onCallBegin(callId: String, roomId: String, mediaType: String, role: String) {
+        override fun onCallBegin(
+            callId: String,
+            roomId: String,
+            mediaType: String,
+            role: String,
+            isGroup: Boolean,
+            caller: String,
+            chatGroupId: String,
+            userData: String,
+        ) {
             callBegins += callId
+            lastBeginGroupData = listOf(caller, chatGroupId, userData, isGroup)
         }
         override fun onCallEnd(callId: String, reason: String, durationSec: Long, endedBy: String) {
             callEnds += "$reason:$durationSec"

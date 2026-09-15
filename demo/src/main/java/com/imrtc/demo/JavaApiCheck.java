@@ -1,12 +1,14 @@
 package com.imrtc.demo;
 
 import com.imrtc.uikit.IMProfileResolver;
+import android.app.Activity;
 import android.graphics.drawable.Drawable;
 import android.content.Context;
 
 import com.imrtc.engine.IMCallEngine;
 import com.imrtc.engine.IMCallEngineListener;
 import com.imrtc.engine.IMCallEngineVersion;
+import com.imrtc.engine.IMCallOptions;
 import com.imrtc.engine.IMKickedOutReason;
 import com.imrtc.engine.IMNetworkQuality;
 import com.imrtc.engine.IMSpeaker;
@@ -15,7 +17,12 @@ import com.imrtc.engine.webrtc.IMWebRTCAdapter;
 import com.imrtc.uikit.IMCallKit;
 import com.imrtc.uikit.IMCallKitConfig;
 import com.imrtc.uikit.IMInviteCandidate;
+import com.imrtc.uikit.IMInviteCandidatesCallback;
+import com.imrtc.uikit.IMInviteContext;
+import com.imrtc.uikit.IMInviteMemberProvider;
+import com.imrtc.uikit.IMPickedCallback;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -46,7 +53,33 @@ final class JavaApiCheck {
         IMCallEngineListener listener = new IMCallEngineListener() {
             @Override
             public void onCallEnd(String callId, String reason, long durationSec, String endedBy) {
-                // 只覆盖关心的那个：其余 23 个回调有默认实现（-Xjvm-default=all）。
+                // 只覆盖关心的那几个：其余回调有默认实现（-Xjvm-default=all）。
+            }
+
+            @Override
+            public void onCallBegin(
+                    String callId,
+                    String roomId,
+                    String mediaType,
+                    String role,
+                    boolean isGroup,
+                    String caller,
+                    String chatGroupId,
+                    String userData) {
+                // 群号 / opaque 数据在这里第一次（或再一次）拿到——`call.join` 进来的人没收过
+                // onCallReceived，只能靠这里。
+            }
+
+            @Override
+            public void onCallReceived(
+                    String callId,
+                    String caller,
+                    List<String> calleeIds,
+                    String mediaType,
+                    boolean isGroup,
+                    String chatGroupId,
+                    String userData) {
+                // 被叫侧：chatGroupId 决定「添加成员」该向宿主要哪个群的候选人。
             }
 
             @Override
@@ -111,6 +144,9 @@ final class JavaApiCheck {
         // 通话
         engine.call(Arrays.asList("bob"), "audio");
         engine.call(Arrays.asList("bob", "carol"), "video", true);
+        // 带选项（群号 / opaque 数据 / 振铃超时）：Java 侧用具名参数的构造器。
+        IMCallOptions options = new IMCallOptions(true, "chat-group-1", "{\"k\":1}", 45);
+        engine.call(Arrays.asList("bob", "carol"), "video", options);
         engine.accept();
         engine.reject();
         engine.cancel();
@@ -141,6 +177,33 @@ final class JavaApiCheck {
         // 「添加成员」的候选名单：一参数与两参数两种构造 Java 都要能写。
         kitConfig.setInviteCandidates(Arrays.asList(new IMInviteCandidate("bob"), new IMInviteCandidate("carol", "卡罗尔")));
         String candidateName = kitConfig.getInviteCandidates().get(0).getName();
+        // 扩字段：avatarUrl / subtitle / selectable / unselectableReason，Java 也要能全填。
+        IMInviteCandidate fullCandidate = new IMInviteCandidate(
+                "dave", "戴夫", "https://example.com/a.png", "产品组", false, "已被禁言");
+        boolean selectable = fullCandidate.getSelectable();
+
+        // 按通话向宿主要候选人的钩子：Java 只需要实现 loadCandidates，其余两个方法有默认实现。
+        kitConfig.setInviteMemberProvider(new IMInviteMemberProvider() {
+            @Override
+            public void loadCandidates(
+                    IMInviteContext ctx, String query, String cursor, IMInviteCandidatesCallback callback) {
+                List<IMInviteCandidate> page = new ArrayList<>();
+                page.add(new IMInviteCandidate("erin"));
+                callback.onResult(page, null);
+            }
+
+            @Override
+            public boolean presentInvitePicker(Activity activity, IMInviteContext ctx, IMPickedCallback onPicked) {
+                // 返回 true 表示接管；这里演示不接管，走 Kit 自带选人页。
+                return false;
+            }
+
+            @Override
+            public boolean canInvite(IMInviteContext ctx) {
+                return true;
+            }
+        });
+        kitConfig.setAllowsManualUidInput(true);
 
         IMCallKit.start(context, engine);
         IMCallKit.start(context, engine, kitConfig);
@@ -164,7 +227,10 @@ final class JavaApiCheck {
         // 经 Kit 拨出 / 进会议：先过权限门再发帧。两参数与三参数两种形态。
         IMCallKit.placeCall(Arrays.asList("bob"), "audio");
         IMCallKit.placeCall(Arrays.asList("bob", "carol"), "video", true);
+        IMCallKit.placeCall(Arrays.asList("bob", "carol"), "video", options);
         IMCallKit.joinMeeting("room-1", "room-token");
+        // 主动加入一通进行中的群通话（M8：宿主拿 webhook / 群横幅自己判断「有通话在进行中」）。
+        IMCallKit.joinCall("call-1");
         IMCallKit.stop();
     }
 }
