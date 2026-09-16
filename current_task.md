@@ -59,7 +59,7 @@
 
 ## 下一步
 
-00. **公网发布**（用户逐项确认后才推）：推 tag `1.0.0` → 触发 JitPack 构建看 build.log → `./gradlew -PimrtcSdk=public :demo:installDebug` 真机跑一通。构建失败要在 JitPack 页面删掉那条失败记录再重试（失败会被缓存）。
+00. ~~公网发布~~：2026-09-17 tag `1.0.0` 已推，JitPack 首次构建约 2 分钟成功（compileSdk 36 没出问题），`-PimrtcSdk=public :demo:assembleDebug` 依赖全从 jitpack.io、编过。下次发版：改 `IMRTC_VERSION` 与 `IMCallEngineVersion.VERSION` → 推 tag → 请求一次 pom 触发构建；失败要在 JitPack 页面删记录再重试（失败会被缓存）。
 1. 用户真机自测（服务端先重启）：发起人挂断后被邀请回来能响铃、接听，来电横幅不出现自己的格子，
    且横幅 / 来电页显示的是**把你加进来的那个人**（群通话中途加邀时不是发起人）。自测过了跑 `./scripts/test.sh` 再提交。
 
