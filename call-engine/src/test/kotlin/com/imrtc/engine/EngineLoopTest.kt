@@ -696,6 +696,82 @@ class EngineLoopTest {
         assertTrue(listener.errors.isEmpty())
     }
 
+    /*
+      静默失败审计 §A：`onRequestFailed` 原先只认 call.invite / call.accept / call.join /
+      room.join / room.leave 这张表，`room.publish` 被拒之后不回滚——那条轨道永远停在
+      publishing，publish.ok 不来，pub offer 永不产出，对方全程听不见看不见、零提示。
+      2026-09-16 拍板：**通话里被拒直接结束本端通话**（reason=error）；没有通话的会议房
+      只摘掉那一条。参考实现：Web `frameLoop.ts` 的 `rollback` 表。
+    */
+
+    @Test
+    fun `通话中 room publish 被拒：原错误码照报，发 hangup，onCallEnd 只抛一次且 reason 为 error`() {
+        loginAndConnect()
+        engine.call(listOf("bob"), "video")
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("call-1"), "room_id" to IMJson.Str("r-1")),
+        )
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "room_token" to IMJson.Str("tk-room"),
+                "media_type" to IMJson.Str("video"),
+                "connected_at_ms" to IMJson.Num(1_000),
+                "accepted_by" to IMJson.Str("bob"),
+            ),
+        )
+        transport.replyOk(
+            IMFrameType.ROOM_JOIN,
+            mapOf("room_id" to IMJson.Str("r-1"), "participant_id" to IMJson.Str("p-1")),
+        )
+        assertEquals("进房自动发布 audio+video", 2, transport.countOf(IMFrameType.ROOM_PUBLISH))
+
+        transport.replyError(IMFrameType.ROOM_PUBLISH, 1302, "publish_denied", "同一路重复发布")
+
+        assertTrue("原错误码要照报，不是被吞掉", listener.errors.contains(1302))
+        val hangup = transport.lastOf(IMFrameType.CALL_HANGUP) ?: error("发布被拒没有发 call.hangup")
+        assertEquals("对端还在等，要告诉服务端我走了", "call-1", (hangup.data["call_id"] as IMJson.Str).value)
+        assertEquals("不能留在一通对方听不见的通话里，只抛一次", listOf("error:0"), listener.callEnds)
+        assertTrue("通话收了要停媒体", media.stopped)
+
+        // 服务端随后那条 call.ended 不能再抛一次。
+        transport.deliver(
+            IMFrameType.CALL_ENDED,
+            "",
+            mapOf("call_id" to IMJson.Str("call-1"), "reason" to IMJson.Str("hangup"), "duration_sec" to IMJson.Num(3)),
+        )
+        assertEquals(listOf("error:0"), listener.callEnds)
+
+        // 退回 idle 之后应该能再拨一次。
+        engine.call(listOf("carol"), "audio")
+        assertEquals(2, transport.countOf(IMFrameType.CALL_INVITE))
+    }
+
+    @Test
+    fun `会议房 room publish 被拒：人还在房里，不抛 callEnd 也不抛 roomLeft`() {
+        loginAndConnect()
+        joinConferenceRoom()
+        assertEquals(listOf("audio", "video"), media.published)
+        assertEquals(2, transport.countOf(IMFrameType.ROOM_PUBLISH))
+
+        transport.replyError(IMFrameType.ROOM_PUBLISH, 1302, "publish_denied", "同一路重复发布")
+
+        assertTrue("原错误码要照报", listener.errors.contains(1302))
+        assertEquals("不能收场", emptyList<String>(), listener.callEnds)
+        assertEquals("不能离房", emptyList<String>(), listener.roomLeaves)
+        assertFalse("媒体不该被停", media.stopped)
+
+        // 还在 joined：leaveRoom 能正常发出 room.leave（不是被 R1 本地拒成 2005）。
+        val errorsBefore = listener.errors.size
+        engine.leaveRoom()
+        assertTrue("还在房里，leave 应该正常发出", transport.lastOf(IMFrameType.ROOM_LEAVE) != null)
+        assertEquals("不该多出本地拒绝的 2005", errorsBefore, listener.errors.size)
+    }
+
     // ── 记录用的假实现 ────────────────────────────────────────────────
 
     /** internal 而不是 private：`MuteBeforePublishTest` 也要一个只收不看的 listener，

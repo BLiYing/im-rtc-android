@@ -111,7 +111,7 @@ internal object IMRoomMachine {
         when (input) {
             is IMMachineInput.Act -> reduceAct(ctx, input.op, input.args)
             is IMMachineInput.Recv -> reduceRoomRecv(ctx, input.type, input.data)
-            is IMMachineInput.Internal -> reduceInternal(ctx, input.name)
+            is IMMachineInput.Internal -> reduceInternal(ctx, input.name, input.args)
         }
 
     internal fun out(
@@ -123,7 +123,11 @@ internal object IMRoomMachine {
     /** 把房间相关的记账全部清空，state 由调用方决定。 */
     internal fun cleared(state: IMRoomState) = IMRoomContext(state = state)
 
-    private fun reduceInternal(ctx: IMRoomContext, name: String): IMMachineOutput<IMRoomContext> =
+    private fun reduceInternal(
+        ctx: IMRoomContext,
+        name: String,
+        args: Map<String, IMJson>,
+    ): IMMachineOutput<IMRoomContext> =
         when (name) {
             // 断线**不等于**离房：协议给了 30 秒恢复窗口，房内其他人这时还看得见我们。
             "disconnected" ->
@@ -173,8 +177,40 @@ internal object IMRoomMachine {
                     )
                 }
 
+            /*
+             `room.publish` 被拒（或没送到）：把那条 `publishing` 摘掉（静默失败审计 §A）。
+
+             不摘的话它永远停在 `publishing`：`publish.ok` 不会来，pub offer 永远产不出，
+             对方全程听不见看不见。**通话里走不到这里**——`IMCallEngine.onRequestFailed`
+             撞见「通话不在 idle」会直接走 forceEnd 把整通收场（reason=error），这里只管
+             没有通话的会议房。错误本身在 `onRequestFailed` 里已经抛过一次，这里不重复抛。
+            */
+            "publish_failed" -> dropFailedPublish(ctx, Wire.str(args, "cid"))
+
+            /*
+             `room.subscribe` 被拒：把那条 `subscribing` 连同层记账一起摘掉。
+
+             不摘的话不变量 R3 会把之后每一次重订都当成「已经订过、只是换层」，
+             只发 `room.update_layer`，**再也发不出 `room.subscribe`**。最常见的来路是
+             1301（`track_not_found`）：订阅与对方的 `track_unpublished` 赛跑输了，
+             此时摘掉正是实情。不收场、不额外抛回调——通话本身没事。
+            */
+            "subscribe_failed" -> dropFailedSubscribe(ctx, Wire.str(args, "track_id"))
+
             else -> out(ctx)
         }
+
+    /** 只摘 `publishing` 那一条；已经 `published` / `unpublishing` 的不碰。 */
+    private fun dropFailedPublish(ctx: IMRoomContext, cid: String): IMMachineOutput<IMRoomContext> {
+        if (ctx.publish[cid] != IMPublishState.PUBLISHING) return out(ctx)
+        return out(ctx.copy(publish = ctx.publish - cid))
+    }
+
+    /** 只摘 `subscribing` 那一条；已经 `subscribed` / `unsubscribing` 的不碰。 */
+    private fun dropFailedSubscribe(ctx: IMRoomContext, trackId: String): IMMachineOutput<IMRoomContext> {
+        if (ctx.subscribe[trackId] != IMSubscribeState.SUBSCRIBING) return out(ctx)
+        return out(ctx.copy(subscribe = ctx.subscribe - trackId, layers = ctx.layers - trackId))
+    }
 
     /**
      * 重连成功后恢复房间：重放缓存的用户意图。

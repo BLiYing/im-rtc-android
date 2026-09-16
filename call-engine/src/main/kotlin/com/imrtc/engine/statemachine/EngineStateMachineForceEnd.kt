@@ -26,11 +26,20 @@ import com.imrtc.engine.protocol.IMFrameType
  * 时长本地估算（服务端那条带真值的 `call.ended` 随后会因为 idle 被丢掉，没有更准的值可用）：
  * 从**本端**进来那一刻算（[IMEngineContext.callStartedAtMs]），没记到才退回整通接通的 `connected_at_ms`——
  * 后者对群通话里中途被拉进来的人偏大（2026-09-15 10:05 iOS frank：约 6 秒写成 124 秒）。
+ *
+ * `reasonOverride` 不给就按此刻状态挑（[forceEndFrames] 的红键判据）；给了就用它——
+ * `room.publish` 被拒时门面传 [IMCallEndReason.ERROR]，那不是用户按红键挂的，写成
+ * hangup/cancel/reject 是撒谎（静默失败审计 §A）。
  */
-internal fun IMEngineMachine.forceEnd(ctx: IMEngineContext, nowMs: Long): IMMachineOutput<IMEngineContext> {
+internal fun IMEngineMachine.forceEnd(
+    ctx: IMEngineContext,
+    nowMs: Long,
+    reasonOverride: IMCallEndReason? = null,
+): IMMachineOutput<IMEngineContext> {
     if (ctx.call.state != IMCallState.IDLE) {
         val call = ctx.call
-        val (frames, reason) = forceEndFrames(call)
+        val (frames, byState) = forceEndFrames(call)
+        val reason = reasonOverride ?: byState
         val startedAtMs = if (ctx.callStartedAtMs > 0) ctx.callStartedAtMs else call.connectedAtMs
         return IMMachineOutput(
             IMEngineContext(room = IMRoomMachine.cleared(IMRoomState.IDLE), call = IMCallContext()),

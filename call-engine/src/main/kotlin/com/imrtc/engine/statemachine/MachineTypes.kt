@@ -36,8 +36,13 @@ internal sealed interface IMMachineInput {
     /** 收到一条下行帧。 */
     data class Recv(val type: String, val data: Map<String, IMJson>) : IMMachineInput
 
-    /** engine 内部事件，既不来自信令也不来自宿主（如媒体就绪）。 */
-    data class Internal(val name: String) : IMMachineInput
+    /**
+     * engine 内部事件，既不来自信令也不来自宿主（如媒体就绪）。
+     *
+     * `args` 只有「哪一条被拒了」这类需要带标识的才有：`publish_failed` 的 `cid`、
+     * `subscribe_failed` 的 `track_id`（静默失败审计 §A）。
+     */
+    data class Internal(val name: String, val args: Map<String, IMJson> = emptyMap()) : IMMachineInput
 }
 
 /** 一次状态转移的产物。 */

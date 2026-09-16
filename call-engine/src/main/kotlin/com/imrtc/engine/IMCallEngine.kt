@@ -449,7 +449,7 @@ class IMCallEngine private constructor(
             if (ok) {
                 input(IMMachineInput.Recv(frame.type + ".ok", data))
             } else {
-                onRequestFailed(frame.type, code, message)
+                onRequestFailed(frame, code, message)
             }
         }
     }
@@ -467,26 +467,11 @@ class IMCallEngine private constructor(
     }
 
     /**
-     * 请求被服务端拒了。
-     *
-     * **必须让状态机退回 idle**，否则会卡在中间态：呼叫失败却停在 inviting，界面上
-     * 「正在呼叫…」转个不停，之后每次挂断都发向一个不存在的 call（1401），永远退不出去。
-     * 进房失败同理——不退的话这台 Engine 之后再也进不了任何房间。
+     * 请求被服务端拒了。判断表在 [IMRequestFailures]——拆成单独文件是体量红线
+     * （CONVENTIONS §2），这里只负责接线：状态快照、`input()`、`forceEnd`。
      */
-    private fun onRequestFailed(type: String, code: IMErrorCode?, message: String) {
-        IMRTCLog.w("engine", "$type 被拒：${code?.wireName} $message")
-        dispatcher.error((code ?: IMErrorCode.INTERNAL).code, message)
-        when (type) {
-            IMFrameType.CALL_INVITE, IMFrameType.CALL_ACCEPT, IMFrameType.CALL_JOIN ->
-                input(IMMachineInput.Internal("call_failed"))
-            IMFrameType.ROOM_JOIN -> input(IMMachineInput.Internal("join_failed"))
-            // **离房被拒也要退回 idle**：服务端在「会话已不在房间里」时回 1203，
-            // 而那正说明我们已经不在房里了。不接这一条的话房间永久停在 leaving——
-            // 媒体停不掉（摄像头与前台服务一直开着），之后 join 也被本地拒，
-            // 这台 Engine 除非 logout 否则再也进不了房。
-            IMFrameType.ROOM_LEAVE -> input(IMMachineInput.Internal("leave_failed"))
-        }
-    }
+    private fun onRequestFailed(frame: IMOutgoingFrame, code: IMErrorCode?, message: String) =
+        IMRequestFailures.handle(ctx, frame, code, message, dispatcher, ::input) { reason -> forceEnder.run(reason) }
 
     private fun requireMedia(): IMMediaAdapter? {
         if (media == null) {

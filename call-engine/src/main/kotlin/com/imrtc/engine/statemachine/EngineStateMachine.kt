@@ -42,6 +42,9 @@ internal object IMEngineMachine {
         "restart_pub_ice",
     )
 
+    /** 帧循环把「房间帧没送到」翻译成的内部事件，全归房间机——不显式路由会落到通话机被静默丢掉。 */
+    private val ROOM_FAILURES = setOf("join_failed", "leave_failed", "publish_failed", "subscribe_failed")
+
     /** engine 状态的唯一入口。 */
     fun reduce(
         ctx: IMEngineContext,
@@ -78,7 +81,7 @@ internal object IMEngineMachine {
             } else {
                 routeFrame(ctx, input.type, input.data)
             }
-        is IMMachineInput.Internal -> handleInternal(ctx, input.name, nowMs)
+        is IMMachineInput.Internal -> handleInternal(ctx, input, nowMs)
         is IMMachineInput.Act -> routeAct(ctx, input.op, input.args)
     }
 
@@ -152,9 +155,10 @@ internal object IMEngineMachine {
 
     private fun handleInternal(
         ctx: IMEngineContext,
-        name: String,
+        input: IMMachineInput.Internal,
         nowMs: Long,
     ): IMMachineOutput<IMEngineContext> {
+        val name = input.name
         if (name == "ws_closed_4403") {
             // 被踢：什么都不留。重连没有意义——那等于跟另一台设备打架。
             //
@@ -166,8 +170,8 @@ internal object IMEngineMachine {
                 emit = listOf(IMEmittedEvent("onKickedOut"), IMEmittedEvent("onDisconnected")),
             )
         }
-        if (name == "join_failed" || name == "leave_failed") {
-            val room = IMRoomMachine.reduce(ctx.room, IMMachineInput.Internal(name))
+        if (name in ROOM_FAILURES) {
+            val room = IMRoomMachine.reduce(ctx.room, input)
             return IMMachineOutput(ctx.copy(room = room.state), send = room.send, emit = room.emit)
         }
         if (name == "call_failed") {
