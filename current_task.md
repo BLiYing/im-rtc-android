@@ -7,13 +7,16 @@
 
 ## 当前焦点
 
-**2026-09-17：SDK 1.0.0 已公网发布（JitPack，MIT），手上没有在做的改动**（main 已推、工作区干净）。
-- 坐标 `com.github.BLiYing.im-rtc-android:<模块名>:1.0.0`；JitPack 首次构建约 2 分钟成功（compileSdk 36 没出问题）。Demo `-PimrtcSdk=source|local|public` 三档，公网档 09-17 编过。
-- 最近提交：§A 发布被拒收场 `73a30f2`（真机 ✅ 09-17）· 来电铃声 + 回铃音 `f091ab9`（真机 ✅，缺蓝牙与机型记录）· `inviter` + 重新邀请发起人 `9e2e476` · 选人页 `1ea2013` · API 命名对齐 `cf8c18f` · 宿主对接 `7e02e50`。
-- **体量**：`IMCallEngine.kt` 599、`IMSignalConnection.kt` 600 已到硬顶，下次改先想好拆哪块。
+**2026-09-17 夜：逐项补了五件（本地已提交、未推送），真机都还没验——手机整夜被另一个会话的 IM App 占着。** SDK 1.0.0 已公网发布（JitPack，MIT），上面这些进下一个版本。
+- `c2c20db` 摄像头打不开 / 中途被抢走回报 2002，下次打开重起采集（`IMCameraEvents`，静默失败审计 android #1）；Kit 收到 2001/2002 同步关摄像头、2002 提示「摄像头不可用」。
+- `4a5c983` 收 `call.ringing` 抛 `onUserRinging`，群通话里别人加的人也摆占位格（协议批次，server `dd60ca0`）。
+- `a4c9fb0` 通话音频跟随系统：扬声器关着时耳机 / 蓝牙优先、监听插拔（`IMAudioRoutePolicy`）。
+- `38941d3` 会议房超过一屏「还有 N 人未显示」+ 屏外报 none（M1）；`61d09c6` 打开网络质量图标，「对方网络不佳」只在 1v1。
+- **体量**：`IMCallKit.kt` 599、`IMCallView.kt` 599、`IMSignalConnection.kt` 600 已到硬顶，下次改先拆。
 
 ## 下一步
 
+0. **真机补验今晚五件**（手机空出来就做）：拨视频时开系统相机抢摄像头 → 日志「摄像头不可用」+ 提示、关了再开能出画面；三人群通话里看别人加的人占位格；插拔耳机 / 连蓝牙声音跟着走；1v1 小窗长按拖动吸角（代码早就在，CLIENT_PARITY 仍 ⬜）。
 1. **用户自测**（服务端先重启）：发起人挂断后被邀请回来能响铃接听；来电横幅不出现自己的格子；横幅 / 来电页显示的是**把你加进来的那个人**。
 2. **真机窗口清单**：
    - M1：群通话 `chat_group_id` / `user_data` / `timeout_sec` 在 `onCallReceived` / `onCallBegin` 真带到；`call.join` 加入方也拿得到。
@@ -21,8 +24,6 @@
    - M8：两台设备按 call_id 加入不振铃直接接通；配了邀请鉴权回调时 1409 两句文案分得开。
    - 铃声：蓝牙耳机场景 + **补记机型与 Android 版本**（O+ / O- 焦点 API 走的哪条）。
    - 老批次（forceEnd 断网 / 秒挂、后台重连节奏、1v1 视频细节）：archive「2026-09-15：forceEnd …真机验收清单」。
-3. **修 `ensureCapture` 缓存死 source**（server 下一步 3，独立一刀、真机验）。
-4. **下个版本（协议批次，server 下一步 0）**：`call.ringing` 发给在场全员，UIKit 消费它建占位格。
 5. **本端预览对齐 cid**（`startLocalPreview(): cid`）：预览用固定 `PREVIEW_TRACK_ID`、发布时才生成 cid，对齐要动 `IMMediaAdapter` 与权限门时序，等真机窗口单独立项（原因全文在 archive）。
 6. 待办：`IMCallKit.notifyOutgoing` 没有带 `IMCallOptions` 的重载（替代路径 `placeCall(calleeIds, mediaType, options)`）；`call-engine/build.gradle.kts` 找向量仍逐级往上找、会捡到旧克隆；静默失败清单 `../im-rtc-server/docs/ops/silent-failure/android.md`。
 
