@@ -331,7 +331,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
     /** 橙条：文案怎么定见 [IMBannerRules]，这里只管把它写上去、以及给「网络不佳」那条排定时器。 */
     private fun renderBanner(state: IMCallViewState) {
-        val poor = state.members.values.any { IMCallViewState.isNetworkPoor(it.networkLevel) }
+        val poor = !state.isGroup && state.members.values.any { IMCallViewState.isNetworkPoor(it.networkLevel) } // 只做 1v1
         if (!poor) poorShown = false
         val next = IMBannerRules.next(state.connection, poor, poorShown, bannerText) ?: return
         if (next == IMBannerRules.POOR) {
