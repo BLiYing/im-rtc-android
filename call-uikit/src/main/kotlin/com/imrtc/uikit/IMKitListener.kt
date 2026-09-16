@@ -160,6 +160,12 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         host.onUserLeave(uid)
     }
 
+    /** 通话里任何人加的人开始响铃都会来（协议 call.ringing 发在场全员），不只是本端加的。 */
+    override fun onUserRinging(uid: String) {
+        IMCallKit.update(IMCallViewReducer.userRinging(state, uid))
+        host.onUserRinging(uid)
+    }
+
     override fun onUserAccept(uid: String) {
         IMCallKit.update(IMCallViewReducer.userEnter(state, uid))
         host.onUserAccept(uid)

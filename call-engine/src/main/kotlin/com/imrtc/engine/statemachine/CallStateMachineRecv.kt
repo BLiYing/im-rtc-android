@@ -78,6 +78,12 @@ internal fun reduceCallRecv(
 
         IMFrameType.CALL_CONNECTED -> handleConnected(ctx, data)
 
+        // 服务端发给通话里的所有人（协议 §4.2，2026-09-17 起），界面据此给正在响铃的人摆占位格。
+        IMFrameType.CALL_RINGING -> IMCallMachine.out(
+            ctx,
+            emit = listOf(IMEmittedEvent("onUserRinging", mapOf("uid" to s(Wire.str(data, "uid"))))),
+        )
+
         IMFrameType.CALL_ACCEPTED -> IMCallMachine.out(
             ctx,
             emit = listOf(IMEmittedEvent("onUserAccept", mapOf("uid" to s(Wire.str(data, "uid"))))),

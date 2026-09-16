@@ -160,6 +160,25 @@ class KitRulesTest {
         assertEquals(setOf("bob"), state.members.keys)
     }
 
+    /** 协议 2026-09-17 起 call.ringing 发给通话里的所有人：别人加的人也要摆占位格（与 Web / iOS 同一组）。 */
+    @Test
+    fun `别人加的人开始响铃：摆占位格、不重复、已接听的不动、重新邀请清掉终局`() {
+        var state = IMCallViewReducer.userRinging(groupCall("callee"), "dave")
+        state = IMCallViewReducer.userRinging(state, "dave")
+        assertEquals(setOf("bob", "dave"), state.members.keys)
+        assertFalse("占位格标成响铃中", state.members.getValue("dave").accepted)
+        assertTrue("已接听的人不动", IMCallViewReducer.userRinging(state, "bob").members.getValue("bob").accepted)
+        state = IMCallViewReducer.userSettled(state, "dave", IMCallViewState.Settled.REJECTED)
+        state = IMCallViewReducer.userRinging(state, "dave")
+        assertEquals(IMCallViewState.Settled.NONE, state.members.getValue("dave").settled)
+    }
+
+    @Test
+    fun `1v1 里的 userRinging 不摆占位格`() {
+        val oneToOne = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "video", false)
+        assertEquals(oneToOne, IMCallViewReducer.userRinging(oneToOne, "dave"))
+    }
+
     /**
      * **接通后的 1v1 视频恒为 VIDEO 版式**：两边都关摄像头时也不退回语音页，
      * 否则小窗整个消失，用户以为断了，而且再也点不到互换。

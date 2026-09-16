@@ -91,6 +91,7 @@ internal class IMEventDispatcher(
 
             "onUserEnter" -> onMain { listener.onUserEnter(args.str("uid")) }
             "onUserLeave" -> onMain { listener.onUserLeave(args.str("uid")) }
+            "onUserRinging" -> onMain { listener.onUserRinging(args.str("uid")) }
             "onUserAccept" -> onMain { listener.onUserAccept(args.str("uid")) }
             "onUserReject" -> onMain { listener.onUserReject(args.str("uid")) }
             "onUserNoResponse" -> onMain { listener.onUserNoResponse(args.str("uid")) }

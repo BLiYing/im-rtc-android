@@ -580,7 +580,8 @@ object IMCallKit {
         val settled = current.members.values
             .filter { it.settled != IMCallViewState.Settled.NONE }
             .map { it.uid }
-        settleTimers.scheduleAll(settled) { uid -> update(IMCallViewReducer.userRemove(state, uid)) }
+        // 到点先看终局还在不在：停的这 2 秒里被重新邀请（userRinging 清掉了终局）的不收。
+        settleTimers.scheduleAll(settled) { uid -> if (state.members[uid]?.settled != IMCallViewState.Settled.NONE) update(IMCallViewReducer.userRemove(state, uid)) }
     }
 
     private fun clearCallViews() {

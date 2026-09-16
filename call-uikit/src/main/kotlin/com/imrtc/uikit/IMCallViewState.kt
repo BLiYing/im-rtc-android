@@ -465,6 +465,19 @@ internal object IMCallViewReducer {
     }
 
     /**
+     * 某人的设备开始响铃：**不是本端加的人也摆占位格**。协议 2026-09-17 起 `call.ringing` 发给通话里的所有人——
+     * A 加了 B，C 看不见 B 在响的话，只会凭空收到「B 没接听」，还会再邀请一次。
+     * 只在群通话里摆（1v1 的对方本来就是大画面）；已接听的不动；标了终局又被重新邀请的清掉终局。
+     */
+    fun userRinging(state: IMCallViewState, uid: String): IMCallViewState {
+        val live = state.phase in setOf(IMCallViewState.Phase.OUTGOING, IMCallViewState.Phase.CONNECTING, IMCallViewState.Phase.CONNECTED)
+        if (!state.isGroup || !live) return state
+        val member = state.members[uid] ?: return invited(state, listOf(uid))
+        if (member.accepted || member.settled == IMCallViewState.Settled.NONE) return state
+        return state.copy(members = state.members + (uid to member.copy(settled = IMCallViewState.Settled.NONE)))
+    }
+
+    /**
      * 邀请中的人给出了终局（拒接 / 无应答）：**先在格子上写明终局，停一会再收**（交互稿 §05 G3）。
      * 直接收掉的话，从主叫的角度看拒接就跟没发生过一样。已接听的人收到终局（理论上不会）直接忽略。
      */
