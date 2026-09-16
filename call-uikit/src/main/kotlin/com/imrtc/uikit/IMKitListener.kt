@@ -68,7 +68,13 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
             // Engine 本地就拒掉的加入（状态不对 / 没登录）没有 onCallEnd，要自己收回「接通中…」。
             2005, 2007 -> if (IMJoinCallState.onLocalRejection(code)) IMCallKit.hint("无法加入该通话")
             // 媒体层报「没权限 / 没设备」：摄像头拿不到就降级为语音继续。
-            2001, 2002 -> if (state.mediaType == "video") IMCallKit.update(IMCallViewReducer.cameraBlocked(state))
+            2001, 2002 -> if (state.mediaType == "video") {
+                // 可能是采集起来之后异步报的（摄像头被别的 App 抢走 / 打不开）：Engine 那头也关掉，
+                // 否则它仍以为摄像头开着，对端等着一路永远不来的画面。
+                if (state.cameraOn) IMCallKit.engine?.run { closeCamera(); stopLocalPreview() }
+                IMCallKit.update(IMCallViewReducer.cameraBlocked(state))
+                if (code == 2002) IMCallKit.hint("摄像头不可用")
+            }
             // `joinCall` 的其余拒绝分支（1401/1402/1405/1408，协议 §4.1）：统一提示，随后的
             // onCallEnd(error) 会把界面收起，不必在这里另外处理状态。
             else -> if (IMJoinCallState.joining) IMCallKit.hint("无法加入该通话")

@@ -134,6 +134,9 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     private var capturer: CameraVideoCapturer? = null
     private var captureHelper: SurfaceTextureHelper? = null
 
+    /** 当前这支 capturer 的事件（打不开 / 被抢走要有回音），见 [IMCameraEvents]。 */
+    private var cameraEvents: IMCameraEvents? = null
+
     /** 通话中关了摄像头：capturer 停着、轨道留着（见 [setMuted]）。 */
     @Volatile
     private var capturePaused = false
@@ -281,6 +284,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         } else {
             // 暂停期间权限可能在系统设置里被收回：照开只会异步失败、画面全黑、日志空白。
             if (!cameraPermitted()) { events?.onMediaError(2001, "camera permission denied"); return }
+            cameraEvents?.consumeFailure() // 暂停时本来就停着，这里照常重起，失败标记作废
             active.startCapture(videoProfile.width, videoProfile.height, videoProfile.frameRate)
         }
         capturePaused = paused
@@ -441,7 +445,11 @@ class IMWebRTCAdapter @JvmOverloads constructor(
      * 本端预览与推流共用它——摄像头只开一次。拿不到摄像头时抛 `2002 device_not_found` 并返回 null。
      */
     private fun ensureCapture(): VideoSource? = synchronized(captureLock) {
-        videoSource?.let { return it }
+        videoSource?.let { source ->
+            // 缓存的 source 背后那支 capturer 可能早就异步失败了：重起一遍，别把死 source 交出去。
+            if (cameraEvents?.consumeFailure() == true && !capturePaused) restartCapture()
+            return source
+        }
         /*
          **没有摄像头权限就别去开。** `startCapture` 会异步失败，而 source 已经缓存下来——
          之后授权了再开也只拿到这个死 source：按钮亮着、一帧画面都没有、日志里什么都没有。
@@ -464,13 +472,20 @@ class IMWebRTCAdapter @JvmOverloads constructor(
                 events?.onMediaError(2002, "device not found")
                 return null
             }
-        val videoCapturer = enumerator.createCapturer(name, null) ?: return null
+        val cameraEvents = IMCameraEvents { reason -> events?.onMediaError(2002, "camera unavailable: $reason") }
+        val videoCapturer = enumerator.createCapturer(name, cameraEvents) ?: run {
+            // 摄像头被别的 App 占着 / HAL 打不开最常见的就是这一支，原先连日志都没有。
+            IMRTCLog.e("media", "摄像头 $name 打不开")
+            events?.onMediaError(2002, "camera open failed")
+            return null
+        }
         val helper = SurfaceTextureHelper.create("capture", peers.eglBase.eglBaseContext)
         val source = peers.factory().createVideoSource(false)
         videoCapturer.initialize(helper, appContext, source.capturerObserver)
         videoCapturer.startCapture(videoProfile.width, videoProfile.height, videoProfile.frameRate)
 
         capturer = videoCapturer as? CameraVideoCapturer
+        this.cameraEvents = cameraEvents
         captureHelper = helper
         videoSource = source
         IMCallForegroundService.start(appContext, withCamera = true)
@@ -483,6 +498,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         videoTrack = null
         // 先把预览的 sink 摘干净再 dispose，反了会崩在 native 层。
         onMain { renderers[LOCAL]?.let { r -> runCatching { preview?.removeSink(r) } } }
+        cameraEvents?.retire()
+        cameraEvents = null
         runCatching { capturer?.stopCapture() }
         capturer?.dispose()
         captureHelper?.dispose()
@@ -491,6 +508,15 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         captureHelper = null
         videoSource = null
         capturePaused = false
+    }
+
+    /** 同一支 capturer 原地重起：source、轨道、transceiver 都不动，不用重新协商。调用方持 [captureLock]。 */
+    private fun restartCapture() {
+        val active = capturer ?: return
+        if (!cameraPermitted()) { events?.onMediaError(2001, "camera permission denied"); return }
+        IMRTCLog.i("media", "上次采集失败过，重起摄像头")
+        runCatching { active.stopCapture() }
+        active.startCapture(videoProfile.width, videoProfile.height, videoProfile.frameRate)
     }
 
     private fun cameraPermitted() =
