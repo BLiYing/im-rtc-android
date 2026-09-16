@@ -80,6 +80,12 @@ internal object IMGrid {
         else -> "l"
     }
 
+    /**
+     * 「还有 N 人未显示」胶囊的文案（MEETING_ROOM_DESIGN §4.5，会议房 M1 止血）；没人被截掉时是空串。
+     * 会议房原先超过 9 人时多出来的人**无声消失**（2026-09-09 真机）。与 Web `hiddenCountText`、iOS 同一句。
+     */
+    fun hiddenCountText(hidden: Int): String = if (hidden > 0) "还有 $hidden 人未显示" else ""
+
     /** 通话时长格式化：一小时以内 `mm:ss`，超过就 `h:mm:ss`。 */
     fun formatDuration(seconds: Long): String {
         if (seconds <= 0) return "00:00"

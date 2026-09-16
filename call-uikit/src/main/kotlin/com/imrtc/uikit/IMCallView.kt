@@ -63,6 +63,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val stage = FrameLayout(context)
     private val audioStage = IMAudioStage(context)
     private val grid = IMCallGridView(context)
+    private val hiddenPill = IMHiddenCountPill(context)
     private val pip = IMPipView(context)
     private val endedLabel = TextView(context)
     private val controlsScrim = View(context)
@@ -134,6 +135,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         endedLabel.gravity = Gravity.CENTER
         stage.addView(endedLabel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply { setMargins(dp(24), 0, dp(24), 0) })
         stage.addView(pip, LayoutParams(dp(96), dp(128)))
+        stage.addView(hiddenPill, IMHiddenCountPill.layoutParams(hiddenPill))
         // 单击画面空白处：显示 / 隐藏控制条（视频版式才生效）。
         stage.setOnClickListener { if (layout == IMCallViewState.Layout.VIDEO) chrome.set(!chrome.visible) }
 
@@ -308,6 +310,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         endedLabel.text = state.statusText
         audioStage.visibility = if (layout == IMCallViewState.Layout.AUDIO && !isEnded) VISIBLE else GONE
         grid.visibility = if (layout == IMCallViewState.Layout.GRID && !isEnded) VISIBLE else GONE
+        if (grid.visibility == GONE) hiddenPill.show(0)
         controlsScrim.visibility = if (layout == IMCallViewState.Layout.VIDEO && !isEnded) VISIBLE else GONE
         renderBanner(state)
         renderControls(state, isEnded)
@@ -504,6 +507,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
          而它还会占掉一个格位——三个人的通话看起来像四个人，行列也跟着多排一格。
         */
         layoutGrid(ordered)
+        // 没格子的人视频报 none，并说一句「还有 N 人未显示」（会议房 M1 止血，MEETING_ROOM_DESIGN §4.3 / §4.5）。
+        state.hiddenMembers.forEach { actions?.reportLayer(it.uid, "none") }
+        hiddenPill.show(state.hiddenMembers.size)
     }
 
     /**

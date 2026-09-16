@@ -193,6 +193,9 @@ internal data class IMCallViewState(
      */
     val tiles: List<Member> get() = members.values.take(IMGrid.MAX_REMOTE_TILES)
 
+    /** 没有格子的远端成员（会议房超过一屏时）：声音照收，视频报 none，胶囊说一句「还有 N 人未显示」。 */
+    val hiddenMembers: List<Member> get() = members.values.drop(IMGrid.MAX_REMOTE_TILES)
+
     val statusText: String
         get() = when {
             hint.isNotEmpty() -> hint

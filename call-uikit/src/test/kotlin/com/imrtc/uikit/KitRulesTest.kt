@@ -173,6 +173,17 @@ class KitRulesTest {
         assertEquals(IMCallViewState.Settled.NONE, state.members.getValue("dave").settled)
     }
 
+    /** 会议房 M1：超过一屏的人不再无声消失，三端同一句文案（Web `hiddenCountText`）。 */
+    @Test
+    fun `会议房超过一屏：截掉的人单列出来，胶囊文案三端同一句`() {
+        var state = IMCallViewReducer.meeting(IMCallViewState(), "r-9")
+        (1..10).forEach { state = IMCallViewReducer.userEnter(state, "u$it") }
+        assertEquals(IMGrid.MAX_REMOTE_TILES, state.tiles.size)
+        assertEquals(listOf("u9", "u10"), state.hiddenMembers.map { it.uid })
+        assertEquals("还有 2 人未显示", IMGrid.hiddenCountText(state.hiddenMembers.size))
+        assertEquals("", IMGrid.hiddenCountText(0))
+    }
+
     @Test
     fun `1v1 里的 userRinging 不摆占位格`() {
         val oneToOne = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "video", false)
