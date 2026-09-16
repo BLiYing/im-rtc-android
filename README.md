@@ -4,10 +4,26 @@
 
 | 产物 | 是什么 |
 |---|---|
-| **`com.imrtc:call-engine`** | **无 UI** 核心：信令 / 状态机 / 设备，能力通过**回调**暴露；不依赖 libwebrtc |
-| **`com.imrtc:call-engine-webrtc`** | 媒体实现（`org.webrtc`），以 `MediaAdapter` 接口接进 Engine |
-| **`com.imrtc:call-uikit`** | **整套通话 UI**：来电页与横幅、1v1 四态、群通话九宫格、悬浮窗 |
+| **`call-engine`** | **无 UI** 核心：信令 / 状态机 / 设备，能力通过**回调**暴露；不依赖 libwebrtc |
+| **`call-engine-webrtc`** | 媒体实现（`org.webrtc`），以 `MediaAdapter` 接口接进 Engine |
+| **`call-uikit`** | **整套通话 UI**：来电页与横幅、1v1 四态、群通话九宫格、悬浮窗 |
 | **Demo App** | 登录 / 拨号 / 通话记录 / 设置，两种集成方式各跑一遍 |
+
+## 引入（JitPack）
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositories { google(); mavenCentral(); maven("https://jitpack.io") }
+}
+// app/build.gradle.kts
+dependencies {
+    implementation("com.github.BLiYing.im-rtc-android:call-uikit:1.0.0")          // 整套 UI（已带上 call-engine）
+    implementation("com.github.BLiYing.im-rtc-android:call-engine-webrtc:1.0.0")  // 媒体实现，要真通话就得引
+}
+```
+
+只要 Engine、界面自己画：把 `call-uikit` 换成 `call-engine`。本仓 Demo 用 `-PimrtcSdk=local|public` 可以改走发布出去的包（见 `settings.gradle.kts`）。
 
 ## 两种集成方式
 
@@ -133,3 +149,7 @@ pub 与 sub 的 ICE 都到 CONNECTED，通话记录里有来自 iOS Demo 的来�
 127.0.0.1，LAN 候选一直都在；`adb reverse` 也只影响信令，不影响 ICE 自己谈出来的媒体路径。）
 开工闸门是「iOS 媒体真机验收通过 + 设计文档 §7.5 回调表冻结」——
 在此之前本仓的价值是**接收契约**：从 Kotlin / Java 视角评审协议，发现问题回 server 仓提。
+
+## 许可证
+
+[MIT](LICENSE)。

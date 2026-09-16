@@ -1,0 +1,6 @@
+# JitPack 构建配置（公网发布，见根 build.gradle.kts 的「发布」注释）。
+# 默认 JDK 编不动 AGP 8，要显式 17。只装三个 SDK 模块，Demo 与单测都不在这里跑。
+jdk:
+  - openjdk17
+install:
+  - ./gradlew --console=plain publishToMavenLocal

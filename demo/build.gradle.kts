@@ -25,10 +25,24 @@ android {
     }
 }
 
+// 三档见 settings.gradle.kts 顶部注释。
+val imrtcSdk: String = providers.gradleProperty("imrtcSdk")
+    .orElse(providers.environmentVariable("IMRTC_SDK"))
+    .getOrElse("source")
+
 dependencies {
-    implementation(project(":call-engine"))
-    implementation(project(":call-engine-webrtc"))
-    implementation(project(":call-uikit"))
+    if (imrtcSdk == "source") {
+        implementation(project(":call-engine"))
+        implementation(project(":call-engine-webrtc"))
+        implementation(project(":call-uikit"))
+    } else {
+        // 与 /guide 给第三方的写法逐字一致。**故意不写 call-engine**：它要靠 uikit 的 api 依赖传递进来，
+        // 这一条在 POM 里写错（runtime 作用域）时，这里就编不过。
+        val group = providers.gradleProperty("IMRTC_GROUP").get()
+        val version = providers.gradleProperty("IMRTC_VERSION").get()
+        implementation("$group:call-uikit:$version")
+        implementation("$group:call-engine-webrtc:$version")
+    }
 
     // 日志回传那条路要真的验：手写的 JSON 序列化与攒批队列都是纯逻辑，
     // 跑在 JVM 上不需要设备（CONVENTIONS §测试）。

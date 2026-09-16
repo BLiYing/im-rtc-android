@@ -7,11 +7,12 @@
 
 ## 当前焦点
 
-**2026-09-16（第三轮，已提交：§A `73a30f2` · Maven 那笔紧随其后（标题「构建: 三个 SDK 模块配 maven-publish」），§A 未上真端）：静默失败审计 §A + Maven 发布配置。** `./scripts/test.sh` 6 步全绿。
-- §A：`onRequestFailed` 的判断表拆到新文件 `IMRequestFailures.kt`（`IMCallEngine.kt` 599→584 行）。`room.publish` 被拒且在通话里 → `forceEnder.run(IMCallEndReason.ERROR)`；否则 `publish_failed`；`room.subscribe` → `subscribe_failed`。用例 `EngineLoopTest` +2、新文件 `RoomFailureRollbackTest` 4 条，负向验证 3 条变红。
-- **Maven 发布**：根 `build.gradle.kts` 给三个 SDK 模块配 `maven-publish`（release 变体 + sources jar），坐标 `com.imrtc:<模块名>:<版本>`，版本只写 `gradle.properties` 的 `IMRTC_VERSION`；`SdkVersionTest` 核对它与 `IMCallEngineVersion.VERSION` 相等；Demo 的 `versionName` 改读同一属性。私有仓给 `imrtcMavenUrl`（+ `imrtcMavenUser` / `imrtcMavenPassword`）后 `./gradlew publish`。
-- `call-uikit` 对 `call-engine` 从 `implementation` 改 `api`：`IMCallKit.start(context, engine)` 签名里有 Engine 类型，否则 POM 里是 runtime 作用域、只引 uikit 的宿主编译不过。
-- 验过：`./gradlew publishToMavenLocal` 出三组 aar / pom / module / sources；临时消费者工程只写 `call-uikit` + `call-engine-webrtc` 两行坐标，`assembleDebug` 通过（libjingle so 随传递依赖进包）。
+**2026-09-16（第四轮，已提交（标题「构建: SDK 公网发布准备」，未推送），代码审查零问题）：公网发布走 JitPack + Demo 三档开关。**
+- 坐标改 `com.github.BLiYing.im-rtc-android:<模块名>:1.0.0`（`gradle.properties` 的 `IMRTC_GROUP`）：JitPack 多模块仓只按这个 group 提供文件，留 `com.imrtc` 的话 uikit POM 里对 engine 的传递依赖会拉不到。新增 `jitpack.yml`（JDK 17，只跑 `publishToMavenLocal`）；根 `build.gradle.kts` 在 `JITPACK=true` 时版本取它给的 `VERSION`（按提交号试水用），否则 `IMRTC_VERSION`。
+- Demo 开关 `-PimrtcSdk=source|local|public`（或环境变量 `IMRTC_SDK`）：后两档 `settings.gradle.kts` **只 include `:demo`**，仓库分别加 `mavenLocal()` / `jitpack.io`（`content` 只放行自家 group）；Demo 只写 `call-uikit` + `call-engine-webrtc` 两行坐标（与 README / `/guide` 一致，engine 靠传递）。构建开头打印「Demo 用的 SDK：…」。
+- 验过：`publishToMavenLocal` 出新 group 的三组包，uikit POM 依赖 `com.github.BLiYing.im-rtc-android:call-engine:1.0.0`；`-PimrtcSdk=local :demo:assembleDebug` 通过，依赖树全是坐标、`projects` 只剩 `:demo`；`public` 档解析到 jitpack 且 FAILED（还没推 tag，预期内）；非法取值直接报错；`VERSION` 环境变量不带 `JITPACK=true` 时不生效。`./scripts/test.sh` 6 步全绿。
+- **JitPack 上的真实构建没验**：要推 tag（或先推提交用提交号试）后看 `https://jitpack.io/com/github/BLiYing/im-rtc-android/<版本>/build.log`；compileSdk 36 在 JitPack 镜像上能不能自动装平台是最大的未知。
+- 上一轮（§A `73a30f2`、Maven 配置 `7cecd91`）已提交，§A 未上真端。
 
 **2026-09-16（续）：三件事。①② 已提交 `9e2e476`，③ 已提交 `f091ab9` 且真机验收通过。**
 
@@ -58,6 +59,7 @@
 
 ## 下一步
 
+00. **公网发布**（用户逐项确认后才推）：推 tag `1.0.0` → 触发 JitPack 构建看 build.log → `./gradlew -PimrtcSdk=public :demo:installDebug` 真机跑一通。构建失败要在 JitPack 页面删掉那条失败记录再重试（失败会被缓存）。
 0. **§A 发布被拒收场：用故障注入上真端走一遍**（先 `FAULT_INJECTION=1 ./scripts/dev.sh`）：通话接通后 `curl -X POST $B/v1/dev/faults -d '{"action":"reject","uid":"<本端uid>","frame_type":"room.publish","code":1302}'`，再开一次麦 / 摄像头 → 本端收场、结束原因 error、对端收到挂断。过了把 CLIENT_PARITY 那一行 🟡 转 ✅。代码已提交，真机验收后续再做（2026-09-16 用户定）。
 1. 用户真机自测（服务端先重启）：发起人挂断后被邀请回来能响铃、接听，来电横幅不出现自己的格子，
    且横幅 / 来电页显示的是**把你加进来的那个人**（群通话中途加邀时不是发起人）。自测过了跑 `./scripts/test.sh` 再提交。
@@ -124,7 +126,7 @@
 - 前台服务：通话中必须起（`IMCallForegroundService`）；类型不能降级；类型不能超出已授权权限（Android 14+ 否则在 `onStartCommand` 里循环崩），`start()` 先判 `IMForegroundTypes.granted`。
 - 悬浮球默认走应用内浮层、不申请 `SYSTEM_ALERT_WINDOW`（CONVENTIONS §8）。
 - `onDisconnected(code, willReconnect)`（2026-09-15 由 `(code, reason)` 改名改类型）：`willReconnect` 由 `IMSignalConnection` 当场裁决，`IMKitListener` 直接用 `!willReconnect` 判「已放弃」，不用再猜 4403。
-- SDK 版本号只改 `call-engine/.../IMCallEngineVersion.kt`（五端统一 1.0.0，握手 `android/1.0.0`）；`demo/build.gradle.kts` 的 `versionName` 是写死的，发版要手动同号。
+- SDK 版本号两处：`gradle.properties` 的 `IMRTC_VERSION` 与 `call-engine/.../IMCallEngineVersion.kt`（五端统一 1.0.0，握手 `android/1.0.0`），不等时 `SdkVersionTest` 红；Demo `versionName` 读 `IMRTC_VERSION`。tag 名与它同号、不带 v。
 
 ## 关联工程 / 常用命令
 
@@ -137,4 +139,6 @@
   ./scripts/install-hooks.sh       # 新 clone 跑一次
   ./scripts/test.sh                # 唯一测试入口：门禁 ×3 + 向量可达 + assembleDebug + 纯 JVM 单测
   BUILD_ONLY=1 ./scripts/test.sh   # 只编译
+  ./gradlew publishToMavenLocal && ./gradlew -PimrtcSdk=local :demo:installDebug   # Demo 改用本地包
+  ./gradlew -PimrtcSdk=public :demo:installDebug                                    # Demo 改用 JitPack 上的包
   ```
