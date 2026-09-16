@@ -60,7 +60,6 @@
 ## 下一步
 
 00. **公网发布**（用户逐项确认后才推）：推 tag `1.0.0` → 触发 JitPack 构建看 build.log → `./gradlew -PimrtcSdk=public :demo:installDebug` 真机跑一通。构建失败要在 JitPack 页面删掉那条失败记录再重试（失败会被缓存）。
-0. **§A 发布被拒收场：用故障注入上真端走一遍**（先 `FAULT_INJECTION=1 ./scripts/dev.sh`）：通话接通后 `curl -X POST $B/v1/dev/faults -d '{"action":"reject","uid":"<本端uid>","frame_type":"room.publish","code":1302}'`，再开一次麦 / 摄像头 → 本端收场、结束原因 error、对端收到挂断。过了把 CLIENT_PARITY 那一行 🟡 转 ✅。代码已提交，真机验收后续再做（2026-09-16 用户定）。
 1. 用户真机自测（服务端先重启）：发起人挂断后被邀请回来能响铃、接听，来电横幅不出现自己的格子，
    且横幅 / 来电页显示的是**把你加进来的那个人**（群通话中途加邀时不是发起人）。自测过了跑 `./scripts/test.sh` 再提交。
 
