@@ -33,6 +33,18 @@ class SdkVersionTest {
         assertTrue(IMCallEngineVersion.SDK.toByteArray(Charsets.UTF_8).size <= 64)
     }
 
+    /**
+     * 握手里报的版本与 Maven 坐标里的版本必须是同一个数（根 `build.gradle.kts` 的发布配置）。
+     * 系统属性由 `call-engine/build.gradle.kts` 从 `gradle.properties` 的 `IMRTC_VERSION` 注入；
+     * 只改了其中一处就在这里红，而不是等宿主报「日志里的版本对不上」。
+     */
+    @Test
+    fun `版本常量与发布版本号一致`() {
+        val published = System.getProperty("imrtc.version").orEmpty()
+        assertTrue("没注入 imrtc.version：请经 Gradle 跑测试", published.isNotEmpty())
+        assertEquals(published, IMCallEngineVersion.VERSION)
+    }
+
     @Test
     fun `默认配置的 hello 帧带上版本号`() {
         val sdk = helloSdk(IMCallEngine.Config(url = "ws://test/rtc", deviceId = "d-1"))

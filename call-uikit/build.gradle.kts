@@ -17,6 +17,8 @@ android {
 }
 
 dependencies {
-    implementation(project(":call-engine"))
+    // api 而不是 implementation：`IMCallKit.start(context, engine: IMCallEngine)` 的签名里就有 Engine 的类型。
+    // 发成 Maven 包后 implementation 会写成 POM 的 runtime 作用域，只引 call-uikit 的宿主编译不过。
+    api(project(":call-engine"))
     testImplementation(libs.junit)
 }

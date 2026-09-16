@@ -27,6 +27,8 @@ android {
     testOptions {
         unitTests.all {
             it.systemProperty("rtc.conformance.dir", System.getenv("RTC_CONFORMANCE_DIR") ?: "")
+            // 发布版本号，供 SdkVersionTest 核对 IMCallEngineVersion.VERSION（见根 build.gradle.kts）。
+            it.systemProperty("imrtc.version", providers.gradleProperty("IMRTC_VERSION").get())
             it.testLogging { events("failed", "skipped") }
         }
     }

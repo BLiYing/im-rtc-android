@@ -7,6 +7,12 @@
 
 ## 当前焦点
 
+**2026-09-16（第三轮，已提交：§A `73a30f2` · Maven 那笔紧随其后（标题「构建: 三个 SDK 模块配 maven-publish」），§A 未上真端）：静默失败审计 §A + Maven 发布配置。** `./scripts/test.sh` 6 步全绿。
+- §A：`onRequestFailed` 的判断表拆到新文件 `IMRequestFailures.kt`（`IMCallEngine.kt` 599→584 行）。`room.publish` 被拒且在通话里 → `forceEnder.run(IMCallEndReason.ERROR)`；否则 `publish_failed`；`room.subscribe` → `subscribe_failed`。用例 `EngineLoopTest` +2、新文件 `RoomFailureRollbackTest` 4 条，负向验证 3 条变红。
+- **Maven 发布**：根 `build.gradle.kts` 给三个 SDK 模块配 `maven-publish`（release 变体 + sources jar），坐标 `com.imrtc:<模块名>:<版本>`，版本只写 `gradle.properties` 的 `IMRTC_VERSION`；`SdkVersionTest` 核对它与 `IMCallEngineVersion.VERSION` 相等；Demo 的 `versionName` 改读同一属性。私有仓给 `imrtcMavenUrl`（+ `imrtcMavenUser` / `imrtcMavenPassword`）后 `./gradlew publish`。
+- `call-uikit` 对 `call-engine` 从 `implementation` 改 `api`：`IMCallKit.start(context, engine)` 签名里有 Engine 类型，否则 POM 里是 runtime 作用域、只引 uikit 的宿主编译不过。
+- 验过：`./gradlew publishToMavenLocal` 出三组 aar / pom / module / sources；临时消费者工程只写 `call-uikit` + `call-engine-webrtc` 两行坐标，`assembleDebug` 通过（libjingle so 随传递依赖进包）。
+
 **2026-09-16（续）：三件事。①② 已提交 `9e2e476`，③ 已提交 `f091ab9` 且真机验收通过。**
 
 **① 协议新字段 `call.incoming.inviter`（「谁邀请的你」，四端同步改，本仓这一份）。**
@@ -52,6 +58,7 @@
 
 ## 下一步
 
+0. **§A 发布被拒收场：用故障注入上真端走一遍**（先 `FAULT_INJECTION=1 ./scripts/dev.sh`）：通话接通后 `curl -X POST $B/v1/dev/faults -d '{"action":"reject","uid":"<本端uid>","frame_type":"room.publish","code":1302}'`，再开一次麦 / 摄像头 → 本端收场、结束原因 error、对端收到挂断。过了把 CLIENT_PARITY 那一行 🟡 转 ✅。代码已提交，真机验收后续再做（2026-09-16 用户定）。
 1. 用户真机自测（服务端先重启）：发起人挂断后被邀请回来能响铃、接听，来电横幅不出现自己的格子，
    且横幅 / 来电页显示的是**把你加进来的那个人**（群通话中途加邀时不是发起人）。自测过了跑 `./scripts/test.sh` 再提交。
 

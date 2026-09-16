@@ -12,8 +12,8 @@ android {
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = 1
-        // 与 SDK 同号（call-engine 的 IMCallEngineVersion.VERSION），五端统一 1.0.0。
-        versionName = "1.0.0"
+        // 与 SDK 同号：读发布版本号（gradle.properties 的 IMRTC_VERSION），不再手动同步。
+        versionName = providers.gradleProperty("IMRTC_VERSION").get()
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
