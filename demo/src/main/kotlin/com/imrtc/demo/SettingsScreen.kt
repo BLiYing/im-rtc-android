@@ -47,6 +47,11 @@ internal class SettingsScreen(private val activity: Activity) : DemoScreen {
                                 DemoSession.floatingWindow,
                             ) { on -> DemoSession.floatingWindow = on },
                             switchRow(
+                                "静音来电铃声",
+                                "打开后来电铃声与回铃音都不响，通话本身不受影响",
+                                DemoSession.ringtoneMuted,
+                            ) { on -> DemoSession.ringtoneMuted = on },
+                            switchRow(
                                 "硬件 H.264 编码",
                                 "关掉退回 VP8 软编。换了要重登才生效",
                                 DemoSession.preferHardwareH264,

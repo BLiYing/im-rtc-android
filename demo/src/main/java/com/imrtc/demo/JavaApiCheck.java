@@ -4,6 +4,7 @@ import com.imrtc.uikit.IMProfileResolver;
 import android.app.Activity;
 import android.graphics.drawable.Drawable;
 import android.content.Context;
+import android.net.Uri;
 
 import com.imrtc.engine.IMCallEndReason;
 import com.imrtc.engine.IMCallEngine;
@@ -211,6 +212,12 @@ final class JavaApiCheck {
             }
         });
         kitConfig.setAllowsManualUidInput(true);
+        // 来电铃声 / 回铃音 / 静音（默认 null = 内置素材）。Java 侧要能设也要能读回来。
+        kitConfig.setIncomingRingtone(Uri.parse("android.resource://host.app/raw/custom_ringtone"));
+        kitConfig.setRingbackTone(null);
+        kitConfig.setRingtoneMuted(false);
+        Uri incomingRingtone = kitConfig.getIncomingRingtone();
+        boolean ringtoneMuted = kitConfig.getRingtoneMuted();
 
         IMCallKit.start(context, engine);
         IMCallKit.start(context, engine, kitConfig);

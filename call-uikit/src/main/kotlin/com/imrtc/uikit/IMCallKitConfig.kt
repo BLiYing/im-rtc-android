@@ -1,5 +1,7 @@
 package com.imrtc.uikit
 
+import android.net.Uri
+
 /**
  * 「添加成员」的候选人（`HOST_INTEGRATION_DESIGN.md` §3.4）。**名单是宿主给的**——
  * Kit 不内置联系人系统（CONVENTIONS §12）。与 iOS 的 `IMInviteCandidate` 同名同义。
@@ -74,4 +76,26 @@ class IMCallKitConfig {
      * 宿主异步解析回来后调 [IMCallKit.reloadProfiles] 重画。
      */
     var profileResolver: IMProfileResolver? = null
+
+    /**
+     * 来电铃声。**默认 `null` = 用内置 `R.raw.im_ringtone`**（4s，可无缝循环）。
+     *
+     * 该不该响由 [IMRingRules.ringtoneFor] 判（来电阶段 / 未静音 / 非会议），这里只管换素材。
+     * **每次起铃才读一次这个值**（[IMCallKit.update] 里现读 `IMCallKit.config.incomingRingtone`），
+     * 宿主运行时改了不用重启 Kit，下一次来电就生效——与 [bannerFirst] / [floatingWindow] 同一条读法。
+     */
+    var incomingRingtone: Uri? = null
+
+    /**
+     * 回铃音（拨出中听到的那段）。**默认 `null` = 用内置 `R.raw.im_ringback`**
+     * （5s 一周期，450Hz 响 1 秒断 4 秒，国标回铃音）。读法同 [incomingRingtone]。
+     */
+    var ringbackTone: Uri? = null
+
+    /**
+     * 整体静音开关。**`true` 时来电铃声与回铃音都不响**，通话本身不受影响。
+     *
+     * 与 [IMRingRules.ringtoneFor] 的判据对齐：它优先于阶段判断——静音时哪怕正在来电也不响。
+     */
+    var ringtoneMuted: Boolean = false
 }

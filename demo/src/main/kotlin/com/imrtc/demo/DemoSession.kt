@@ -163,6 +163,15 @@ internal object DemoSession {
             notifyChanged()
         }
 
+    /** 静音来电铃声 / 回铃音（[IMCallKitConfig.ringtoneMuted]）。真机验收铃声该不该响用这个开关最快。 */
+    var ringtoneMuted: Boolean
+        get() = kitConfig.ringtoneMuted
+        set(value) {
+            kitConfig.ringtoneMuted = value
+            prefs.edit().putBoolean(KEY_RING_MUTED, value).apply()
+            notifyChanged()
+        }
+
     /** 群呼名单。**登录后要把自己剔掉**——带着自己发出去服务端会以 1004 拒掉整通电话。 */
     var groupPick: List<String> = listOf("alice", "carol")
         private set
@@ -187,6 +196,7 @@ internal object DemoSession {
         verboseLog = prefs.getBoolean(KEY_VERBOSE, true)
         bannerFirst = prefs.getBoolean(KEY_BANNER, true)
         floatingWindow = prefs.getBoolean(KEY_FLOATING, true)
+        ringtoneMuted = prefs.getBoolean(KEY_RING_MUTED, false)
         DemoLogSink.install()
     }
 

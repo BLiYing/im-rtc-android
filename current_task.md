@@ -7,7 +7,7 @@
 
 ## 当前焦点
 
-**2026-09-16（续）：两件事，都未提交。**
+**2026-09-16（续）：三件事。①② 已提交 `9e2e476`，③ 未提交。**
 
 **① 协议新字段 `call.incoming.inviter`（「谁邀请的你」，四端同步改，本仓这一份）。**
 - 线路字段 `inviter`：首次邀请 = 主叫；`call.invite_more` 加进来的人 = 发那条加人请求的人。
@@ -25,8 +25,24 @@
 `IMInvitePicker` 去掉「暂时无法邀请」分支（连带 `Row.Item.inCall`）；`IMCallViewReducer.incoming` 加 `selfUid`，
 发起人就是自己时不给自己摆格子。注释跟改：`IMCallEngine.inviteMore`、`IMInviteContext.callerUid`、`IMCallViewState.caller`。
 
-**验证**（`test.sh` 全量没跑）：`:call-engine:testDebugUnitTest`（23 条，新增 2 条：带 inviter / 旧服务端回落）、
+**验证**（①②，`test.sh` 全量没跑）：`:call-engine:testDebugUnitTest`（23 条，新增 2 条：带 inviter / 旧服务端回落）、
 `:call-uikit:testDebugUnitTest`（`CallViewStateTest` 13 条，新增 1 条）、`:demo:compileDebugKotlin` —— BUILD SUCCESSFUL。
+
+**③ 来电铃声 + 回铃音**（草图范围，不做振动/锁屏）：
+- 素材 `call-uikit/src/main/res/raw/im_ringtone.mp3`（4s 循环）/ `im_ringback.mp3`（5s 周期，450Hz 1s 通 4s 断）。
+- 纯判据 `IMRingRules.ringtoneFor(state, muted)`：muted / isMeeting 无条件不响，INCOMING→来电铃声，
+  OUTGOING→回铃音，其余不响；单测 `IMRingRulesTest`（7 条）。
+- 播放层 `IMRingPlayer`（薄包 MediaPlayer，`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`，
+  **不碰 `AudioManager.mode`**——那是 `IMAudioRouter` 的地盘）；焦点两代 API 同 `IMAudioRouter`，
+  **本轮只编译验收、O+/O- 两条路径都还没上真机**，下一次真机窗口按 CONVENTIONS §8 补验。
+- 挂载点 `IMCallKit.update()`：`state=next` 前先存 `previousPhase`，同步（不进 `main.post`）调
+  `applyRingtone`，为的是抢在接听后 `IMAudioRouter.start()` 抢焦点前面把铃声焦点 abandon 掉，
+  否则通话音会被系统 DUCK。`IMCallKit.stop()` 也 `ring?.stop()`。
+- 配置 `IMCallKitConfig.incomingRingtone` / `ringbackTone`（`Uri?`，默认 null 用内置素材）/
+  `ringtoneMuted`（默认 false），现读，同 `bannerFirst` 读法。Demo 设置页加「静音来电铃声」开关。
+- `./scripts/test.sh` 全量跑过，六步全绿（含 ① ②，未提交）。**真机验收未做**（本轮只有 JVM 单测 + 编译）：
+  下一次真机窗口要验的清单——1v1/群 来电铃声起停、拨出回铃音、接听/挂断/取消瞬间铃声立即停、
+  接听后通话音量没有被 DUCK、会议房与 `onCallMissed` 全程不响、静音开关生效、蓝牙耳机场景。
 跑法：`RTC_CONFORMANCE_DIR=../im-rtc-server/docs/conformance ./gradlew :call-engine:testDebugUnitTest ...`。
 
 **同日已提交 `1ea2013`**：选人页列出全部成员、搜索框放大镜（`ic_im_magnifyingglass.xml`）。

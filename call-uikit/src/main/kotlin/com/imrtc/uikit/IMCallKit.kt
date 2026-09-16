@@ -73,6 +73,14 @@ object IMCallKit {
     private var localPreview: View? = null
     private var localPreviewStarted = false
 
+    /** 铃声播放层，见 [IMRingPlayer]。造得晚——要 `appContext`，[start] 里才有。 */
+    private var ring: IMRingPlayer? = null
+
+    private fun ringPlayer(): IMRingPlayer? {
+        val context = appContext ?: return null
+        return ring ?: IMRingPlayer(context).also { ring = it }
+    }
+
     /**
      * 接管通话 UI。**在 login 之前调**——来电随时可能到。
      * 传进来的 `engine` 的 listener 要先经 [wrap] 包一层：宿主自己的 listener 照常收到全部回调，Kit 只是搭个便车。
@@ -95,6 +103,7 @@ object IMCallKit {
         settleTimers.clear()
         hintExpiry.clear()
         redButton.disarm()
+        ring?.stop()
         lastInvited = emptyList()
         state = IMCallViewReducer.reset()
         main.post { overlay.detach() }
@@ -544,16 +553,26 @@ object IMCallKit {
     }
 
     internal fun update(next: IMCallViewState) {
+        // `state` 同步赋值、post 只延后执行——旧 phase 要先存局部变量，见 [applyRingtone]。
+        val previousPhase = state.phase
         state = next
         // 收到终态就不必再盯着。**挂在这里而不是各个回调里**：update 是唯一的状态入口，
         // 漏挂一条回调就会多出一次莫名其妙的「本地收场」。
         if (!IMLateGuard.stillInCall(next)) redButton.disarm()
+        // 同步调用、不进 main.post 排队：抢在 IMAudioRouter.start() 抢焦点前面（见 IMRingPlayer）。
+        applyRingtone(previousPhase, next)
         main.post {
             observers.toList().forEach { it(next) }
             if (next.phase == IMCallViewState.Phase.IDLE) clearCallViews()
             presentation.apply(next, appContext)
             scheduleSettledRemovals(next)
         }
+    }
+
+    /** 该起铃还是停铃：判据是 [IMRingRules.ringtoneFor]（现读 config），phase 没变就不必摸播放器。 */
+    private fun applyRingtone(previousPhase: IMCallViewState.Phase, next: IMCallViewState) {
+        if (previousPhase == next.phase) return
+        ringPlayer()?.play(IMRingRules.ringtoneFor(next, config.ringtoneMuted))
     }
 
     /** 邀请中的格子拿到终局（已拒绝 / 未接听）后停 2s 再收（交互稿 §05 G3，记账见 [IMSettleTimers]）。 */
