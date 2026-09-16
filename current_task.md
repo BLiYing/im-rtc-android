@@ -7,7 +7,7 @@
 
 ## 当前焦点
 
-**2026-09-16（续）：三件事。①② 已提交 `9e2e476`，③ 未提交。**
+**2026-09-16（续）：三件事。①② 已提交 `9e2e476`，③ 已提交 `f091ab9` 且真机验收通过。**
 
 **① 协议新字段 `call.incoming.inviter`（「谁邀请的你」，四端同步改，本仓这一份）。**
 - 线路字段 `inviter`：首次邀请 = 主叫；`call.invite_more` 加进来的人 = 发那条加人请求的人。
@@ -34,15 +34,16 @@
   OUTGOING→回铃音，其余不响；单测 `IMRingRulesTest`（7 条）。
 - 播放层 `IMRingPlayer`（薄包 MediaPlayer，`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`，
   **不碰 `AudioManager.mode`**——那是 `IMAudioRouter` 的地盘）；焦点两代 API 同 `IMAudioRouter`，
-  **本轮只编译验收、O+/O- 两条路径都还没上真机**，下一次真机窗口按 CONVENTIONS §8 补验。
+  **2026-09-16 真机验收通过**；但**没记下机型与 Android 版本**（本仓 CLAUDE.md 要求写明），
+  所以焦点两代 API 里 O+ / O- 具体走过哪一条并不确定，下次真机窗口补记一次。
 - 挂载点 `IMCallKit.update()`：`state=next` 前先存 `previousPhase`，同步（不进 `main.post`）调
   `applyRingtone`，为的是抢在接听后 `IMAudioRouter.start()` 抢焦点前面把铃声焦点 abandon 掉，
   否则通话音会被系统 DUCK。`IMCallKit.stop()` 也 `ring?.stop()`。
 - 配置 `IMCallKitConfig.incomingRingtone` / `ringbackTone`（`Uri?`，默认 null 用内置素材）/
   `ringtoneMuted`（默认 false），现读，同 `bannerFirst` 读法。Demo 设置页加「静音来电铃声」开关。
-- `./scripts/test.sh` 全量跑过，六步全绿（含 ① ②，未提交）。**真机验收未做**（本轮只有 JVM 单测 + 编译）：
-  下一次真机窗口要验的清单——1v1/群 来电铃声起停、拨出回铃音、接听/挂断/取消瞬间铃声立即停、
-  接听后通话音量没有被 DUCK、会议房与 `onCallMissed` 全程不响、静音开关生效、蓝牙耳机场景。
+- `./scripts/test.sh` 全量跑过，六步全绿。**真机验收已通过**（2026-09-16）：1v1/群 来电铃声起停、
+  拨出回铃音、接听/挂断/取消瞬间铃声立即停、接听后通话音量没有被 DUCK、会议房与 `onCallMissed`
+  全程不响、静音开关生效。**蓝牙耳机场景仍未验**，连同机型/版本记录一起留到下次真机窗口。
 跑法：`RTC_CONFORMANCE_DIR=../im-rtc-server/docs/conformance ./gradlew :call-engine:testDebugUnitTest ...`。
 
 **同日已提交 `1ea2013`**：选人页列出全部成员、搜索框放大镜（`ic_im_magnifyingglass.xml`）。
