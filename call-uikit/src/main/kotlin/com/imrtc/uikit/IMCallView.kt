@@ -428,8 +428,10 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
     private fun renderAudio(state: IMCallViewState, hasLocalVideo: Boolean) {
         val peer = state.members.values.firstOrNull()
+        // 来电这一屏显示「谁邀请的你」；其余阶段照旧（1v1 两者本来就是同一个人）。
+        val shown = if (state.phase == IMCallViewState.Phase.INCOMING) state.incomingFromUid else state.peer
         audioStage.apply(
-            state.peer, state.peer.ifEmpty { peer?.uid ?: "通话中" }, state.statusText,
+            shown, shown.ifEmpty { peer?.uid ?: "通话中" }, state.statusText,
             isRinging = state.phase == IMCallViewState.Phase.OUTGOING,
             networkLevel = peer?.networkLevel ?: 0,
             // 接通之后名字与时长归标题栏，中间只留头像——两处各走各的计时是重复也是打架。

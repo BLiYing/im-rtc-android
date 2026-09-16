@@ -50,6 +50,7 @@ internal class IMEventDispatcher(
                 listener.onCallReceived(
                     args.str("call_id"),
                     args.str("caller"),
+                    args.str("inviter"),
                     args.strs("callee_ids"),
                     args.str("media_type"),
                     args.flag("is_group"),

@@ -7,21 +7,36 @@
 
 ## 当前焦点
 
-**2026-09-16：群通话「添加成员」选人页（用户自测通过，已提交）。** 提交前按用户要求没跑全量；只跑了 `./gradlew :demo:compileDebugKotlin`（exit 0，含 call-uikit），单测没跑。
-上一轮四端 API 命名对齐已提交 `cf8c18f`，细节移到 archive 末节。
+**2026-09-16（续）：两件事，都未提交。**
 
-- **列表全部列出**（用户 09-16 拍板，推翻「选人页不列发起人」）：`IMInvitePicker.onLoaded` 不再滤掉发起人；Demo `DemoInviteProvider` 原先自己剔掉自己，也放开（去掉构造参数 `selfUid`，`DemoSession` 同步）。
-  在通话里的人（`ctx.participantUids`，含自己）置灰「已在通话中」并打勾；**离场的发起人**置灰「暂时无法邀请」、不打勾（`Row.Item` 新增 `inCall` 区分两种置灰）——
-  服务端对 `callee_ids` 含发起人回 `bad_params`，拉不回来。这句文案是我定的，用户没拍板。
-- **搜索框放大镜**：新增 `res/drawable/ic_im_magnifyingglass.xml`（与 Web `iconShapes.tsx` 的 `magnifyingglass` 同一份路径）+ `IMKitIcon.MAGNIFYING_GLASS`，
-  `searchBox()` 用 `setCompoundDrawablesRelative` 挂在左侧，15dp、次级文字色。
-- 注释跟改：`IMInviteContext.callerUid`、`IMCallViewState.caller`。
+**① 协议新字段 `call.incoming.inviter`（「谁邀请的你」，四端同步改，本仓这一份）。**
+- 线路字段 `inviter`：首次邀请 = 主叫；`call.invite_more` 加进来的人 = 发那条加人请求的人。
+  **空串回落到 `caller`**，回落做在 `CallStateMachineRecv.handleIncoming`，宿主永远拿得到一个非空的人。
+- `IMFramesCall.INCOMING` 加字段；`IMCallEngineListener.onCallReceived` 加 `inviter`（放在 `caller` 之后，
+  **直接改签名、不留旧重载**）；`IMEventDispatcher` 透传；`IMKitListener` 透传给 reducer 与宿主。
+- Kit：`IMCallViewState.inviter` + 新增 `incomingFromUid`（`inviter` → 格子里第一个人 → `peer`）；
+  来电横幅 `IMIncomingBanner` 与来电页 `IMCallView.renderAudio`（**仅 INCOMING 阶段**）都改用它。
+  **摆格子、`state.caller`、选人页的 `callerUid` 一律没动。**
+- Demo `DemoSession` 与 `JavaApiCheck` 同步改签名。
+- 一致性向量：本仓代码不用改（`VectorMatch` 是递归子集比对，回调 args 多一个键不算错，只有**条数**必须对上）；
+  主会话在 `call_fsm.json` 新增了两条 inviter 用例，本仓 `:call-engine:testDebugUnitTest` 带 `RTC_CONFORMANCE_DIR` 跑过。
+
+**② 离场的发起人可以被重新邀请**（服务端去掉了 `invite_more` 对发起人的 `bad_params`，见 server current_task）：
+`IMInvitePicker` 去掉「暂时无法邀请」分支（连带 `Row.Item.inCall`）；`IMCallViewReducer.incoming` 加 `selfUid`，
+发起人就是自己时不给自己摆格子。注释跟改：`IMCallEngine.inviteMore`、`IMInviteContext.callerUid`、`IMCallViewState.caller`。
+
+**验证**（`test.sh` 全量没跑）：`:call-engine:testDebugUnitTest`（23 条，新增 2 条：带 inviter / 旧服务端回落）、
+`:call-uikit:testDebugUnitTest`（`CallViewStateTest` 13 条，新增 1 条）、`:demo:compileDebugKotlin` —— BUILD SUCCESSFUL。
+跑法：`RTC_CONFORMANCE_DIR=../im-rtc-server/docs/conformance ./gradlew :call-engine:testDebugUnitTest ...`。
+
+**同日已提交 `1ea2013`**：选人页列出全部成员、搜索框放大镜（`ic_im_magnifyingglass.xml`）。
 
 **体量**：`IMCallEngine.kt` 599、`IMSignalConnection.kt` 600 已到硬顶，下次改这两个文件先想好拆哪块。
 
 ## 下一步
 
-1. 「暂时无法邀请」（离场的发起人）文案待用户确认。
+1. 用户真机自测（服务端先重启）：发起人挂断后被邀请回来能响铃、接听，来电横幅不出现自己的格子，
+   且横幅 / 来电页显示的是**把你加进来的那个人**（群通话中途加邀时不是发起人）。自测过了跑 `./scripts/test.sh` 再提交。
 
 **本端预览对齐（`startLocalPreview(): cid` + `attachLocalView(cid, view)`）没做，原因**：
 现在的 `IMWebRTCAdapter` 里，本端预览用的是一个**固定常量** `PREVIEW_TRACK_ID`（不是每次生成的 cid），

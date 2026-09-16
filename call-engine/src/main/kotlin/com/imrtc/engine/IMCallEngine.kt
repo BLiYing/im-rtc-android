@@ -264,7 +264,7 @@ class IMCallEngine private constructor(
     /** 强制收场的两段（直发结束帧 / 落地本地收场），见 [IMForceEnd]。 */
     private val forceEnder = IMForceEnd(scheduler, connection, { ctx }) { before, output -> applyOutput(before, output) }
 
-    /** 群通话中途加邀，通话里的任何人都能发（还在响铃 / 已离场回 1407，名单含发起人回 bad_params）。 */
+    /** 群通话中途加邀，通话里的任何人都能发（还在响铃 / 已离场回 1407；离场的发起人也能被重新邀请）。 */
     fun inviteMore(calleeIds: List<String>) =
         act("invite_more", mapOf("callee_ids" to IMJson.Arr(calleeIds.map { IMJson.Str(it) })))
 

@@ -79,12 +79,14 @@ final class JavaApiCheck {
             public void onCallReceived(
                     String callId,
                     String caller,
+                    String inviter,
                     List<String> calleeIds,
                     String mediaType,
                     boolean isGroup,
                     String chatGroupId,
                     String userData) {
-                // 被叫侧：chatGroupId 决定「添加成员」该向宿主要哪个群的候选人。
+                // 被叫侧：chatGroupId 决定「添加成员」该向宿主要哪个群的候选人；
+                // inviter 是把你加进来的人（中途加邀时不是 caller），来电界面显示他。
             }
 
             @Override

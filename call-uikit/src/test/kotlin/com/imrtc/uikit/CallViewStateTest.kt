@@ -331,4 +331,36 @@ class CameraDefaultTest {
         val blocked = IMCallViewReducer.cameraBlocked(oneToOne)
         assertFalse("没权限时按钮点不动，也不改它", IMCallViewReducer.toggleCamera(blocked).cameraOptedOut)
     }
+
+    @Test
+    fun `来电界面显示谁邀请的你，旧服务端不带 inviter 时回落`() {
+        // 群通话中途被 bob 加进来：发起人仍是 alice，来电界面该显示 bob。
+        val added = IMCallViewReducer.incoming(
+            IMCallViewState(), "c-1", "alice", listOf("bob", "carol"), "audio", true, inviter = "bob",
+        )
+        assertEquals("bob", added.incomingFromUid)
+        assertEquals("alice", added.caller)
+
+        // 旧服务端不带 inviter：回落到格子里第一个人，与这条改动之前一致。
+        val legacy = IMCallViewReducer.incoming(
+            IMCallViewState(), "c-1", "alice", listOf("bob"), "audio", true,
+        )
+        assertEquals("alice", legacy.incomingFromUid)
+
+        // 被重新邀请回来的发起人：自己不摆格子，显示的是加他进来的那个人。
+        val callerBack = IMCallViewReducer.incoming(
+            IMCallViewState(), "c-1", "alice", listOf("bob", "carol"), "audio", true,
+            selfUid = "alice", inviter = "carol",
+        )
+        assertEquals("carol", callerBack.incomingFromUid)
+    }
+
+    @Test
+    fun `离场后被重新邀请回来的发起人不给自己摆格子`() {
+        val incoming = IMCallViewReducer.incoming(
+            IMCallViewState(), "c-1", "alice", listOf("bob", "carol"), "video", true, selfUid = "alice",
+        )
+        assertEquals(listOf("bob", "carol"), incoming.members.keys.toList())
+        assertEquals("alice", incoming.caller)
+    }
 }

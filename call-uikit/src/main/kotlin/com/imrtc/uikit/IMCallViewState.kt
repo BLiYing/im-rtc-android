@@ -19,8 +19,14 @@ internal data class IMCallViewState(
     val mediaType: String = "audio",
     val role: String = "",
     val peer: String = "",
-    /** 发起人 uid，只在被叫侧有值（主叫侧就是自己）。选人页靠它认出离场的发起人：服务端拉不回来，只能置灰。 */
+    /** 发起人 uid，只在被叫侧有值（主叫侧就是自己）。邀请上下文的 `callerUid` 从这里取。 */
     val caller: String = "",
+    /**
+     * **把你加进来的那个人**，只在被叫侧有值。群通话中途被加进来时他不是 [caller]；
+     * 空串表示旧服务端没带（见 [incomingFromUid] 的回落）。**只用于来电界面显示谁在邀请你**，
+     * 摆格子与选人页一律用 [caller]。
+     */
+    val inviter: String = "",
     /**
      * 宿主自己的群号，来自 `onCallReceived` / `onCallBegin`（可能为空——不是每通电话都属于某个群）。
      * `IMInviteMemberProvider` 靠它决定「添加成员」该向宿主要哪个群的候选人
@@ -161,6 +167,14 @@ internal data class IMCallViewState(
         else -> Layout.VIDEO
     }
 
+    /**
+     * 来电横幅 / 来电页上显示的那个人：**谁邀请的你**。
+     *
+     * 群通话里加你进来的不一定是发起人（`call.invite_more`），所以优先用 [inviter]。
+     * 旧服务端不带那个字段时回落到「格子里第一个人」——即这条改动之前一直在用的人。
+     */
+    val incomingFromUid: String get() = inviter.ifEmpty { members.keys.firstOrNull() ?: peer }
+
     /** 标题栏那一行。**群通话与会议不能显示某一个人的名字**；人数要 `+1`：[members] 里不含自己。 */
     val titleText: String
         get() = when {
@@ -298,7 +312,8 @@ internal object IMCallViewReducer {
         mediaType == "video" && !isGroup
 
     /**
-     * `calleeIds` 是这通电话邀了谁（**已去掉自己**）。
+     * `calleeIds` 是这通电话邀了谁（**已去掉自己**）。`selfUid` 是本端 uid：离场后被重新邀请回来的发起人
+     * 收到的 `caller` 就是自己，「自己」不是远端成员，不摆格子。
      *
      * 主叫先摆上（他一定在通话里），其余被邀请的人摆成「还在响铃」的占位格——
      * 不摆的话群通话在两侧长得不一样：主叫看到四格（含没接的），被叫只看到两格。
@@ -312,11 +327,14 @@ internal object IMCallViewReducer {
         isGroup: Boolean,
         chatGroupId: String = "",
         userData: String = "",
+        selfUid: String = "",
+        inviter: String = "",
     ) = IMCallViewState(
         phase = IMCallViewState.Phase.INCOMING,
         callId = callId,
         peer = if (isGroup) "" else caller,
         caller = caller,
+        inviter = inviter,
         chatGroupId = chatGroupId,
         userData = userData,
         mediaType = mediaType,
@@ -324,7 +342,7 @@ internal object IMCallViewReducer {
         cameraOn = defaultCameraOn(mediaType, isGroup),
         // **默认不外放**（拍板 2026-09-06）：视频通话一样从听筒出声，要外放由用户自己点。
         speakerOn = false,
-        members = linkedMapOf(caller to IMCallViewState.Member(caller)) +
+        members = (if (caller == selfUid) linkedMapOf() else linkedMapOf(caller to IMCallViewState.Member(caller))) +
             calleeIds.filter { it != caller }
                 .associateWith { IMCallViewState.Member(it, accepted = false) },
         connection = state.connection,

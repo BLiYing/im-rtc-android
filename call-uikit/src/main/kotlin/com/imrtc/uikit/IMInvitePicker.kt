@@ -248,7 +248,7 @@ internal class IMInvitePicker(
     // ── 展示 ──────────────────────────────────────────────────────────
 
     private sealed class Row {
-        data class Item(val candidate: IMInviteCandidate, val blocked: Boolean, val reason: String, val inCall: Boolean = blocked) : Row()
+        data class Item(val candidate: IMInviteCandidate, val blocked: Boolean, val reason: String) : Row()
         data class Typed(val uid: String) : Row()
         object LoadingMore : Row()
         data class PageError(val message: String) : Row()
@@ -263,15 +263,8 @@ internal class IMInvitePicker(
             result += Row.Item(IMInviteCandidate(uid), blocked = uid in ctx.participantUids, reason = "已在通话中")
         }
         items.forEach { c ->
-            val inCall = c.uid in ctx.participantUids
-            // 离场的发起人服务端拉不回来（invite_more 回 bad_params），只能置灰。
-            val callerLeft = !inCall && c.uid == ctx.callerUid
-            val reason = when {
-                inCall -> "已在通话中"
-                callerLeft -> "暂时无法邀请"
-                else -> c.unselectableReason.orEmpty()
-            }
-            result += Row.Item(c, blocked = inCall || callerLeft, reason = reason, inCall = inCall)
+            val blocked = c.uid in ctx.participantUids
+            result += Row.Item(c, blocked = blocked, reason = if (blocked) "已在通话中" else c.unselectableReason.orEmpty())
         }
         // uid 输入框：仅在允许、且这一页（含搜索）确实什么都没有时才出现（§3.4：只出现在空态里）。
         if (allowManualInput && items.isEmpty() && q.isNotEmpty() && q !in ctx.participantUids) {
@@ -340,7 +333,7 @@ internal class IMInvitePicker(
                     row.candidate.name,
                     row.candidate.uid,
                     sub = if (row.blocked) row.reason else row.candidate.subtitle.orEmpty().ifEmpty { row.reason },
-                    checked = row.inCall || row.candidate.uid in picked,
+                    checked = row.blocked || row.candidate.uid in picked,
                     blocked = row.blocked || !row.candidate.selectable,
                 )
             }

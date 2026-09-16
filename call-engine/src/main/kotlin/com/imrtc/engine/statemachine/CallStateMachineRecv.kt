@@ -166,6 +166,8 @@ private fun handleIncoming(ctx: IMCallContext, data: Map<String, IMJson>): IMMac
     if (ctx.state != IMCallState.IDLE) return IMCallMachine.out(ctx)
     val mediaType = if (Wire.str(data, "media_type") == "video") "video" else "audio"
     val caller = Wire.str(data, "caller")
+    // inviter 是「谁把你加进来的」，群通话中途加邀时不是发起人；旧服务端不带它就回落到 caller。
+    val inviter = Wire.str(data, "inviter").ifEmpty { caller }
     val chatGroupId = Wire.str(data, "chat_group_id")
     val userData = Wire.str(data, "user_data")
     val next = ctx.copy(
@@ -187,6 +189,7 @@ private fun handleIncoming(ctx: IMCallContext, data: Map<String, IMJson>): IMMac
                 mapOf(
                     "call_id" to s(next.callId),
                     "caller" to s(caller),
+                    "inviter" to s(inviter),
                     // **原样带上**：群通话里被叫要靠它把还没接的人摆成占位格，
                     // 不然主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
                     "callee_ids" to arr(Wire.strList(data, "callee_ids")),

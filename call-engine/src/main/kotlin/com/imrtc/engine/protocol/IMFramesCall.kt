@@ -58,6 +58,9 @@ internal object CallFrames {
         "call_id" to IMFieldKind.Str(),
         "room_id" to IMFieldKind.Str(),
         "caller" to IMFieldKind.Str(),
+        // 这次邀请是谁发的：首次邀请就是主叫，call.invite_more 加进来的人是发那条加人请求的人。
+        // 旧服务端不带它，回落到 caller（在状态机里做）。
+        "inviter" to IMFieldKind.Str(),
         "callee_ids" to IMFieldKind.StrArray,
         "media_type" to IMFieldKind.Enumeration(E.MEDIA_TYPES, fallback = "audio"),
         "is_group" to IMFieldKind.Flag(),

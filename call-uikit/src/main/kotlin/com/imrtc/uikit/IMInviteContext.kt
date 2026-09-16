@@ -12,7 +12,7 @@ class IMInviteContext(
     val chatGroupId: String,
     /** 主叫在 `IMCallOptions.userData` 里塞的 opaque 数据，原样透传，Kit 不解析。 */
     val userData: String,
-    /** 这通电话的发起人 uid。他离场后服务端拉不回来（invite_more 回 bad_params），选人页把他置灰。 */
+    /** 这通电话的发起人 uid。 */
     val callerUid: String,
     val mediaType: String,
     /** 此刻在通话里 + 正在振铃的人，**含自己**。这些 uid 在选人页里显示「已在通话中」不可选。 */

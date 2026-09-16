@@ -231,6 +231,42 @@ class EngineLoopTest {
     }
 
     @Test
+    fun `onCallReceived 带 inviter：群通话中途加你进来的人不是发起人`() {
+        loginAndConnect()
+        transport.deliver(
+            IMFrameType.CALL_INCOMING,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-10"),
+                "room_id" to IMJson.Str("r-10"),
+                "caller" to IMJson.Str("alice"),
+                // 群通话中途被 bob 加进来：发起人仍是 alice，邀请你的是 bob。
+                "inviter" to IMJson.Str("bob"),
+                "media_type" to IMJson.Str("audio"),
+                "is_group" to IMJson.Bool(true),
+            ),
+        )
+        assertEquals("bob", listener.lastIncomingInviter)
+    }
+
+    @Test
+    fun `旧服务端不带 inviter 时回落到 caller`() {
+        loginAndConnect()
+        transport.deliver(
+            IMFrameType.CALL_INCOMING,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-11"),
+                "room_id" to IMJson.Str("r-11"),
+                "caller" to IMJson.Str("alice"),
+                "media_type" to IMJson.Str("audio"),
+                "is_group" to IMJson.Bool(true),
+            ),
+        )
+        assertEquals("alice", listener.lastIncomingInviter)
+    }
+
+    @Test
     fun `call() 选项本地校验不过：onError(1004) + onCallEnd(error)，不上线路`() {
         loginAndConnect()
         val before = transport.countOf(IMFrameType.CALL_INVITE)
@@ -675,6 +711,8 @@ class EngineLoopTest {
         val errors = mutableListOf<Int>()
         /** 最近一次 onCallReceived 带的 (chat_group_id, user_data)。 */
         var lastIncomingGroupData: Pair<String, String>? = null
+        /** 最近一次 onCallReceived 带的 inviter。 */
+        var lastIncomingInviter: String? = null
         /** 最近一次 onCallBegin 带的 (caller, chat_group_id, user_data, is_group)。 */
         var lastBeginGroupData: List<Any>? = null
 
@@ -682,6 +720,7 @@ class EngineLoopTest {
         override fun onCallReceived(
             callId: String,
             caller: String,
+            inviter: String,
             calleeIds: List<String>,
             mediaType: String,
             isGroup: Boolean,
@@ -690,6 +729,7 @@ class EngineLoopTest {
         ) {
             incoming += "$callId from $caller"
             lastIncomingGroupData = chatGroupId to userData
+            lastIncomingInviter = inviter
         }
         override fun onCallBegin(
             callId: String,

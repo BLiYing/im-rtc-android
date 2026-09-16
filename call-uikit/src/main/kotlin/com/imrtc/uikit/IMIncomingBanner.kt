@@ -91,7 +91,8 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
     }
 
     fun render(state: IMCallViewState) {
-        val caller = state.members.keys.firstOrNull() ?: state.peer
+        // 显示「谁邀请的你」：群通话中途加你进来的人不一定是发起人（见 incomingFromUid）。
+        val caller = state.incomingFromUid
         /*
           来电屏是**最不能显示成一串 uid** 的一屏，也是最可能解析不出来的一屏
           （陌生人来电时宿主本机没有对方名片）。解析不到就退化成 uid，

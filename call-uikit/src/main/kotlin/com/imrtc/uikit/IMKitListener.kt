@@ -79,6 +79,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     override fun onCallReceived(
         callId: String,
         caller: String,
+        inviter: String,
         calleeIds: List<String>,
         mediaType: String,
         isGroup: Boolean,
@@ -88,9 +89,13 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         // 名单里含自己，摆格子之前先去掉——「自己」不是远端成员。
         val others = calleeIds.filter { it != IMCallKit.engine?.uid }
         IMCallKit.update(
-            IMCallViewReducer.incoming(state, callId, caller, others, mediaType, isGroup, chatGroupId, userData),
+            IMCallViewReducer.incoming(
+                state, callId, caller, others, mediaType, isGroup, chatGroupId, userData,
+                selfUid = IMCallKit.engine?.uid.orEmpty(),
+                inviter = inviter,
+            ),
         )
-        host.onCallReceived(callId, caller, calleeIds, mediaType, isGroup, chatGroupId, userData)
+        host.onCallReceived(callId, caller, inviter, calleeIds, mediaType, isGroup, chatGroupId, userData)
     }
 
     /** 通话中有人打进来，服务端已经替我们回了忙线——**只提示，不动当前通话**。 */

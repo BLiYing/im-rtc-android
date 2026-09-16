@@ -63,6 +63,10 @@ interface IMCallEngineListener {
      * `calleeIds` 是**这通电话邀了谁**（不含主叫，含自己）。群通话的界面靠它把还没接的人
      * 先摆成占位格——否则主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
      *
+     * `caller` 恒为**这通电话的发起人**；`inviter` 是**把你加进来的那个人**。首次邀请两者相同，
+     * 群通话中途 `inviteMore` 加人时 `inviter` 是发那条加人请求的人（来电界面该显示他）。
+     * 旧服务端不带 `inviter` 时 Engine 已回落成 `caller`，宿主不用自己兜底。
+     *
      * `chatGroupId` 是宿主自己的群号（可能为空串——不是每通电话都属于某个群），
      * `chatGroupId` 靠它决定「添加成员」该向宿主要哪个群的候选人（见 `call-uikit` 的
      * `IMInviteMemberProvider`）。`userData` 是主叫在 [IMCallEngine.call] 选项里塞的
@@ -71,6 +75,7 @@ interface IMCallEngineListener {
     fun onCallReceived(
         callId: String,
         caller: String,
+        inviter: String,
         calleeIds: List<String>,
         mediaType: String,
         isGroup: Boolean,
