@@ -7,7 +7,13 @@
 
 ## 当前焦点
 
-**2026-09-17 夜：「调用结果回给调用方」（2.0.0，server `docs/design/ACTION_RESULT_DESIGN.md`）本端已实现、未提交，等 code-review。** `test.sh` 6 步全绿（engine 204 条，新增 `ActionResultTest` 16 条）。
+**2026-09-17 夜：结束帧 / 迟到帧合成一张表（队列 5 的「迟到帧」那条）**：四份「这个状态怎么结束」合进 `statemachine/IMCallExit.kt`
+（`reduceAct` 退出方法 / `forceEndFrames` / `handleLateFrame` 与 `handleInviteOk` 补发 / `IMRequestFailures` 失败收场集合），
+`CallExitTableTest` 逐条对 `call_fsm.json`，与 iOS `IMCallExit` 同一张表。行为不变。
+**没挪进请求关联层**：`call.connected` 是推送不是应答，关联层看不见；房间机的迟到 `room.join.ok` → `room.leave` 只有一处，不动。
+定时器样板本端不再抽：/simplify 已收成 `IMScheduler` + Kit 注入式小类 + `postResetIfEnded`。
+
+**2026-09-17 夜：「调用结果回给调用方」（2.0.0，server `docs/design/ACTION_RESULT_DESIGN.md`）已提交 `6fac9d7`（未推送），code-review 已过。** `test.sh` 6 步全绿（新增 `ActionResultTest` 16 条）。
 - 发起类方法加可选 `IMResultCallback<T>`（主线程、恰好一次），不传回调失败退回 `onError`；`onError` 加 `forType`；新增公开 `IMRTCError`；`call` 结果值是 callId；`login` 结果是第一次握手的结论。
 - 核心循环拆到 `IMFrameLoop`、两个事件出口拆到 `IMEngineEvents`（门面 512 行）；退出类失败本地收场；destroy 后发起类 2005、清理 / 提示类空操作、`forceEnd` 竞态已修、调度器收不下时当场 2005。
 - Kit 不再在 `onError` 里靠 `joining` 猜归属：拨号 / 加入 / 加人的文案从结果取码（`IMKitResults`）。**真机未验**：joinCall 1202 / 1402 / 1409 三种文案、拨号拿到 callId、通话中断网再挂断。
@@ -24,7 +30,7 @@
 1. **真机窗口清单**：
    - 铃声：蓝牙耳机场景 + **补记机型与 Android 版本**（O+ / O- 焦点 API 走的哪条）。
    - 老批次（forceEnd 断网 / 秒挂、后台重连节奏、1v1 视频细节）：archive「2026-09-15：forceEnd …真机验收清单」。
-2. 2.0.0 调用结果改造：等 code-review → 提交 → 真机验（见当前焦点）→ 发版。
+2. 2.0.0 调用结果改造：真机验（见当前焦点）→ 用户通知后发版。
 3. 待办：静默失败清单 `../im-rtc-server/docs/ops/silent-failure/android.md`。
 
 ## 已知坑 / 限制

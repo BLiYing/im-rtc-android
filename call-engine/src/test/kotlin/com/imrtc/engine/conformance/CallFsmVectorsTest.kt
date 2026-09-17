@@ -107,7 +107,7 @@ internal fun assertResult(where: String, step: IMJson.Obj, reject: IMErrorCode?)
     assertEquals("$where：本地拒绝的 name 不对", expected.optString("name"), reject?.wireName)
 }
 
-private fun vectorInput(step: IMJson.Obj, where: String): IMMachineInput {
+internal fun vectorInput(step: IMJson.Obj, where: String): IMMachineInput {
     step.optObj("act")?.let { act ->
         val op = act.optString("op") ?: error("$where 的 act 缺 op")
         return IMMachineInput.Act(op, act.optObj("args")?.fields ?: emptyMap())

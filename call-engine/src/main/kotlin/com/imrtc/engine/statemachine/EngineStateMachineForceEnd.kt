@@ -70,21 +70,13 @@ internal fun IMEngineMachine.forceEnd(
 }
 
 /**
- * 按通话此刻的状态挑结束帧，以及本地收场写哪个结束原因。
+ * 按通话此刻的状态挑结束帧，以及本地收场写哪个结束原因（查 [IMCallExit]）。
  *
- * - `accepting` 发 **reject + hangup 两帧**：accept 有没有在服务端落地，本端不知道。
- *   还在响铃就是 reject 生效（随后那条 hangup 被拒，无害）；已经接起来就是 hangup 生效。
- * - `inviting` 还没拿到 call_id（`call.invite.ok` 没回来）时**此刻发不了 cancel**，
- *   由那条 invite.ok 迟到时补发（门面的落地比对与 `CallStateMachineRecv` 的 idle 分支）。
+ * `inviting` 还没拿到 call_id（`call.invite.ok` 没回来）时**此刻发不了 cancel**，
+ * 由那条 invite.ok 迟到时补发（门面的落地比对与 `CallStateMachineRecv` 的 idle 分支）。
  */
 internal fun forceEndFrames(call: IMCallContext): Pair<List<IMOutgoingFrame>, IMCallEndReason> {
-    val (types, reason) = when (call.state) {
-        IMCallState.IDLE -> return emptyList<IMOutgoingFrame>() to IMCallEndReason.HANGUP
-        IMCallState.RINGING -> listOf(IMFrameType.CALL_REJECT) to IMCallEndReason.REJECT
-        IMCallState.INVITING -> listOf(IMFrameType.CALL_CANCEL) to IMCallEndReason.CANCEL
-        IMCallState.ACCEPTING -> listOf(IMFrameType.CALL_REJECT, IMFrameType.CALL_HANGUP) to IMCallEndReason.HANGUP
-        IMCallState.CONNECTING, IMCallState.CONNECTED -> listOf(IMFrameType.CALL_HANGUP) to IMCallEndReason.HANGUP
-    }
-    if (call.callId.isEmpty()) return emptyList<IMOutgoingFrame>() to reason
-    return types.map { IMCallMachine.callIdFrame(it, call) } to reason
+    val exit = IMCallExit.of(call.state) ?: return emptyList<IMOutgoingFrame>() to IMCallEndReason.HANGUP
+    if (call.callId.isEmpty()) return emptyList<IMOutgoingFrame>() to exit.reason
+    return exit.frames(call.callId) to exit.reason
 }

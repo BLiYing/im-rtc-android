@@ -3,6 +3,7 @@ package com.imrtc.engine
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
+import com.imrtc.engine.statemachine.IMCallExit
 import com.imrtc.engine.statemachine.IMCallState
 import com.imrtc.engine.statemachine.IMEngineContext
 import com.imrtc.engine.statemachine.IMMachineInput
@@ -67,7 +68,7 @@ internal object IMRequestFailures {
                 val now = snapshot()
                 if (now.room.state != IMRoomState.IDLE && now.call.state == IMCallState.IDLE) endLocally()
             }
-            IMFrameType.CALL_HANGUP, IMFrameType.CALL_REJECT, IMFrameType.CALL_CANCEL -> endLocally()
+            in IMCallExit.allFrameTypes -> endLocally()
             IMFrameType.ROOM_PUBLISH -> {
                 if (ctx.call.state != IMCallState.IDLE) {
                     IMRTCLog.w("engine", "发布被拒，结束本端通话 call_id=${ctx.call.callId}")

@@ -15,12 +15,9 @@ import com.imrtc.engine.protocol.IMJson
  * idle 下迟到的通话帧：**一律丢弃，只有两个例外**（不改状态、不抛回调）。
  *
  * 本地已经收场（强制收场、请求被拒回滚），服务端那边这通电话却还在往前走——
- * 不补一帧的话，服务端一直把本端当成在通话里：
- * - `call.invite.ok`：拨出时 invite 还在路上就强制收场，此刻才拿到 call_id → 补发 `call.cancel`，
- *   被叫才不会一直响到超时；
- * - `call.connected`：cancel 来不及、被叫已经接起来了 → 补发 `call.hangup`。
+ * 不补一帧的话，服务端一直把本端当成在通话里。哪两帧、补发什么见 [IMCallExit.serverState]。
  *
- * 其余照旧丢弃（向量 `late_frames_in_idle_are_dropped`）。iOS `IMCallMachine.handleLateFrame` 同一张表。
+ * 其余照旧丢弃（向量 `late_frames_in_idle_are_dropped`）。
  */
 private fun handleLateFrame(
     ctx: IMCallContext,
@@ -28,13 +25,9 @@ private fun handleLateFrame(
     data: Map<String, IMJson>,
 ): IMMachineOutput<IMCallContext> {
     val callId = Wire.str(data, "call_id")
-    val reply = when (type) {
-        IMCallMachine.okType(IMFrameType.CALL_INVITE) -> IMFrameType.CALL_CANCEL
-        IMFrameType.CALL_CONNECTED -> IMFrameType.CALL_HANGUP
-        else -> null
-    }
-    if (reply == null || callId.isEmpty()) return IMCallMachine.out(ctx)
-    return IMCallMachine.out(ctx, send = listOf(IMOutgoingFrame(reply, mapOf("call_id" to s(callId)))))
+    val exit = IMCallExit.serverState(afterLate = type)?.let { IMCallExit.of(it) }
+    if (exit == null || callId.isEmpty()) return IMCallMachine.out(ctx)
+    return IMCallMachine.out(ctx, send = exit.frames(callId))
 }
 
 /**
@@ -50,8 +43,9 @@ private fun handleInviteOk(ctx: IMCallContext, data: Map<String, IMJson>): IMMac
         roomId = Wire.str(data, "room_id"),
         cancelPending = ctx.cancelPending && callId.isEmpty(),
     )
-    if (!ctx.cancelPending || callId.isEmpty()) return IMCallMachine.out(next)
-    return IMCallMachine.out(next, send = listOf(IMCallMachine.callIdFrame(IMFrameType.CALL_CANCEL, next)))
+    val exit = IMCallExit.of(IMCallState.INVITING)
+    if (!ctx.cancelPending || callId.isEmpty() || exit == null) return IMCallMachine.out(next)
+    return IMCallMachine.out(next, send = exit.frames(callId))
 }
 
 /**

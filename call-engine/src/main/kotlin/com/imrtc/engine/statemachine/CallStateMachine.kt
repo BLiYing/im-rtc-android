@@ -129,23 +129,7 @@ internal object IMCallMachine {
     ): IMMachineOutput<IMCallContext> = when (op) {
         "call" -> startCall(ctx, args)
         "accept" -> acceptCall(ctx)
-        // reject 只发帧，状态由随后的 call.ended 推进——**服务端才是裁决方**。
-        "reject" -> if (ctx.state == IMCallState.RINGING) {
-            out(ctx, send = listOf(callIdFrame(IMFrameType.CALL_REJECT, ctx)))
-        } else {
-            invalidState(ctx)
-        }
-        // 拨出中还没拿到 call_id：不发一条注定被拒的 cancel，挂起到 invite.ok 回来（见 IMCallContext.cancelPending）。
-        "cancel" -> when {
-            ctx.state != IMCallState.INVITING -> invalidState(ctx)
-            ctx.callId.isEmpty() -> out(ctx.copy(cancelPending = true))
-            else -> out(ctx, send = listOf(callIdFrame(IMFrameType.CALL_CANCEL, ctx)))
-        }
-        "hangup" -> if (ctx.state == IMCallState.CONNECTED || ctx.state == IMCallState.CONNECTING) {
-            out(ctx, send = listOf(callIdFrame(IMFrameType.CALL_HANGUP, ctx)))
-        } else {
-            invalidState(ctx)
-        }
+        "reject", "cancel", "hangup" -> exitCall(ctx, op)
         "invite_more" -> inviteMore(ctx, args)
         "join_call" -> joinOngoingCall(ctx, args)
         else -> invalidState(ctx)
@@ -232,6 +216,19 @@ internal object IMCallMachine {
             ),
             send = listOf(IMOutgoingFrame(IMFrameType.CALL_JOIN, mapOf("call_id" to s(callId)))),
         )
+    }
+
+    /**
+     * 宿主调 reject / cancel / hangup：此刻的状态该用哪个方法、发哪帧，查 [IMCallExit]。
+     *
+     * 只发帧，状态由随后的 call.ended 推进——**服务端才是裁决方**。
+     * 拨出中还没拿到 call_id：不发一条注定被拒的 cancel，挂起到 invite.ok 回来（见 [IMCallContext.cancelPending]）。
+     */
+    private fun exitCall(ctx: IMCallContext, op: String): IMMachineOutput<IMCallContext> {
+        val exit = IMCallExit.of(ctx.state)
+        if (exit == null || exit.op != op) return invalidState(ctx)
+        if (ctx.state == IMCallState.INVITING && ctx.callId.isEmpty()) return out(ctx.copy(cancelPending = true))
+        return out(ctx, send = exit.frames(ctx.callId))
     }
 
     internal fun callIdFrame(type: String, ctx: IMCallContext) =
