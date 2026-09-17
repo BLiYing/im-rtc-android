@@ -33,6 +33,13 @@ internal object IMActivityTracker : Application.ActivityLifecycleCallbacks {
     /** App 前后台切换。通话页据此暂停 / 恢复本端视频（交互稿 §03）。 */
     var onForegroundChanged: ((Boolean) -> Unit)? = null
 
+    /**
+     * 宿主的某个页面 resumed 了（通话页不算）。**悬浮球要靠它才挂得上**：点「收进小窗」时通话页还在前台、
+     * 宿主页面还没 resume，形态判定拿不到宿主只能先 hidden；通话中每秒计时会再判一次所以看不出来，
+     * 拨出中没有计时，不补这一下球就一直不出来（2026-09-17 PKD130 真机）。
+     */
+    var onHostResumed: (() -> Unit)? = null
+
     fun install(application: Application) {
         if (installed) return
         installed = true
@@ -48,6 +55,7 @@ internal object IMActivityTracker : Application.ActivityLifecycleCallbacks {
     override fun onActivityResumed(activity: Activity) {
         if (activity is IMCallActivity) return
         current = WeakReference(activity)
+        onHostResumed?.invoke()
     }
 
     override fun onActivityPaused(activity: Activity) {

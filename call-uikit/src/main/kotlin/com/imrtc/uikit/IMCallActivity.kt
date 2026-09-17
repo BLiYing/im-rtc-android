@@ -102,7 +102,7 @@ class IMCallActivity : Activity() {
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
     }
 
-    /** 通话中按返回 = 收进小窗（交互稿 §08 差异 1）；接通前什么都不做——挂断请点红键。 */
+    /** 拨出中 / 通话中按返回 = 收进小窗（交互稿 §08 差异 1）；来电页与结束画面什么都不做——挂断请点红键。 */
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {

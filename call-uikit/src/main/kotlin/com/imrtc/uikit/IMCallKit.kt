@@ -100,6 +100,8 @@ object IMCallKit {
             // 读属性不读参数：stop() 之后 Kit 的 engine 置空，这里就不该再去碰那个旧实例。
             this.engine?.let { backgroundCamera.onForegroundChanged(it, state, foreground) }
         }
+        // 宿主页面回到前台就按当前状态再挑一次形态，见 [IMActivityTracker.onHostResumed]。
+        IMActivityTracker.onHostResumed = { presentation.apply(state, appContext) }
     }
 
     @JvmStatic
@@ -499,7 +501,7 @@ object IMCallKit {
     /** 取名单的优先级（宿主接管选人页 > provider > 静态 inviteCandidates > 空态）见 [IMInviteFlow]。 */
     internal fun showInvitePicker(activity: Activity) = IMInviteFlow.show(activity, state, config) { inviteMore(it) }
 
-    /** 收进小窗。接通之前不许收，见 [IMCallViewState.canMinimize]。 */
+    /** 收进小窗。来电页与结束画面不许收，见 [IMCallViewState.canMinimize]。 */
     internal fun minimize() = update(IMCallViewReducer.minimize(state))
 
     /** 从小窗 / 横幅展开回全屏。 */

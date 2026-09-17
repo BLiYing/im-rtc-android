@@ -195,11 +195,12 @@ class CallViewStateTest {
     }
 
     @Test
-    fun `接通之前不许收进悬浮球`() {
-        // 拨出中收起来，剩一个不会动的小球挂在那儿：既不知道对方接没接，
-        // 也想不起来怎么挂断。所以 minimize 在这两个阶段必须是空操作。
+    fun `拨出中能收进悬浮球，来电页不行`() {
+        // 与 iOS / Web 同：拨出中左上角就有「收进小窗」，球下的红键可取消、球上显示「…」。
+        // 来电页不给——小窗上没有接听键，收进去就接不了。
         val outgoing = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)
-        assertFalse(IMCallViewReducer.minimize(outgoing).isMinimized)
+        assertTrue(IMCallViewReducer.minimize(outgoing).isMinimized)
+        assertEquals("…", IMGrid.bubbleText(IMCallViewReducer.minimize(outgoing)))
 
         val incoming = IMCallViewReducer.incoming(IMCallViewState(), "c-1", "alice", emptyList(), "audio", false)
         assertFalse(IMCallViewReducer.minimize(incoming).isMinimized)
@@ -209,6 +210,12 @@ class CallViewStateTest {
         )
         assertTrue(IMCallViewReducer.minimize(connected).isMinimized)
         assertFalse(IMCallViewReducer.expand(IMCallViewReducer.minimize(connected)).isMinimized)
+        assertEquals("00:00", IMGrid.bubbleText(connected))
+
+        // 拨出中收起后被拒：退出小窗，结束原因要看得见。
+        val rejected = IMCallViewReducer.ended(IMCallViewReducer.minimize(outgoing), "rejected")
+        assertFalse(rejected.isMinimized)
+        assertFalse(IMCallViewReducer.minimize(rejected).isMinimized)
     }
 
     @Test

@@ -132,8 +132,11 @@ internal data class IMCallViewState(
 
     val showAnswerButton: Boolean get() = phase == Phase.INCOMING
 
-    /** 能不能收进小窗。**只有已经接通了才行**：拨出中收起来，剩一个不会动的小球，用户不知道对方接没接。 */
-    val canMinimize: Boolean get() = phase == Phase.CONNECTING || phase == Phase.CONNECTED
+    /**
+     * 能不能收进小窗：拨出中、接通中、通话中都行，与 iOS / Web 同一条（除了来电页与结束画面）。
+     * **来电页不给**：小窗上没有接听键，收进去就接不了。拨出中收起来有球下的红键可取消，被拒 / 忙线由 [IMCallViewReducer.ended] 展开回全屏报原因。
+     */
+    val canMinimize: Boolean get() = phase == Phase.OUTGOING || phase == Phase.CONNECTING || phase == Phase.CONNECTED
 
     /** 通话中该不该显示「摄像头」按钮。**只看 media_type**：语音通话里不给（拍板 §11-10）。 */
     val showsCameraButton: Boolean get() = mediaType == "video"
@@ -546,7 +549,7 @@ internal object IMCallViewReducer {
     /** 摄像头拿不到（权限被拒 / 没设备）：通话继续，按钮禁用。 */
     fun cameraBlocked(state: IMCallViewState) = state.copy(cameraOn = false, cameraBlocked = true)
 
-    /** 收进小窗。**接通之前不许收**，见 [IMCallViewState.canMinimize]。 */
+    /** 收进小窗。来电页与结束画面不许收，见 [IMCallViewState.canMinimize]。 */
     fun minimize(state: IMCallViewState) = if (state.canMinimize) state.copy(isMinimized = true) else state
 
     /** 从小窗 / 横幅展开回全屏。 */

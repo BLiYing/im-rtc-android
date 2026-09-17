@@ -52,6 +52,8 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
     private var downY = 0f
     private var dragging = false
     private var isVideo = false
+    /** 这一串手势是不是从挂断按钮上按下的，见 [onInterceptTouchEvent]。 */
+    private var downOnHangup = false
 
     init {
         body.background = IMKitTheme.circleDrawable(IMKitTheme.bannerBackground)
@@ -89,7 +91,7 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
 
     fun render(state: IMCallViewState) {
         icon.setImageResource((if (state.mediaType == "video") IMKitIcon.VIDEO else IMKitIcon.PHONE).resId)
-        duration.text = IMGrid.formatDuration(state.durationSec)
+        duration.text = IMGrid.bubbleText(state)
     }
 
     /**
@@ -135,10 +137,15 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
         }
     }
 
-    /** 挂断按钮自己处理触摸：不拦的话 onTouchEvent 会把它吞成「点球 = 展开」。 */
+    /**
+     * 挂断按钮自己处理触摸：不拦的话 onTouchEvent 会把它吞成「点球 = 展开」。
+     *
+     * **按下落在挂断上，这一整串手势都不拦。** 原先只放过 DOWN、MOVE / UP 照拦：按钮拿到 DOWN 之后
+     * UP 被父容器截走，按钮只收到 CANCEL——点了没反应，也不展开（2026-09-17 PKD130 真机）。
+     */
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN && hitsHangup(event)) return false
-        return true
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) downOnHangup = hitsHangup(event)
+        return !downOnHangup
     }
 
     private fun hitsHangup(event: MotionEvent): Boolean {
