@@ -884,7 +884,7 @@ class EngineLoopTest {
         /** 被要求「等新画面上屏再报首帧」的 uid，按先后。 */
         val awaitedFirstFrames = mutableListOf<String>()
         override fun awaitFirstVideoFrame(uid: String) { awaitedFirstFrames += uid }
-        override fun startLocalPreview(view: Any?) = Unit
+        override fun startLocalPreview(cid: String) = Unit
         override fun switchCamera() = Unit
         override fun setSpeakerOn(on: Boolean) = Unit
     }

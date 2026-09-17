@@ -215,7 +215,7 @@ class MuteBeforePublishTest {
         override fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) = Unit
         override fun claimRemoteTracks(owners: Map<String, String>) = Unit
         override fun attachView(uid: String, view: Any?) = Unit
-        override fun startLocalPreview(view: Any?) = Unit
+        override fun startLocalPreview(cid: String) = Unit
         override fun switchCamera() = Unit
         override fun setSpeakerOn(on: Boolean) = Unit
         override fun createVideoView(context: android.content.Context): android.view.View? = null

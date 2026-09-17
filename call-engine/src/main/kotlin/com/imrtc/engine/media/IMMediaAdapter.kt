@@ -118,8 +118,19 @@ interface IMMediaAdapter {
      */
     fun awaitFirstVideoFrame(uid: String) {}
 
-    /** 本端预览。 */
-    fun startLocalPreview(view: Any?)
+    /**
+     * 本端预览：起摄像头采集、造一条 **id 就是 `cid`** 的视频轨道，不发布。
+     *
+     * `cid` 由 Engine 发（预览在途时再调给的是同一个）。随后 [publish] 同一个 cid 时
+     * **沿用这条轨道**挂上 transceiver，不另开一路采集——预览与发布从此一个 cid 认到底。
+     */
+    fun startLocalPreview(cid: String)
+
+    /**
+     * 把本端 `cid` 那条轨道挂到视图上；`view` 为 null 表示卸载。
+     * 轨道与视图**谁先到都可能**（采集起来得慢），实现要在轨道出现时补接上。默认空实现：不渲染的适配器无事可做。
+     */
+    fun attachLocalView(cid: String, view: Any?) {}
 
     /**
      * 停掉进房前起的本端预览，**连采集一起停**（摄像头指示灯灭，设计 v3.7）。

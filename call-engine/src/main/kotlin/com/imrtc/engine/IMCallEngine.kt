@@ -316,13 +316,29 @@ class IMCallEngine private constructor(
         requireMedia()?.attachView(uid, view)
     }
 
-    fun startLocalPreview(view: Any?) = scheduler.post { requireMedia()?.startLocalPreview(view) }
+    /** 起本端预览（只采集不发布），当场返回 cid 供 [attachLocalView]；在途再调同一个，发布沿用它。无媒体返回空串报 2005。 */
+    fun startLocalPreview(): String {
+        val adapter = media ?: return "".also { scheduler.post { requireMedia() } }
+        val cid = publisher.videoCid.acquire()
+        scheduler.post { adapter.startLocalPreview(cid) }
+        return cid
+    }
+
+    /** 1.0.0 的旧形状，等于 `attachLocalView(startLocalPreview(), view)`。 */
+    @Deprecated("拿 cid 再挂视图", ReplaceWith("attachLocalView(startLocalPreview(), view)"))
+    fun startLocalPreview(view: Any?) = attachLocalView(startLocalPreview(), view)
+
+    /** 把本端 cid 那条轨道挂到视图上（传 [createVideoView] 的产物）；null 表示卸载。 */
+    fun attachLocalView(cid: String, view: Any?) = scheduler.post { requireMedia()?.attachLocalView(cid, view) }
 
     /**
-     * 停掉进房前的本端预览，**连摄像头一起关**（指示灯灭）。来电页 / 拨出中关摄像头时由 UIKit 调。
+     * 停掉进房前的本端预览，**连摄像头一起关**（指示灯灭）；没发布过的 cid 当场作废，再开是新的。
      * 摄像头已经发布的不受影响——通话中关摄像头走 [closeCamera]。
      */
-    fun stopLocalPreview() = scheduler.post { media?.stopLocalPreview() }
+    fun stopLocalPreview() {
+        publisher.videoCid.releaseIfUnpublished()
+        scheduler.post { media?.stopLocalPreview() }
+    }
 
     /**
      * 报某人画面的**层上界**（协议 §3.5：上界不是命令）。

@@ -73,6 +73,9 @@ object IMCallKit {
     private var localPreview: View? = null
     private var localPreviewStarted = false
 
+    /** 切后台停摄像头、回前台按原选择恢复，见 [IMBackgroundCamera]。 */
+    private val backgroundCamera = IMBackgroundCamera()
+
     /** 铃声播放层，见 [IMRingPlayer]。造得晚——要 `appContext`，[start] 里才有。 */
     private var ring: IMRingPlayer? = null
 
@@ -93,7 +96,10 @@ object IMCallKit {
         this.config = config
         if (asker == null) asker = IMPermissionActivity.asker(context.applicationContext)
         (context.applicationContext as? Application)?.let { IMActivityTracker.install(it) }
-        IMActivityTracker.onForegroundChanged = { foreground -> onForegroundChanged(foreground) }
+        IMActivityTracker.onForegroundChanged = { foreground ->
+            // 读属性不读参数：stop() 之后 Kit 的 engine 置空，这里就不该再去碰那个旧实例。
+            this.engine?.let { backgroundCamera.onForegroundChanged(it, state, foreground) }
+        }
     }
 
     @JvmStatic
@@ -208,6 +214,15 @@ object IMCallKit {
         update(IMCallViewReducer.outgoing(state, peers, mediaType, isGroup))
     }
 
+    /**
+     * 同上，宿主调的是 `engine.call(calleeIds, mediaType, options)`：群号与 `userData` 一起带进界面——
+     * 不带的话「添加成员」拿不到 `chatGroupId`，宿主的 [IMInviteMemberProvider] 列不出候选。
+     */
+    @JvmStatic
+    fun notifyOutgoing(peers: List<String>, mediaType: String, options: IMCallOptions) {
+        update(IMCallViewReducer.outgoing(state, peers, mediaType, options.isGroup, options.chatGroupId, options.userData))
+    }
+
     /** 宿主自己调了 `engine.joinRoom` 时同理。 */
     @JvmStatic
     fun notifyMeeting(roomId: String) {
@@ -297,7 +312,7 @@ object IMCallKit {
          指示灯亮着、按钮却显示关着——等于替用户开了摄像头。
         */
         if (!localPreviewStarted && wantsLocalPreview()) {
-            instance.startLocalPreview(view)
+            instance.attachLocalView(instance.startLocalPreview(), view)
             localPreviewStarted = true
         }
         return view
@@ -486,38 +501,6 @@ object IMCallKit {
 
     /** 收进小窗。接通之前不许收，见 [IMCallViewState.canMinimize]。 */
     internal fun minimize() = update(IMCallViewReducer.minimize(state))
-
-    /**
-     * App 切到后台 / 回到前台（交互稿 §03）。
-     *
-     * **后台不允许继续采集摄像头**（Android 从 9 开始就是这条规矩，各家 ROM 更严），
-     * 对端看到的就是一片黑——比看到头像糟糕得多。所以进后台把摄像头轨道 mute 掉，
-     * 对端收到「摄像头已关闭」、看到头像；回前台**恢复到用户原来的选择**：
-     * 他进后台前本来就关着摄像头，回前台不要替他打开。与 iOS 的 `IMCallController` 同一条规则。
-     *
-     * 进系统画中画不算切后台：那时候采集照跑，画面就在那一小块窗口里。
-     *
-     * **不管是否在通话都要喂给 Engine**：`setAppForeground` 只影响信令重连节奏
-     * （见 `IMSignalConnection` 类注释「后台重连节奏」），跟下面摄像头那段是两件事——
-     * 通话中被前台服务托着、App 本身被切到后台（比如通话中按了 Home）也算「后台」，
-     * 一样要按后台节奏重连，这样反而比前台的退避（最长 30s）更快够上服务端 5s 的等待窗口。
-     */
-    private fun onForegroundChanged(foreground: Boolean) {
-        val instance = engine ?: return
-        instance.setAppForeground(foreground)
-        if (!foreground) {
-            if (state.phase == IMCallViewState.Phase.IDLE || !state.cameraOn) return
-            cameraPausedByBackground = true
-            instance.closeCamera()
-            return
-        }
-        if (!cameraPausedByBackground) return
-        cameraPausedByBackground = false
-        if (state.cameraOn) instance.openCamera()
-    }
-
-    /** 摄像头是**因为切后台**才关的——只有这种情况回前台才自动打开。 */
-    private var cameraPausedByBackground = false
 
     /** 从小窗 / 横幅展开回全屏。 */
     internal fun expand() {

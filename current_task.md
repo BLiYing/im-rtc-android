@@ -7,13 +7,18 @@
 
 ## 当前焦点
 
+**2026-09-17 下午：清掉三条待办（已提交，`./scripts/test.sh` 6 步全绿；本端预览 cid 用户真机验过）。**
+- `IMCallKit.notifyOutgoing(peers, mediaType, IMCallOptions)` 重载：宿主自己 `engine.call(options)` 时群号 / `userData` 也进界面。为腾体量把切后台停摄像头拆到 `IMBackgroundCamera`。
+- 找向量不再逐级往上：`call-engine/build.gradle.kts` 的 `conformanceDir` 只认主检出 / `.claude/worktrees/<分支>` 两种布局（同 web `e58ec8e`），`RTC_CONFORMANCE_DIR` 相对路径按仓根解析；测试侧 `ConformanceVectors.locate()` 只认系统属性。
+- **本端预览对齐 cid**：`IMCallEngine.startLocalPreview(): String` + `attachLocalView(cid, view)`（旧的 `startLocalPreview(view)` 留 `@Deprecated`）。cid 由 `IMLocalVideoCid` 在调用方线程当场发，发布视频沿用；媒体层只剩**一条**摄像头轨道（id = cid），删掉 `PREVIEW_TRACK_ID` 与 `IMPreviewIntent`（起停都回到 Engine 线程上，不再需要那个号）。`IMMediaAdapter` 接口改了：`startLocalPreview(cid)`、新增 `attachLocalView(cid, view)`。**用户真机验过**：拨出中见自己且接通不断、来电页 / 通话中开关摄像头（灯灭 / 亮）、翻转镜像、切后台回来、群通话关着进房后再开（机型未记，下次补）。CLIENT_PARITY v1.40。
+
 **2026-09-17：夜里逐项补了五件（本地已提交、未推送），早上 PKD130 / Android 15 真机补验，顺手修了一个真机才暴露的问题。** SDK 1.0.0 已公网发布（JitPack，MIT），这些进下一个版本。
 - `c2c20db` 摄像头打不开 / 中途被抢走回报 2002，下次打开重起采集（`IMCameraEvents`，静默失败审计 android #1）。
   `24787c8` 真机发现 2002 走 `cameraBlocked` 会把按钮锁成「无权限」、整通开不回来 → 改为只关摄像头、按钮可点；**真机验过**：被抢后点开摄像头重出画面，对端恢复。
 - `4a5c983` 收 `call.ringing` 抛 `onUserRinging`，群通话里别人加的人也摆占位格（协议批次，server `dd60ca0`）。**真机验过**：bob 加 carol → 手机上「呼叫中…」→ 拒接「已拒绝」约 2s 收掉。
 - `a4c9fb0` 通话音频跟随系统：扬声器关着时耳机 / 蓝牙优先、监听插拔（`IMAudioRoutePolicy`）。真机只验了扬声器开关（type 2 ↔ 1），**没耳机 / 蓝牙，插拔未验**。
 - `38941d3` 会议房超过一屏「还有 N 人未显示」+ 屏外报 none（M1）；`61d09c6` 打开网络质量图标，「对方网络不佳」只在 1v1。
-- **体量**：`IMCallKit.kt` 599、`IMCallView.kt` 599、`IMSignalConnection.kt` 600 已到硬顶，下次改先拆。
+- **体量**：`IMCallEngine.kt` 600、`IMCallView.kt` 599、`IMSignalConnection.kt` 600 已到硬顶，下次改先拆；`IMCallKit.kt` 拆后约 580。
 
 ## 下一步
 
@@ -25,8 +30,7 @@
    - M8：两台设备按 call_id 加入不振铃直接接通；配了邀请鉴权回调时 1409 两句文案分得开。
    - 铃声：蓝牙耳机场景 + **补记机型与 Android 版本**（O+ / O- 焦点 API 走的哪条）。
    - 老批次（forceEnd 断网 / 秒挂、后台重连节奏、1v1 视频细节）：archive「2026-09-15：forceEnd …真机验收清单」。
-5. **本端预览对齐 cid**（`startLocalPreview(): cid`）：预览用固定 `PREVIEW_TRACK_ID`、发布时才生成 cid，对齐要动 `IMMediaAdapter` 与权限门时序，等真机窗口单独立项（原因全文在 archive）。
-6. 待办：`IMCallKit.notifyOutgoing` 没有带 `IMCallOptions` 的重载（替代路径 `placeCall(calleeIds, mediaType, options)`）；`call-engine/build.gradle.kts` 找向量仍逐级往上找、会捡到旧克隆；静默失败清单 `../im-rtc-server/docs/ops/silent-failure/android.md`。
+6. 待办：静默失败清单 `../im-rtc-server/docs/ops/silent-failure/android.md`。
 
 ## 已知坑 / 限制
 
@@ -52,7 +56,7 @@
 - **2006 阈值「3」未校准、Kit 不接 2006**：见 server「已知坑」。
 - **摄像头意图必须在进房前给 Engine**（`IMCallKit.syncCameraIntent`）；接通后才开的靠 `publishCameraIfMissing` 补发。
 - **关摄像头停的是采集**：进房前关 = `stopLocalPreview`，通话中关 = `setMuted` → `setCapturePaused`。
-- 本端 track id 必须就是 cid；远端轨道按 track_id 认领；到达顺序不定，统一在 `bindRemoteTracks` 判重换绑。
+- 本端 track id 必须就是 cid，**预览与发布是同一条轨道、同一个 cid**（`IMLocalVideoCid`）；本端渲染器与轨道谁先到都可能，统一在 `IMWebRTCAdapter.bindLocalView` 对齐；远端轨道按 track_id 认领；到达顺序不定，统一在 `bindRemoteTracks` 判重换绑。
 - 「人先进来、轨道后到」是常态：摆格子的动作要能在轨道到达时再做一遍（`invalidateReportedLayer`）。
 - `SurfaceViewRenderer` 的 init / scaler 只能主线程调，而调度器会吞异常（症状只有全黑）→ 一律走 `IMWebRTCAdapter.onMain`。
 - `SurfaceView` 息屏就没、不重画上一帧：回前台某格纯黑 = 对端不发帧了，别查渲染器。

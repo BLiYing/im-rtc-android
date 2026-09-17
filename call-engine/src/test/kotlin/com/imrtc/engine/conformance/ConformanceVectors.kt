@@ -41,31 +41,25 @@ internal object ConformanceVectors {
     }
 
     /**
-     * 找向量目录，三条路依次试：
-     * 1. 系统属性 `rtc.conformance.dir`（由 `build.gradle.kts` 从环境变量 `RTC_CONFORMANCE_DIR` 透传）；
-     * 2. 从工作目录逐级往上找 `im-rtc-server/docs/conformance`（五仓平铺在同一层时这条就够）；
-     * 3. 都没有就抛，并把找过的地方打出来——**不许静默跳过**。
+     * 找向量目录：**只认 Gradle 算好传进来的系统属性** `rtc.conformance.dir`（算法见 `call-engine/build.gradle.kts`
+     * 的 `conformanceDir`：设了 `RTC_CONFORMANCE_DIR` 就用它，否则只认同级 / worktree 两种布局）。
+     * 目录不在就抛，并说清楚找的是哪、从哪来的——**不许静默跳过，也不许往上一路猜**。
      */
     private fun locate(): File {
-        val fromProperty = System.getProperty("rtc.conformance.dir").orEmpty()
-        if (fromProperty.isNotBlank()) {
-            val dir = File(fromProperty)
-            check(dir.isDirectory) { "RTC_CONFORMANCE_DIR 指向的不是目录：$fromProperty" }
-            return dir
+        val path = System.getProperty("rtc.conformance.dir").orEmpty()
+        val source = System.getProperty("rtc.conformance.source").orEmpty()
+        check(path.isNotBlank()) {
+            "没拿到系统属性 rtc.conformance.dir——请经 Gradle 跑单测（./scripts/test.sh 或 ./gradlew :call-engine:testDebugUnitTest）。"
         }
-        val start = File(System.getProperty("user.dir") ?: ".").absoluteFile
-        var cursor: File? = start
-        val tried = ArrayList<String>()
-        while (cursor != null) {
-            val candidate = File(cursor, "im-rtc-server/docs/conformance")
-            tried.add(candidate.path)
-            if (candidate.isDirectory) return candidate
-            cursor = cursor.parentFile
+        val dir = File(path)
+        check(dir.isDirectory) {
+            if (source == "RTC_CONFORMANCE_DIR") {
+                "RTC_CONFORMANCE_DIR 指向的不是目录：$path"
+            } else {
+                "找不到一致性向量目录：$path\n" +
+                    "要么把 im-rtc-server 克隆到与本仓同级（worktree 须在 <主检出>/.claude/worktrees/<分支>），要么设环境变量 RTC_CONFORMANCE_DIR。"
+            }
         }
-        error(
-            "找不到一致性向量目录。工作目录=$start\n" +
-                "找过：\n  " + tried.joinToString("\n  ") + "\n" +
-                "要么把 im-rtc-server 克隆到与本仓同级，要么设环境变量 RTC_CONFORMANCE_DIR。"
-        )
+        return dir
     }
 }

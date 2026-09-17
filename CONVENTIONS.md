@@ -217,8 +217,11 @@ libwebrtc 是几十 MB 的预编译包，一旦被 Engine 直接依赖，「跑�
   > iOS 的 `Vectors.swift`）。**只修脚本那处更糟**：原先脚本先失败、报错还算清楚；
   > 修好之后测试才跑到，报出来的信息反而更难懂。
   > 现在统一成 Android 一直用的形状——**脚本算一次，`export` 给测试运行器**，
-  > 测试代码那份改成「从自己往上逐级找同级的 im-rtc-server」，
-  > 于是不走脚本直接 `npx vitest` / `swift test` 也能工作。
+  > 测试侧那份按「主检出 / `.claude/worktrees/<分支>`」两种布局算出兄弟仓**唯一**该在的位置
+  > （本仓算在 `call-engine/build.gradle.kts` 的 `conformanceDir`，经系统属性交给测试），
+  > 于是不走脚本直接 `./gradlew` / `npx vitest` / `swift test` 也能工作。
+  > **别写成「往上逐级找到根」**：同级缺失时它会爬出本仓、捡到上层某份旧的 im-rtc-server，
+  > 拿旧向量跑绿（web 2026-09-10 修过，本仓 2026-09-17 跟上）。
 
   **例外**：纯文档的小改（typo、补一句说明）可以直接在 main 上做，
   但只要动到代码或跨仓契约，就走 worktree。

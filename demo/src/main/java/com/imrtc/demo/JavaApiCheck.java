@@ -175,7 +175,10 @@ final class JavaApiCheck {
         engine.switchCamera();
         engine.setSpeakerOn(true);
         engine.attachView("bob", engine.createVideoView(context));
-        engine.startLocalPreview(engine.createVideoView(context));
+        // 本端预览：先拿 cid，再按 cid 挂视图（与 iOS / Web 同形）。
+        String previewCid = engine.startLocalPreview();
+        engine.attachLocalView(previewCid, engine.createVideoView(context));
+        engine.stopLocalPreview();
 
         // UIKit 的入口。两参数（默认配置）与三参数（自带配置）两种形态 Java 都要能写。
         IMCallKitConfig kitConfig = new IMCallKitConfig();
@@ -237,6 +240,8 @@ final class JavaApiCheck {
 
         IMCallEngineListener wrapped = IMCallKit.wrap(listener);
         IMCallKit.notifyOutgoing(Arrays.asList("bob"), "video", false);
+        // 宿主自己带 IMCallOptions 调了 engine.call 时，界面也要拿到群号。
+        IMCallKit.notifyOutgoing(Arrays.asList("bob", "carol"), "video", options);
         IMCallKit.notifyMeeting("room-1");
         // 经 Kit 拨出 / 进会议：先过权限门再发帧。两参数与三参数两种形态。
         IMCallKit.placeCall(Arrays.asList("bob"), "audio");

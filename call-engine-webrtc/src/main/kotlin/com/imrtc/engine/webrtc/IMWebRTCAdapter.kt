@@ -102,29 +102,27 @@ class IMWebRTCAdapter @JvmOverloads constructor(
      *
      * 远端：[trackOwners] 是 track_id → uid，反着找。**理论上一个 uid 可能挂多条视频轨道**，
      * v1 一人一条，取第一条命中的即可；真拿不到（归属还没到）就给空串，不造假值。
-     * 本端预览（`uid == LOCAL`）：轨道 id 就是 [videoTrack] / [previewTrack] 自己的 id。
+     * 本端预览（`uid == LOCAL`）：轨道 id 就是 [videoTrack] 的 id（= cid）。
      */
     private fun trackIdFor(uid: String): String = if (uid == LOCAL) {
-        videoTrack?.id() ?: previewTrack?.id() ?: ""
+        videoTrack?.id() ?: ""
     } else {
         trackOwners.entries.firstOrNull { it.value == uid }?.key ?: ""
     }
 
     private var audioTrack: AudioTrack? = null
 
-    /** 推上去的那条视频轨道，id = cid。 */
+    /**
+     * 本端**唯一**那条摄像头轨道，id = cid（协议 §3.2）。预览时造（[startLocalPreview]），
+     * 发布同一个 cid 时沿用它挂上 transceiver——cid 由 Engine 在预览那一刻就发了，不用再等进房。
+     * （原先预览另用一条固定 id 的轨道，宿主拿不到 cid，没法 `attachLocalView(cid, view)`。）
+     */
     @Volatile
     private var videoTrack: VideoTrack? = null
 
-    /**
-     * **只给本端预览用的那条轨道**，与 [videoTrack] 共用同一个 [videoSource]。
-     *
-     * 为什么要两条：拨出中还没有房间可发布，而用户此刻就该看见自己（草图 §03-E）。
-     * 而推流那条的 id **必须是 cid**（协议 §3.2），cid 要等进房发布时才生成——
-     * 所以预览不能等它。一个 source 上挂两条 track 是 libwebrtc 允许的，摄像头只开一次。
-     */
+    /** [videoTrack] 挂上 transceiver 没有。没挂的才归 [stopLocalPreview] 停。 */
     @Volatile
-    private var previewTrack: VideoTrack? = null
+    private var videoPublished = false
 
     /** 采集这一摊被主线程（预览）与 Engine 线程（发布）同时碰，统一在这把锁下。 */
     private val captureLock = Any()
@@ -141,8 +139,9 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     @Volatile
     private var capturePaused = false
 
-    /** 本端预览「开 / 关」只认最后一次（见 [IMPreviewIntent]）。 */
-    private val previewIntent = IMPreviewIntent()
+    /** 本端渲染器要的 cid、此刻真接在它上面的轨道。两个都只在主线程上碰，见 [bindLocalView]。 */
+    private var localViewCid: String? = null
+    private var localBound: VideoTrack? = null
 
     /** uid → 渲染器（本端预览用 [LOCAL] 这把钥匙）。**卸载时一定要先摘轨道**。 */
     private val renderers = LinkedHashMap<String, SurfaceViewRenderer>()
@@ -203,7 +202,9 @@ class IMWebRTCAdapter @JvmOverloads constructor(
                 remoteVideo[trackId]?.let { track -> runCatching { track.removeSink(renderer) } }
             }
             attached.clear()
-            renderers[LOCAL]?.let { renderer -> runCatching { videoTrack?.removeSink(renderer) } }
+            renderers[LOCAL]?.let { renderer -> runCatching { localBound?.removeSink(renderer) } }
+            localBound = null
+            localViewCid = null
             renderers.values.forEach { renderer -> runCatching { renderer.release() } }
             renderers.clear()
             firstFrames.clear()
@@ -237,11 +238,13 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             return
         }
 
-        // 采集可能早就起来了（拨出中的本端预览）——那时摄像头只开一次，这里只是多挂一条轨道。
-        val source = ensureCapture() ?: return
-        // track id 就是 cid（同上面那条注释）。
-        val track = peers.factory().createVideoTrack(cid, source)
-        videoTrack = track
+        // 采集可能早就起来了（拨出中的本端预览）——那时摄像头只开一次，轨道也沿用预览那条（id 同为 cid）。
+        val track = synchronized(captureLock) {
+            val source = ensureCapture() ?: return
+            videoTrack?.takeIf { it.id() == cid } ?: peers.factory().createVideoTrack(cid, source).also { videoTrack = it }
+        }
+        videoPublished = true
+        onMain { bindLocalView() }
         // simulcast：三层同时发上去，SFU 按每个订阅者的网速替他挑一层。
         // rid 必须是 l/m/h——与服务端的层选择、max_layer 枚举同名。
         val encodings = uplink.encodings(simulcast)
@@ -271,7 +274,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
      */
     override fun setMuted(kind: String, muted: Boolean) {
         if (kind != "video") { audioTrack?.setEnabled(!muted); return }
-        val track = videoTrack ?: return
+        val track = videoTrack?.takeIf { videoPublished } ?: return
         track.setEnabled(!muted)
         setCapturePaused(muted)
     }
@@ -323,37 +326,55 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     }
 
     /**
-     * 本端预览。**它自己会把摄像头开起来**（只采集、不发布）。
+     * 本端预览：起摄像头采集、造 id = `cid` 的轨道（只采集、不发布）。**画面挂载是 [attachLocalView] 的事**。
      *
-     * 拨出中还没有房间可发布，而用户此刻就该看见自己。预览走 [previewTrack]，
-     * 与推流那条共用同一个 source，所以摄像头只开一次、切换也只有一处。
+     * 与 [stopLocalPreview] 都由 Engine 在它那一条线程上调，先后就是 Kit 调用的先后——
+     * 原先起采集是跟着挂渲染器排在主线程上的，得靠一个「只认最后一次」的号防「关了又亮」，现在不需要了。
      */
-    override fun startLocalPreview(view: Any?) {
-        // 号在 Engine 线程上领：与 stopLocalPreview 同一条线程，先后就是 Kit 调用的先后。
-        val token = previewIntent.begin()
-        onMain { attachLocalPreview(view, token) }
+    override fun startLocalPreview(cid: String) {
+        synchronized(captureLock) {
+            val existing = videoTrack
+            if (existing == null) {
+                val source = ensureCapture() ?: return
+                videoTrack = peers.factory().createVideoTrack(cid, source)
+            } else if (existing.id() != cid) {
+                IMRTCLog.w("media", "本端已有摄像头轨道 ${existing.id()}，不为预览 cid=$cid 另开一路")
+            }
+        }
+        onMain { bindLocalView() }
     }
 
-    private fun attachLocalPreview(view: Any?, token: Long) {
-        if (!previewIntent.isCurrent(token)) return
-        renderers[LOCAL]?.let { old ->
-            runCatching { previewTrack?.removeSink(old) }
+    /** 挂本端画面。视图每挂一次重新 `init`（首帧、尺寸事件跟着重来）；轨道还没起来的话等 [bindLocalView] 补接。 */
+    override fun attachLocalView(cid: String, view: Any?) = onMain {
+        renderers.remove(LOCAL)?.let { old ->
+            runCatching { localBound?.removeSink(old) }
+            localBound = null
             runCatching { old.release() }
         }
-        val renderer = view as? SurfaceViewRenderer ?: run {
-            renderers.remove(LOCAL)
-            return
-        }
+        val renderer = view as? SurfaceViewRenderer
+        localViewCid = cid.takeIf { renderer != null }
+        if (renderer == null) return@onMain
         // **本端预览也要 RendererEvents**：原先传 null，于是拿不到帧尺寸、缩放判据无从计算。
         renderer.init(peers.eglBase.eglBaseContext, firstFrameEvents(LOCAL))
         renderer.setEnableHardwareScaler(true)
         fitter.mount(LOCAL, renderer)
         renderer.setMirror(frontCamera)
         renderers[LOCAL] = renderer
-        // 对号与起采集在同一把锁里：停止要么整个排在前面（这里作罢），要么排在后面（把这次停掉）。
-        synchronized(captureLock) {
-            if (previewIntent.isCurrent(token)) ensurePreviewTrack()?.addSink(renderer)
-        }
+        bindLocalView()
+    }
+
+    /**
+     * 让本端渲染器上接着的恰好是 cid 对得上的那条轨道。**幂等**，只在主线程上调。
+     *
+     * 轨道在 Engine 线程上起、视图在主线程上挂，谁先到都可能；采集停掉时轨道没了，这里负责把 sink 摘掉。
+     */
+    private fun bindLocalView() {
+        val renderer = renderers[LOCAL]
+        val track = videoTrack?.takeIf { renderer != null && it.id() == localViewCid }
+        if (track === localBound) return
+        renderer?.let { r -> localBound?.let { runCatching { it.removeSink(r) } } }
+        if (track != null && renderer != null) runCatching { track.addSink(renderer) }
+        localBound = track
     }
 
     /**
@@ -365,8 +386,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
      */
     override fun stopLocalPreview() {
         synchronized(captureLock) {
-            if (videoTrack != null) return
-            previewIntent.cancel()
+            if (videoPublished) return
             if (videoSource == null) return
             stopCapture()
         }
@@ -375,15 +395,6 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         } else {
             IMCallForegroundService.stop(appContext)
         }
-    }
-
-    /** 造（或复用）只给预览看的那条轨道。拿不到摄像头时返回 null，界面退回头像。 */
-    private fun ensurePreviewTrack(): VideoTrack? {
-        previewTrack?.let { return it }
-        val source = ensureCapture() ?: return null
-        val track = peers.factory().createVideoTrack(PREVIEW_TRACK_ID, source)
-        previewTrack = track
-        return track
     }
 
     /**
@@ -493,11 +504,10 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     }
 
     private fun stopCapture() = synchronized(captureLock) {
-        val preview = previewTrack
-        previewTrack = null
         videoTrack = null
-        // 先把预览的 sink 摘干净再 dispose，反了会崩在 native 层。
-        onMain { renderers[LOCAL]?.let { r -> runCatching { preview?.removeSink(r) } } }
+        videoPublished = false
+        // 先把本端渲染器上的 sink 摘干净再 dispose，反了会崩在 native 层（轨道没了，bindLocalView 就是摘）。
+        onMain { bindLocalView() }
         cameraEvents?.retire()
         cameraEvents = null
         runCatching { capturer?.stopCapture() }
@@ -572,8 +582,5 @@ class IMWebRTCAdapter @JvmOverloads constructor(
 
     private companion object {
         const val LOCAL = "__local__"
-
-        /** 预览轨道的 id。**不会上线路**（它没进过任何 transceiver），随便取一个不与 cid 冲突的。 */
-        const val PREVIEW_TRACK_ID = "im-local-preview"
     }
 }

@@ -33,6 +33,9 @@ internal class IMLocalPublisher(
     /** 本端已发布的 Track：cid → kind。挂断时要按它去停采集。 */
     val tracks = LinkedHashMap<String, String>()
 
+    /** 摄像头那条轨道的 cid：预览与发布共用一个，见 [IMLocalVideoCid]。 */
+    val videoCid = IMLocalVideoCid(nowMs)
+
     /** 刚进房：音频照发，视频看 [cameraMuted]。 */
     fun publishDefaults(state: IMEngineContext, cameraMuted: Boolean) {
         publish("audio")
@@ -57,7 +60,10 @@ internal class IMLocalPublisher(
         publish("video")
     }
 
-    fun clear() = tracks.clear()
+    fun clear() {
+        tracks.clear()
+        videoCid.reset()
+    }
 
     /** 会议房没有 call，媒体类型无从谈起——按视频会议处理（草图 §08）。 */
     private fun mediaType(state: IMEngineContext) =
@@ -66,7 +72,8 @@ internal class IMLocalPublisher(
     private fun publish(kind: String) {
         val adapter = media ?: return
         val video = kind == "video"
-        val cid = "local-$kind-${nowMs()}"
+        // 视频沿用预览已经领过的 cid（媒体层那条轨道的 id 就是它），没预览过才现领。
+        val cid = if (video) videoCid.publish() else "local-$kind-${nowMs()}"
         tracks[cid] = kind
         adapter.publish(cid, kind, simulcast = video)
         input(

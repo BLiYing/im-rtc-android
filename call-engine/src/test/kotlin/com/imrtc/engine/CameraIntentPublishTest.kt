@@ -6,6 +6,7 @@ import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.signaling.FakeScheduler
 import com.imrtc.engine.signaling.FakeTransport
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 /**
@@ -184,10 +185,99 @@ class CameraIntentPublishTest {
         assertEquals(framesBefore, transport.sent.size)
     }
 
+    // ── 本端预览的 cid 与发布对齐（§7.5 `startLocalPreview(): cid`，2026-09-17） ──
+
+    private fun publishedVideoCid() = transport.sent
+        .filter { it.type == IMFrameType.ROOM_PUBLISH && (it.data["kind"] as IMJson.Str).value == "video" }
+        .map { (it.data["cid"] as IMJson.Str).value }
+        .single()
+
+    private fun endCall() = transport.deliver(
+        IMFrameType.CALL_ENDED,
+        "",
+        mapOf(
+            "call_id" to IMJson.Str("call-1"),
+            "reason" to IMJson.Str("hangup"),
+            "duration_sec" to IMJson.Num(3),
+        ),
+    )
+
+    @Test
+    fun `预览领到的 cid 就是进房发布视频用的 cid，媒体层也按它起预览`() {
+        login()
+        val cid = engine.startLocalPreview()
+        engine.attachLocalView(cid, "view")
+        engine.call(listOf("bob"), "video")
+        connectAndJoin("video")
+
+        assertEquals(cid, publishedVideoCid())
+        assertEquals(listOf(cid), media.previewCids)
+        assertEquals(listOf(cid to "view"), media.localViews)
+        assertEquals(cid, media.publishedCids.last())
+    }
+
+    @Test
+    fun `预览在途时再调一次，拿回同一个 cid`() {
+        login()
+        val first = engine.startLocalPreview()
+        assertEquals(first, engine.startLocalPreview())
+    }
+
+    @Test
+    fun `进房前关了预览再开，换一个新 cid，发布用新的`() {
+        login()
+        val old = engine.startLocalPreview()
+        engine.stopLocalPreview()
+        val fresh = engine.startLocalPreview()
+        assertNotEquals(old, fresh)
+
+        engine.call(listOf("bob"), "video")
+        connectAndJoin("video")
+        assertEquals(fresh, publishedVideoCid())
+    }
+
+    @Test
+    fun `已经发布的摄像头关了预览再开，cid 不变`() {
+        login()
+        engine.call(listOf("bob"), "video")
+        connectAndJoin("video")
+        val published = publishedVideoCid()
+
+        engine.closeCamera()
+        engine.stopLocalPreview()
+        assertEquals(published, engine.startLocalPreview())
+    }
+
+    @Test
+    fun `没预览过、进房后才开摄像头：补发的 cid 之后开预览也拿得到`() {
+        login()
+        engine.closeCamera()
+        engine.call(listOf("bob"), "video")
+        connectAndJoin("video")
+        ackPublishes()
+
+        engine.openCamera()
+        assertEquals(publishedVideoCid(), engine.startLocalPreview())
+    }
+
+    @Test
+    fun `通话结束后 cid 作废，下一通预览是新的`() {
+        login()
+        engine.call(listOf("bob"), "video")
+        connectAndJoin("video")
+        val first = publishedVideoCid()
+        endCall()
+
+        assertNotEquals(first, engine.startLocalPreview())
+    }
+
     /** 只记录发布与协商的媒体适配器。 */
     private class RecordingMedia : IMMediaAdapter {
         val published = mutableListOf<String>()
+        val publishedCids = mutableListOf<String>()
         val offers = mutableListOf<String>()
+        val previewCids = mutableListOf<String>()
+        val localViews = mutableListOf<Pair<String, Any?>>()
         var previewStops = 0
 
         override fun stopLocalPreview() {
@@ -196,6 +286,7 @@ class CameraIntentPublishTest {
 
         override fun publish(cid: String, kind: String, simulcast: Boolean) {
             published += kind
+            publishedCids += cid
         }
 
         override fun createOffer(pc: String) {
@@ -212,7 +303,13 @@ class CameraIntentPublishTest {
         override fun applyRemoteCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int) = Unit
         override fun claimRemoteTracks(owners: Map<String, String>) = Unit
         override fun attachView(uid: String, view: Any?) = Unit
-        override fun startLocalPreview(view: Any?) = Unit
+        override fun startLocalPreview(cid: String) {
+            previewCids += cid
+        }
+
+        override fun attachLocalView(cid: String, view: Any?) {
+            localViews += cid to view
+        }
         override fun switchCamera() = Unit
         override fun setSpeakerOn(on: Boolean) = Unit
         override fun createVideoView(context: android.content.Context): android.view.View? = null
