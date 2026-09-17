@@ -49,11 +49,15 @@ interface IMCallEngineListener {
     fun onTokenWillExpire(expiresAtMs: Long) {}
 
     /**
-     * 任意内部错误。`code` 取自五仓共用的错误码表；`name` 是错误码的机读名
-     * （snake_case，如 `bad_params`，内部 `IMErrorCode` 已有的直接用它的 `wireName`）；
-     * `message` 是英文短语，**别直接显示给用户**。
+     * **找不到调用方的错误**（2.0.0 起）：断线后放弃重连、服务端主动推的 `sys.error`、媒体层自发故障、
+     * 引擎随后自动发的连锁帧失败（例如接听之后的 `room.join`），以及**调发起类方法时没传
+     * [IMResultCallback]** 的那次失败。传了回调的失败只从回调回来，这里不会再报一次。
+     *
+     * `code` 取自五仓共用的错误码表；`name` 是错误码的机读名（snake_case，如 `bad_params`）；
+     * `message` 给开发者看，**别直接显示给用户**；`forType` 是出错的请求帧类型（如 `room.join`），
+     * 没有对应请求时为空串。
      */
-    fun onError(code: Int, name: String, message: String) {}
+    fun onError(code: Int, name: String, message: String, forType: String) {}
 
     // ── 来电与拨出 ────────────────────────────────────────────────────
 

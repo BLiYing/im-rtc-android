@@ -7,6 +7,11 @@
 
 ## 当前焦点
 
+**2026-09-17 夜：「调用结果回给调用方」（2.0.0，server `docs/design/ACTION_RESULT_DESIGN.md`）本端已实现、未提交，等 code-review。** `test.sh` 6 步全绿（engine 204 条，新增 `ActionResultTest` 16 条）。
+- 发起类方法加可选 `IMResultCallback<T>`（主线程、恰好一次），不传回调失败退回 `onError`；`onError` 加 `forType`；新增公开 `IMRTCError`；`call` 结果值是 callId；`login` 结果是第一次握手的结论。
+- 核心循环拆到 `IMFrameLoop`、两个事件出口拆到 `IMEngineEvents`（门面 512 行）；退出类失败本地收场；destroy 后发起类 2005、清理 / 提示类空操作、`forceEnd` 竞态已修、调度器收不下时当场 2005。
+- Kit 不再在 `onError` 里靠 `joining` 猜归属：拨号 / 加入 / 加人的文案从结果取码（`IMKitResults`）。**真机未验**：joinCall 1202 / 1402 / 1409 三种文案、拨号拿到 callId、通话中断网再挂断。
+
 **2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `5ad5bad`…`e11761f`，`test.sh` 6 步全绿；用户已复看，正常）。**
 - **行为修复 `5ad5bad`**：关闭码 4400 原先落进默认分支一直重连，改从 `IMCloseCode.shouldReconnect` 取判据，只报 `onDisconnected(4400, false)`、不抛 `onKickedOut`，对齐 iOS / Web（CLIENT_PARITY 那句「4400 四端都不重连」此前对 Android 不成立，现在成立）。JVM 单测 8 条，真机没造 4400。
 - Demo 通话记录补齐 answered_elsewhere / rejected_elsewhere / room_closed，kicked 改「已被移出」。
@@ -19,8 +24,7 @@
 1. **真机窗口清单**：
    - 铃声：蓝牙耳机场景 + **补记机型与 Android 版本**（O+ / O- 焦点 API 走的哪条）。
    - 老批次（forceEnd 断网 / 秒挂、后台重连节奏、1v1 视频细节）：archive「2026-09-15：forceEnd …真机验收清单」。
-2. destroy 对表查出的本端欠账（CLIENT_PARITY `[^destroy]`，从 web 待办挪来）：没有 destroyed 标志、没有 2005，销毁后走 `scheduler.post` 的方法一律静默丢弃；
-   `post` 查 `isShutdown` 与 `execute` 之间的竞态会抛 `RejectedExecutionException`；`destroy()` 后立刻 `forceEnd()` 可能 `onCallEnd` 永远不来。
+2. 2.0.0 调用结果改造：等 code-review → 提交 → 真机验（见当前焦点）→ 发版。
 3. 待办：静默失败清单 `../im-rtc-server/docs/ops/silent-failure/android.md`。
 
 ## 已知坑 / 限制
@@ -62,7 +66,7 @@
 - `onDisconnected(code, willReconnect)`：`willReconnect` 由 `IMSignalConnection` 当场裁决，Kit 直接用 `!willReconnect` 判「已放弃」。
   **关闭码要不要重连只看 `IMCloseCode.shouldReconnect`**（与 `error_codes.json` 的 `close_codes[].reconnect` 一致），特例只有两条：4401 数到 3 次、1000 非自主关闭照常重连。
 
-**体量（都贴着 600）**：`IMCallEngine.kt` 599、`IMCallView.kt` 599、`IMWebRTCAdapter.kt` 595、`IMCallKit.kt` 593、`IMCallViewState.kt` 588、`IMSignalConnection.kt` 573——下次改先拆。
+**体量（都贴着 600）**：`IMCallKit.kt` 595、`IMCallView.kt` 599、`IMWebRTCAdapter.kt` 595、`IMCallViewState.kt` 588、`IMSignalConnection.kt` 574——下次改先拆。
 
 ## 关联工程 / 常用命令
 

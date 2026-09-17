@@ -34,6 +34,6 @@ internal class IMBackgroundCamera {
         }
         if (!pausedByBackground) return
         pausedByBackground = false
-        if (state.cameraOn) instance.openCamera()
+        if (state.cameraOn) instance.openCamera(IMKitResults.logOnly("回前台开摄像头"))
     }
 }

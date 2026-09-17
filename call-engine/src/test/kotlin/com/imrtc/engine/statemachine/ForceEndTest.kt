@@ -244,7 +244,8 @@ class ForceEndTest {
 
         val pressed = IMCallMachine.reduce(inviting, IMMachineInput.Act("cancel", emptyMap()))
         assertTrue(pressed.send.isEmpty())
-        assertTrue("不许本地拒成 2005", pressed.emit.isEmpty())
+        assertTrue("不抛回调", pressed.emit.isEmpty())
+        assertEquals("不许本地拒成 2005", null, pressed.reject)
         assertTrue(pressed.state.cancelPending)
 
         val landed = IMCallMachine.reduce(

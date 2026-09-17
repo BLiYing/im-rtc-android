@@ -313,7 +313,10 @@ internal object DemoSession {
         kitConfig.inviteMemberProvider = DemoInviteProvider()
         kitConfig.allowsManualUidInput = true
         IMCallKit.start(applicationContext, instance, kitConfig)
-        instance.login(newToken)
+        // 2.0.0：登录结果从回调回来（第一次握手的结论），这里只留日志；连接态仍看 onConnected / onDisconnected。
+        instance.login(newToken) { _, error ->
+            if (error != null) IMRTCLog.w("demo", "登录没成：${error.code} ${error.name} ${error.message}")
+        }
         connectionText = "连接中…"
         notifyChanged()
     }
@@ -491,9 +494,9 @@ internal object DemoSession {
             }
         }
 
-        override fun onError(code: Int, name: String, message: String) {
+        override fun onError(code: Int, name: String, message: String, forType: String) {
             if (stale) return
-            IMRTCLog.w("demo", "错误 $code $name $message")
+            IMRTCLog.w("demo", "错误 $code $name for=$forType $message")
         }
 
         override fun onCallReceived(

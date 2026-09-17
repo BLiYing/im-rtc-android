@@ -162,6 +162,21 @@ final class JavaApiCheck {
         engine.forceEnd();
         engine.inviteMore(Arrays.asList("dave"));
         engine.joinCall("call-1");
+        // 2.0.0：发起类方法的结果回调。单方法接口，Java 写 lambda；call 的结果值是 callId。
+        engine.call(Arrays.asList("bob"), "audio", false, (callId, error) -> {
+            if (error != null) {
+                int code = error.getCode();
+                String name = error.getName();
+                String forType = error.getForType();
+            } else {
+                String id = callId;
+            }
+        });
+        engine.call(Arrays.asList("bob", "carol"), "video", options, (callId, error) -> { });
+        engine.hangup((unit, error) -> { });
+        engine.joinCall("call-1", (unit, error) -> { });
+        engine.inviteMore(Arrays.asList("dave"), (unit, error) -> { });
+        engine.login("token", (unit, error) -> { });
 
         // 会议房
         engine.joinRoom("room-1", "room-token");
@@ -177,6 +192,9 @@ final class JavaApiCheck {
         engine.attachView("bob", engine.createVideoView(context));
         // 本端预览：先拿 cid，再按 cid 挂视图（与 iOS / Web 同形）。
         String previewCid = engine.startLocalPreview();
+        String previewCid2 = engine.startLocalPreview((cid, error) -> { });
+        engine.switchCamera((unit, error) -> { });
+        engine.openCamera((unit, error) -> { });
         engine.attachLocalView(previewCid, engine.createVideoView(context));
         engine.stopLocalPreview();
 

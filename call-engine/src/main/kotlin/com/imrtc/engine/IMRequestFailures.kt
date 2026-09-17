@@ -1,13 +1,13 @@
 package com.imrtc.engine
 
 import com.imrtc.engine.log.IMRTCLog
-import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.statemachine.IMCallState
 import com.imrtc.engine.statemachine.IMEngineContext
 import com.imrtc.engine.statemachine.IMMachineInput
 import com.imrtc.engine.statemachine.IMOutgoingFrame
+import com.imrtc.engine.statemachine.IMRoomState
 
 /**
  * `IMCallEngine.onRequestFailed` 的判断表：请求被服务端拒了（或没连接、超时）之后该做什么。
@@ -29,6 +29,13 @@ import com.imrtc.engine.statemachine.IMOutgoingFrame
  * 2. **没有通话（会议房）**，只摘掉那一条 `publishing`，不收场、不额外抛回调、不离房。
  * `room.subscribe` 被拒**从不收场**，只摘 `subscribing` 那条记账——最常见的 1301
  * （`track_not_found`）是订阅与对方 `track_unpublished` 赛跑输了，通话本身没事。
+ *
+ * **退出类被拒也要本地收场**（2.0.0，ACTION_RESULT_DESIGN D2）：用户按的是「结束」，服务端拒了
+ * （最常见的是通话已经结束 1402 / 1401）、超时或根本没发出去，都不该让界面停在通话里。
+ * `call.hangup` / `call.reject` / `call.cancel` 与强制收场同一份收场计算，只是不再发帧；
+ * `room.leave` 先走 `leave_failed`，房间还没回 idle（等应答期间断线进了 reconnecting）且没有通话时同样本地收场。
+ *
+ * 错误本身交给谁（调用方还是 `onError`）由门面决定，这里只管状态。
  */
 internal object IMRequestFailures {
 
@@ -36,20 +43,18 @@ internal object IMRequestFailures {
      * @param ctx 状态机此刻的快照，只用来判断「有没有通话」，不在这里改。
      * @param input 门面唯一的状态机入口（`IMCallEngine.input`）。
      * @param forceEnd 门面的强制收场（`IMForceEnd.run`），带上覆盖的结束原因。
+     * @param snapshot 状态机此刻的快照（回滚之后再看一眼用）。
+     * @param endLocally 按此刻状态本地收场、不发帧。
      */
     fun handle(
         ctx: IMEngineContext,
         frame: IMOutgoingFrame,
-        code: IMErrorCode?,
-        message: String,
-        dispatcher: IMEventDispatcher,
         input: (IMMachineInput) -> Unit,
         forceEnd: (IMCallEndReason) -> Unit,
+        snapshot: () -> IMEngineContext,
+        endLocally: () -> Unit,
     ) {
-        val type = frame.type
-        IMRTCLog.w("engine", "$type 被拒：${code?.wireName} $message")
-        dispatcher.error((code ?: IMErrorCode.INTERNAL).code, message)
-        when (type) {
+        when (frame.type) {
             IMFrameType.CALL_INVITE, IMFrameType.CALL_ACCEPT, IMFrameType.CALL_JOIN ->
                 input(IMMachineInput.Internal("call_failed"))
             IMFrameType.ROOM_JOIN -> input(IMMachineInput.Internal("join_failed"))
@@ -57,7 +62,12 @@ internal object IMRequestFailures {
             // 而那正说明我们已经不在房里了。不接这一条的话房间永久停在 leaving——
             // 媒体停不掉（摄像头与前台服务一直开着），之后 join 也被本地拒，
             // 这台 Engine 除非 logout 否则再也进不了房。
-            IMFrameType.ROOM_LEAVE -> input(IMMachineInput.Internal("leave_failed"))
+            IMFrameType.ROOM_LEAVE -> {
+                input(IMMachineInput.Internal("leave_failed"))
+                val now = snapshot()
+                if (now.room.state != IMRoomState.IDLE && now.call.state == IMCallState.IDLE) endLocally()
+            }
+            IMFrameType.CALL_HANGUP, IMFrameType.CALL_REJECT, IMFrameType.CALL_CANCEL -> endLocally()
             IMFrameType.ROOM_PUBLISH -> {
                 if (ctx.call.state != IMCallState.IDLE) {
                     IMRTCLog.w("engine", "发布被拒，结束本端通话 call_id=${ctx.call.callId}")

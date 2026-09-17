@@ -44,29 +44,11 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     }
 
     /**
-     * 加人 / 加入的失败分支（交互稿 §05、HOST_INTEGRATION_DESIGN §3.4）：
-     * 满员出提示；本端已不在通话里（1407，只会来自加人）把入口藏掉；
-     * 1409（宿主邀请鉴权回调拒绝）按「加人」还是「加入」分两句文案。别的错误码由宿主处理。
+     * **找不到调用方的错误**（2.0.0 起）。Kit 自己发起的调用（拨号、加入、加人、接听……）都带着结果回调，
+     * 那些失败从 [IMKitResults] 回来、不经过这里；这里只剩媒体层自发的故障。别的错误码由宿主处理。
      */
-    override fun onError(code: Int, name: String, message: String) {
+    override fun onError(code: Int, name: String, message: String, forType: String) {
         when (code) {
-            // 加人 / 加入被拒都可能满员：出提示，**并且把刚摆上去的占位格收回来**（加入没有占位格，空操作）。
-            1202 -> {
-                IMCallKit.hint("通话已满员（最多 9 人）")
-                IMCallKit.revokeLastInvite()
-            }
-            1407 -> {
-                IMCallKit.update(IMCallViewReducer.inviteDenied(state))
-                IMCallKit.revokeLastInvite()
-            }
-            1409 -> if (IMJoinCallState.joining) {
-                IMCallKit.hint("无法加入该通话")
-            } else {
-                IMCallKit.hint("对方暂时无法被邀请")
-                IMCallKit.revokeLastInvite()
-            }
-            // Engine 本地就拒掉的加入（状态不对 / 没登录）没有 onCallEnd，要自己收回「接通中…」。
-            2005, 2007 -> if (IMJoinCallState.onLocalRejection(code)) IMCallKit.hint("无法加入该通话")
             // 媒体层报「没权限」：摄像头拿不到就降级为语音继续，按钮置成「无权限」。
             2001 -> if (state.mediaType == "video") {
                 if (state.cameraOn) IMCallKit.engine?.run { closeCamera(); stopLocalPreview() }
@@ -79,11 +61,8 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
                 if (state.cameraOn && !state.cameraBlocked) IMCallKit.toggleCamera()
                 IMCallKit.hint("摄像头被占用或不可用，已关闭")
             }
-            // `joinCall` 的其余拒绝分支（1401/1402/1405/1408，协议 §4.1）：统一提示，随后的
-            // onCallEnd(error) 会把界面收起，不必在这里另外处理状态。
-            else -> if (IMJoinCallState.joining) IMCallKit.hint("无法加入该通话")
         }
-        host.onError(code, name, message)
+        host.onError(code, name, message, forType)
     }
 
     override fun onCallReceived(
@@ -124,7 +103,6 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         chatGroupId: String,
         userData: String,
     ) {
-        IMJoinCallState.joining = false
         IMCallKit.update(
             IMCallViewReducer.begin(state, callId, roomId, mediaType, role, isGroup, caller, chatGroupId, userData),
         )
@@ -132,7 +110,6 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     }
 
     override fun onCallEnd(callId: String, reason: IMCallEndReason, durationSec: Long, endedBy: String) {
-        IMJoinCallState.joining = false
         IMCallKit.stopTimer()
         // 还在响铃的来电直接收起，不留结束画面：被叫这一侧什么都还没做。主叫那一侧要停一下说明原因。
         if (state.phase == IMCallViewState.Phase.INCOMING) {

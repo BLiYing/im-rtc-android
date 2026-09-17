@@ -22,12 +22,13 @@ import com.imrtc.engine.statemachine.IMRoomState
  *
  * # 为什么单独一个类
  *
- * `IMCallEngine.kt` 贴着 600 行的体量红线（CONVENTIONS §2）。
+ * 门面与核心循环（[IMFrameLoop]）都贴着 600 行的体量红线（CONVENTIONS §2）。
  */
 internal class IMLocalPublisher(
     private val media: IMMediaAdapter?,
     private val nowMs: () -> Long,
-    private val input: (IMMachineInput) -> Unit,
+    /** 门面的状态机入口。第二个参数是这次发布算在哪次宿主调用头上（`openCamera`），进房时的默认发布没有。 */
+    private val input: (IMMachineInput, IMCallResult<*>?) -> Unit,
 ) {
 
     /** 本端已发布的 Track：cid → kind。挂断时要按它去停采集。 */
@@ -52,12 +53,14 @@ internal class IMLocalPublisher(
      *
      * 进房之前不发：意图已经记在 [IMMuteBook] 里，进房时 [publishDefaults] 照着发。
      * 语音通话不发：那是另一种通话，不在这里悄悄升级。
+     *
+     * [result] 是宿主那次 `openCamera` 的结算：补发的 `room.publish` 是它直接发出的帧，被拒要回给它。
      */
-    fun publishCameraIfMissing(state: IMEngineContext) {
+    fun publishCameraIfMissing(state: IMEngineContext, result: IMCallResult<*>? = null) {
         if (state.room.state != IMRoomState.JOINED) return
         if (mediaType(state) != "video" || tracks.containsValue("video")) return
         IMRTCLog.i("engine", "进房时没发视频，摄像头现在打开了，补发")
-        publish("video")
+        publish("video", result)
     }
 
     fun clear() {
@@ -69,7 +72,7 @@ internal class IMLocalPublisher(
     private fun mediaType(state: IMEngineContext) =
         if (state.call.state != IMCallState.IDLE) state.call.mediaType else "video"
 
-    private fun publish(kind: String) {
+    private fun publish(kind: String, result: IMCallResult<*>? = null) {
         val adapter = media ?: return
         val video = kind == "video"
         // 视频沿用预览已经领过的 cid（媒体层那条轨道的 id 就是它），没预览过才现领。
@@ -86,6 +89,7 @@ internal class IMLocalPublisher(
                     "simulcast" to IMJson.Bool(video),
                 ),
             ),
+            result,
         )
     }
 }

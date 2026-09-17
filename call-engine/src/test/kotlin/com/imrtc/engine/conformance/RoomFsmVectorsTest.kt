@@ -89,6 +89,7 @@ class RoomFsmVectorsTest {
                     }
                 }
 
+                assertResult(where, step, output.reject)
                 step.optObj("state")?.let { assertState(where, it, output.state) }
                 ctx = output.state
                 steps++

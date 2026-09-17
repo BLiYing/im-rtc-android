@@ -39,10 +39,11 @@ internal class IMRedButton(
         val instance = engine()
         when (action) {
             // **会议房里没有 call，结束动作是 leaveRoom**。红按钮无条件走 hangup 的话，通话机会把它本地拒成 2005。
-            IMCallViewState.Action.LEAVE_ROOM -> instance?.leaveRoom()
-            IMCallViewState.Action.REJECT -> instance?.reject()
-            IMCallViewState.Action.CANCEL -> instance?.cancel()
-            IMCallViewState.Action.HANGUP -> instance?.hangup()
+            // 退出类失败时 Engine 本地照样收场（onCallEnd / onRoomLeft 照发），结果只留日志。
+            IMCallViewState.Action.LEAVE_ROOM -> instance?.leaveRoom(IMKitResults.logOnly("离开会议"))
+            IMCallViewState.Action.REJECT -> instance?.reject(IMKitResults.logOnly("拒接"))
+            IMCallViewState.Action.CANCEL -> instance?.cancel(IMKitResults.logOnly("取消呼叫"))
+            IMCallViewState.Action.HANGUP -> instance?.hangup(IMKitResults.logOnly("挂断"))
             /*
              **红按钮永远不许是静默空转。**
 

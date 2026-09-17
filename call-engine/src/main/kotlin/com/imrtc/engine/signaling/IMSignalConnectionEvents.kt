@@ -40,6 +40,14 @@ internal interface IMSignalConnectionEvents {
      */
     fun onSessionUnrecoverable()
 
-    /** 连接层自己的错误（解析失败等）。 */
+    /** 连接层自己的错误（解析失败、握手被拒等）。 */
     fun onError(code: IMErrorCode, message: String)
+
+    /**
+     * 一次**还没握手成功**的连接尝试失败了（连不上、握手被拒），紧跟在那条关闭之后、重连或放弃之前。
+     *
+     * 门面拿它给 `login` 的结果收尾：连上之前的失败没有 `onDisconnected`（关闭码是 0 时不抛），
+     * 不接这一条的话网络不通时登录的回调永远不来。
+     */
+    fun onConnectAttemptFailed() {}
 }

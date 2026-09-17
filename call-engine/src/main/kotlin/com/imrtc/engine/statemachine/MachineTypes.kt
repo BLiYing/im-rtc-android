@@ -46,31 +46,27 @@ internal sealed interface IMMachineInput {
     data class Internal(val name: String, val args: Map<String, IMJson> = emptyMap()) : IMMachineInput
 }
 
-/** 一次状态转移的产物。 */
+/**
+ * 一次状态转移的产物。
+ *
+ * [reject] 只有 `act` 输入会带：**这次调用被状态机就地拒掉了**（一致性向量 `act` 步骤的 `result`）。
+ * 它不是事件——只回给发起这次调用的人，不经 `onError` 广播：一次失败只从一个出口报
+ * （server `docs/design/ACTION_RESULT_DESIGN.md` R3）。带它时 `send` / `emit` 为空、状态不变。
+ */
 internal data class IMMachineOutput<S>(
     val state: S,
     val send: List<IMOutgoingFrame> = emptyList(),
     val emit: List<IMEmittedEvent> = emptyList(),
+    val reject: IMErrorCode? = null,
 )
 
 /**
- * 「当前状态不接受这个操作」的落点：不发帧、只本地抛一条 `onError(INVALID_STATE)`。
+ * 「当前状态不接受这个操作」的落点：不发帧、不抛回调，只带一个本地拒绝结果 `INVALID_STATE`。
  *
  * [CallStateMachine.invalidState] 与 [RoomStateMachine.localReject] 曾经是逐字重复的两份
  * 实现，各自 `ctx` 类型不同（`IMCallContext` / `IMRoomContext`），这里用泛型收成一份。
  */
-internal fun <S> invalidStateOutput(ctx: S): IMMachineOutput<S> = IMMachineOutput(
-    ctx,
-    emit = listOf(
-        IMEmittedEvent(
-            "onError",
-            mapOf(
-                "code" to n(IMErrorCode.INVALID_STATE.code.toLong()),
-                "name" to s(IMErrorCode.INVALID_STATE.wireName),
-            ),
-        ),
-    ),
-)
+internal fun <S> invalidStateOutput(ctx: S): IMMachineOutput<S> = IMMachineOutput(ctx, reject = IMErrorCode.INVALID_STATE)
 
 /**
  * 从线路数据里安全取值的小工具。

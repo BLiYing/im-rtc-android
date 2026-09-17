@@ -227,7 +227,8 @@ internal object IMEngineMachine {
         }
         if (op in ROOM_ACTS) {
             val room = IMRoomMachine.reduce(ctx.room, IMMachineInput.Act(op, args))
-            return IMMachineOutput(ctx.copy(room = room.state), send = room.send, emit = room.emit)
+            // reject 原样带上来：漏带的话调用方拿不到「被本地拒了」这个结果。
+            return IMMachineOutput(ctx.copy(room = room.state), send = room.send, emit = room.emit, reject = room.reject)
         }
         return IMMachineOutput(ctx)
     }
@@ -274,6 +275,11 @@ internal object IMEngineMachine {
             room = IMRoomMachine.cleared(IMRoomState.IDLE)
         }
 
-        return IMMachineOutput(IMEngineContext(room = room, call = result.state), send = send, emit = emit)
+        return IMMachineOutput(
+            IMEngineContext(room = room, call = result.state),
+            send = send,
+            emit = emit,
+            reject = result.reject,
+        )
     }
 }

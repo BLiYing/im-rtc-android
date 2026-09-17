@@ -364,6 +364,7 @@ internal class IMSignalConnection(
         // 抛 onDisconnected 前先当场判「会不会重连」，判据要跟下面真实走的分支同步（类注释第 4 条）。
         val willReconnect = IMReconnectPolicy.willReconnect(stopped, pendingGiveUp != null, code, authFailures + 1, MAX_AUTH_FAILURES)
         if (wasConnected || code != 0) events.onDisconnected(code, willReconnect)
+        if (!wasConnected) events.onConnectAttemptFailed()
 
         if (stopped) return
 

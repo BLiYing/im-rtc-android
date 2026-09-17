@@ -139,7 +139,9 @@ object IMCallKit {
     @JvmOverloads
     @JvmStatic
     fun placeCall(calleeIds: List<String>, mediaType: String, isGroup: Boolean = false) =
-        placeCallWith(calleeIds, mediaType, isGroup, "", "") { it.call(calleeIds, mediaType, isGroup) }
+        placeCallWith(calleeIds, mediaType, isGroup, "", "") {
+            it.call(calleeIds, mediaType, isGroup, IMKitResults.placeCall())
+        }
 
     /**
      * 带 [IMCallOptions] 的重载：群通话要带 `chatGroupId`（宿主自己的群号）时用它
@@ -148,7 +150,7 @@ object IMCallKit {
     @JvmStatic
     fun placeCall(calleeIds: List<String>, mediaType: String, options: IMCallOptions) =
         placeCallWith(calleeIds, mediaType, options.isGroup, options.chatGroupId, options.userData) {
-            it.call(calleeIds, mediaType, options)
+            it.call(calleeIds, mediaType, options, IMKitResults.placeCall())
         }
 
     /** 两个 `placeCall` 重载共用的权限门 + 界面切换，`dispatch` 只是最后真正发帧的那一下不同。 */
@@ -188,7 +190,7 @@ object IMCallKit {
      * 主动加入一通进行中的群通话（HOST_INTEGRATION_DESIGN §3.4 / §4.1）。
      *
      * **已经在一场里时不接**（只提示）；否则立刻进「接通中…」，过麦克风权限门再发 `call.join`。
-     * 被拒时走 [IMKitListener.onError]（1409 等）与随后的 `onCallEnd(error)`。实现见 [IMJoinCallState.start]。
+     * 被拒时 Engine 先抛 `onCallEnd(error)`，文案从这次调用的结果里取（[IMKitResults.joinCall]）。实现见 [IMJoinCallState.start]。
      */
     @JvmStatic
     fun joinCall(callId: String) = IMJoinCallState.start(callId)
@@ -206,7 +208,7 @@ object IMCallKit {
                 onLocalMediaStarted()
             }
             syncCameraIntent(instance)
-            instance.joinRoom(roomId, roomToken)
+            instance.joinRoom(roomId, roomToken, IMKitResults.logOnly("进会议"))
         }
     }
 
@@ -363,13 +365,13 @@ object IMCallKit {
         ensurePermissions(IMPermissionGate.devicesForAnswering(state.mediaType, state.cameraOptedOut)) { outcome ->
             if (!stillIncoming()) return@ensurePermissions
             when (outcome) {
-                IMPermissionGate.Outcome.OK -> { onLocalMediaStarted(); syncCameraIntent(instance); instance.accept() }
+                IMPermissionGate.Outcome.OK -> { onLocalMediaStarted(); syncCameraIntent(instance); instance.accept(IMKitResults.logOnly("接听")) }
                 IMPermissionGate.Outcome.CAMERA_BLOCKED -> {
                     update(IMCallViewReducer.cameraBlocked(state))
                     syncCameraIntent(instance)
-                    instance.accept()
+                    instance.accept(IMKitResults.logOnly("接听"))
                 }
-                IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED -> instance.reject()
+                IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED -> instance.reject(IMKitResults.logOnly("拒接"))
             }
         }
     }
@@ -391,7 +393,7 @@ object IMCallKit {
 
     internal fun toggleMic() {
         val next = !state.micOn
-        if (next) engine?.openMicrophone() else engine?.closeMicrophone()
+        if (next) engine?.openMicrophone(IMKitResults.logOnly("开麦克风")) else engine?.closeMicrophone()
         update(IMCallViewReducer.toggleMic(state))
     }
 
@@ -410,7 +412,7 @@ object IMCallKit {
         if (cameraGranted()) { openCameraNow(); return }
         if (!IMPermissionGate.asksCameraOnToggle(state.phase)) {
             // 来电页：只翻意图（进房前的 openCamera 只记账，不起采集），权限在接听时要。
-            engine?.openCamera()
+            engine?.openCamera(IMKitResults.logOnly("开摄像头"))
             update(IMCallViewReducer.toggleCamera(state))
             return
         }
@@ -427,7 +429,7 @@ object IMCallKit {
     }
 
     private fun openCameraNow() {
-        engine?.openCamera()
+        engine?.openCamera(IMKitResults.logOnly("开摄像头"))
         update(IMCallViewReducer.toggleCamera(state))
         onLocalMediaStarted()
     }
@@ -457,13 +459,13 @@ object IMCallKit {
 
     /** 前后摄像头翻转。纯媒体动作，不改视图状态。 */
     internal fun switchCamera() {
-        engine?.switchCamera()
+        engine?.switchCamera(IMKitResults.logOnly("翻转摄像头"))
     }
 
     /**
      * 往群通话里加人：占位格**立刻**出现，帧随后才发（交互稿 §05 G3）。
      *
-     * 记下这一批是谁：服务端拒掉（1407 本端不在通话里 / 1202 满员）时不会有 `onUserReject`——
+     * 记下这一批是谁：服务端拒掉（1407 本端不在通话里 / 1202 满员，码从结果里取，见 [IMKitResults.inviteMore]）时不会有 `onUserReject`——
      * 那条是给「真的响了铃的人」的。不收回占位格的话它们会一直挂着「呼叫中…」，还占着人数，
      * 让「还能加 N 人」和九宫格的行列都算错。
      */
@@ -471,7 +473,7 @@ object IMCallKit {
         if (uids.isEmpty()) return
         lastInvited = uids
         update(IMCallViewReducer.invited(state, uids))
-        engine?.inviteMore(uids)
+        engine?.inviteMore(uids, IMKitResults.inviteMore())
     }
 
     /** 把最后一批邀请的占位格收回来（加人被服务端拒时）。 */

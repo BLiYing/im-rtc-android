@@ -1,5 +1,6 @@
 package com.imrtc.engine.conformance
 
+import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.protocol.optObj
 import com.imrtc.engine.protocol.optObjArr
@@ -16,8 +17,8 @@ import org.junit.Test
 /**
  * `call_fsm.json` 逐条驱动通话状态机，16 个用例、73 步。**与另外四端同一份文件。**
  *
- * 向量的约定：**省略 `send` / `emit` 即断言为空**——「这一步不该发帧、不该抛回调」
- * 与「这一步发了什么」同样重要。漏抛不会报错，只会表现成界面不动，全靠这里守。
+ * 向量的约定：**省略 `send` / `emit` / `result` 即断言为空**——「这一步不该发帧、不该抛回调、
+ * 没有被本地拒绝」与「这一步发了什么」同样重要。漏抛不会报错，只会表现成界面不动，全靠这里守。
  */
 class CallFsmVectorsTest {
 
@@ -77,6 +78,8 @@ class CallFsmVectorsTest {
                     }
                 }
 
+                assertResult(where, step, output.reject)
+
                 step.optString("state")?.let {
                     assertEquals("$where：状态不对", it, output.state.state.wire)
                 }
@@ -87,16 +90,32 @@ class CallFsmVectorsTest {
         assertTrue("一步都没跑，向量八成没读到", steps > 0)
     }
 
-    private fun inputOf(step: IMJson.Obj, where: String): IMMachineInput {
-        step.optObj("act")?.let { act ->
-            val op = act.optString("op") ?: error("$where 的 act 缺 op")
-            return IMMachineInput.Act(op, act.optObj("args")?.fields ?: emptyMap())
-        }
-        step.optObj("recv")?.let { recv ->
-            val type = recv.optString("type") ?: error("$where 的 recv 缺 type")
-            return IMMachineInput.Recv(type, recv.optObj("data")?.fields ?: emptyMap())
-        }
-        step.optString("internal")?.let { return IMMachineInput.Internal(it) }
-        error("$where：这一步既没有 act 也没有 recv 或 internal")
+    private fun inputOf(step: IMJson.Obj, where: String): IMMachineInput = vectorInput(step, where)
+}
+
+/**
+ * `result`：`act` 被状态机就地拒绝时回给调用方的结果；**省略 = 断言没有本地拒绝**。
+ * 本地拒绝只从结果出口报，所以同一步的 `emit` 必然为空（上面已经按省略即空断言过）。
+ */
+internal fun assertResult(where: String, step: IMJson.Obj, reject: IMErrorCode?) {
+    val expected = step.optObj("result")
+    if (expected == null) {
+        assertEquals("$where：不该有本地拒绝", null, reject?.wireName)
+        return
     }
+    assertEquals("$where：本地拒绝的码不对", (expected.fields["code"] as? IMJson.Num)?.value?.toInt(), reject?.code)
+    assertEquals("$where：本地拒绝的 name 不对", expected.optString("name"), reject?.wireName)
+}
+
+private fun vectorInput(step: IMJson.Obj, where: String): IMMachineInput {
+    step.optObj("act")?.let { act ->
+        val op = act.optString("op") ?: error("$where 的 act 缺 op")
+        return IMMachineInput.Act(op, act.optObj("args")?.fields ?: emptyMap())
+    }
+    step.optObj("recv")?.let { recv ->
+        val type = recv.optString("type") ?: error("$where 的 recv 缺 type")
+        return IMMachineInput.Recv(type, recv.optObj("data")?.fields ?: emptyMap())
+    }
+    step.optString("internal")?.let { return IMMachineInput.Internal(it) }
+    error("$where：这一步既没有 act 也没有 recv 或 internal")
 }

@@ -41,11 +41,6 @@ internal class IMEventDispatcher(
               免得宿主收到两条、其中一条还没有 reason。
             */
             "onKickedOut" -> Unit
-            "onError" -> onMain {
-                val code = args.num("code").toInt()
-                val name = args.str("name")
-                listener.onError(code, name, IMErrorCode.fromCode(code)?.msg ?: name)
-            }
 
             "onCallReceived" -> onMain {
                 listener.onCallReceived(
@@ -145,9 +140,17 @@ internal class IMEventDispatcher(
     /** 媒体层直接抛的，不经过状态机。 */
     fun firstVideoFrame(uid: String, trackId: String) = onMain { listener.onFirstVideoFrame(uid, trackId) }
 
-    /** `name` 从错误码表按 `code` 反查；查不到（未来新码、本端还没升级）就退化成 `message` 本身。 */
-    fun error(code: Int, message: String) =
-        onMain { listener.onError(code, IMErrorCode.fromCode(code)?.wireName ?: "unknown", message) }
+    /**
+     * **找不到调用方**的错误（或调用方没传回调时的退回，R7）。`name` 从错误码表按 `code` 反查；
+     * 查不到（未来新码、本端还没升级）就给 `unknown`。
+     */
+    fun error(code: Int, message: String, forType: String = "") =
+        onMain { listener.onError(code, IMErrorCode.fromCode(code)?.wireName ?: "unknown", message, forType) }
+
+    fun error(e: IMRTCError) = onMain { listener.onError(e.code, e.name, e.message, e.forType) }
+
+    /** 调用结果也走主线程，与回调同一条队列——状态事件先投的先到（见 [IMCallResult]）。 */
+    fun onMainThread(block: () -> Unit) = onMain(block)
 
     private fun onMain(block: () -> Unit) = main.run(block)
 }

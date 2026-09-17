@@ -24,6 +24,15 @@ internal class FakeScheduler : IMScheduler {
         drain()
     }
 
+    /** 置 true 模拟「调度器已经停了 / execute 抛 RejectedExecutionException」：任务不收、不跑。 */
+    var rejectPosts = false
+
+    override fun tryPost(task: () -> Unit): Boolean {
+        if (rejectPosts) return false
+        post(task)
+        return true
+    }
+
     override fun postDelayed(delayMs: Long, task: () -> Unit): IMScheduler.Cancellable {
         val entry = Task(now + delayMs, task)
         tasks += entry

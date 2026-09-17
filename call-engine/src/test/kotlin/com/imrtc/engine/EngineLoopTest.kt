@@ -826,7 +826,7 @@ class EngineLoopTest {
         override fun onUserAccept(uid: String) { userAccepts += uid }
         override fun onRoomJoined(roomId: String) { roomJoins += roomId }
         override fun onRoomLeft(roomId: String) { roomLeaves += roomId }
-        override fun onError(code: Int, name: String, message: String) { errors += code }
+        override fun onError(code: Int, name: String, message: String, forType: String) { errors += code }
     }
 
     private class FakeMedia : IMMediaAdapter {
