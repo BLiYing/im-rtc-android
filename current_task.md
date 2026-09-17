@@ -7,15 +7,15 @@
 
 ## 当前焦点
 
-**2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `5ad5bad`…`e11761f`，`test.sh` 6 步全绿）。**
+**2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `5ad5bad`…`e11761f`，`test.sh` 6 步全；用户已复看，正常）。**
 - **行为修复 `5ad5bad`**：关闭码 4400 原先落进默认分支一直重连，改从 `IMCloseCode.shouldReconnect` 取判据，只报 `onDisconnected(4400, false)`、不抛 `onKickedOut`，对齐 iOS / Web（CLIENT_PARITY 那句「4400 四端都不重连」此前对 Android 不成立，现在成立）。JVM 单测 8 条，真机没造 4400。
 - Demo 通话记录补齐 answered_elsewhere / rejected_elsewhere / room_closed，kicked 改「已被移出」。
-- 行为不变：`applyOutput` 按引用短路 `claimRemoteTracks`；控制按钮 setter 判重、头像底纹按 `avatarKey` 判重；`Wire` 统一取值、`invalidStateOutput` 合并；`View.dp()` 收进 `IMKitTheme`（统一截断，`IMHiddenCountPill` 可能差 1px）；`scheduleResetIfEnded`；`startCapture(profile)` / `safeRemoveSink` / `hasPermission`；删零调用的 8 个 `IMKitIcon` 与 drawable、`Settled.OFFLINE`、`IMCallOverlay.isAttached`。
+- 行为不变：`applyOutput` 按引用短路 `claimRemoteTracks`；控制按钮 setter 判重、头像底纹按 `avatarKey` 判重；`Wire` 统一取值、`invalidStateOutput` 合并；`View.dp()` 收进 `IMKitTheme`（统一截断）；`scheduleResetIfEnded`；`startCapture(profile)` / `safeRemoveSink` / `hasPermission`；删零调用的 8 个 `IMKitIcon` 与 drawable、`Settled.OFFLINE`、`IMCallOverlay.isAttached`。
 - 09-17 夜五件、下午三条待办、16:35 收进小窗的细节已移进 archive。
 
 ## 下一步
 
-0. **还没验的**：/simplify 之后的控制按钮 / 头像底纹 / 1px 取整没真机复看；视频通话拨出中收起、接通后球变视频缩略没点过；插拔有线耳机 / 连蓝牙时声音跟着走（手边要有耳机）；会议房「还有 N 人未显示」在 Android 上没凑人数看过；1v1 视频默认走听筒（改前就这样，要不要默认扬声器待定）。
+0. **还没验的**：视频通话拨出中收起、接通后球变视频缩略没点过；插拔有线耳机 / 连蓝牙时声音跟着走（手边要有耳机）；会议房「还有 N 人未显示」在 Android 上没凑人数看过；1v1 视频默认走听筒（改前就这样，要不要默认扬声器待定）。
 1. **真机窗口清单**：
    - M1：群通话 `chat_group_id` / `user_data` / `timeout_sec` 在 `onCallReceived` / `onCallBegin` 真带到；`call.join` 加入方也拿得到。
    - M2：`IMInvitePicker` 300ms 防抖、滚到底翻页、`slow` 10 秒转失败、`fail` 重试。
