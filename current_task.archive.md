@@ -1320,3 +1320,27 @@ JDK 17（`/usr/libexec/java_home -v 17`）· SDK 到 android-36 / build-tools 36
   ./gradlew publishToMavenLocal && ./gradlew -PimrtcSdk=local :demo:installDebug   # Demo 改用本地包
   ./gradlew -PimrtcSdk=public :demo:installDebug                                    # Demo 改用 JitPack 上的包
   ```
+
+## 2026-09-17 傍晚（/simplify 清理收口时移出活快照）：「当前焦点」里更早的块
+
+> 原文照录，正文未改。
+
+**2026-09-17 16:35：拨出中左上角「收进小窗」补上（`58cde02`，未推送，`test.sh` 6 步全绿，PKD130 / Android 15 真机验过）。**
+- 根因：`IMCallViewState.canMinimize` 原先只认 CONNECTING / CONNECTED（旧理由「拨出中收起不知道怎么挂断」，球下红键加上后已不成立），iOS / Web 是「除来电页与结束画面都给」。
+- 放开后真机暴露两处：① 点收起时通话页还在前台、宿主页没 resume，形态判定只能 hidden，拨出中没有每秒计时不会重判 → `IMActivityTracker.onHostResumed` 触发重挑形态；
+  ② 球下红键点了没反应（UP 被父容器截走，**原先接通后也一样**）→ 按下落在挂断上时整串手势不拦。未接通时球上显示「…」。
+- 真机：拨出中收起出球 → 点球展开 → 再收起点球下红键发出 `call.cancel`；拨出中收起后无人接听 → 自动展开结束画面。**视频通话拨出中收起、接通后球变视频缩略没点过**。
+
+**2026-09-17 下午：清掉三条待办（已提交，`./scripts/test.sh` 6 步全绿；本端预览 cid 用户真机验过）。**
+- `IMCallKit.notifyOutgoing(peers, mediaType, IMCallOptions)` 重载：宿主自己 `engine.call(options)` 时群号 / `userData` 也进界面。为腾体量把切后台停摄像头拆到 `IMBackgroundCamera`。
+- 找向量不再逐级往上：`call-engine/build.gradle.kts` 的 `conformanceDir` 只认主检出 / `.claude/worktrees/<分支>` 两种布局（同 web `e58ec8e`），`RTC_CONFORMANCE_DIR` 相对路径按仓根解析；测试侧 `ConformanceVectors.locate()` 只认系统属性。
+- **本端预览对齐 cid**：`IMCallEngine.startLocalPreview(): String` + `attachLocalView(cid, view)`（旧的 `startLocalPreview(view)` 留 `@Deprecated`）。cid 由 `IMLocalVideoCid` 在调用方线程当场发，发布视频沿用；媒体层只剩**一条**摄像头轨道（id = cid），删掉 `PREVIEW_TRACK_ID` 与 `IMPreviewIntent`（起停都回到 Engine 线程上，不再需要那个号）。`IMMediaAdapter` 接口改了：`startLocalPreview(cid)`、新增 `attachLocalView(cid, view)`。**用户真机验过**：拨出中见自己且接通不断、来电页 / 通话中开关摄像头（灯灭 / 亮）、翻转镜像、切后台回来、群通话关着进房后再开（**PKD130 / Android 15**）。code-review 两条（关预览与进房发布竞态时旧轨道没释放、没发布的预览 cid 对不上只打日志）已修：媒体层 `replaceVideoTrack` 换轨道并 dispose 旧的；这条修复走的是竞态路径，真机没专门造过。CLIENT_PARITY v1.40。
+
+**2026-09-17：夜里逐项补了五件（已推送），早上 PKD130 / Android 15 真机补验，顺手修了一个真机才暴露的问题。** SDK 1.0.0 已公网发布（JitPack，MIT），这些进下一个版本。
+- `c2c20db` 摄像头打不开 / 中途被抢走回报 2002，下次打开重起采集（`IMCameraEvents`，静默失败审计 android #1）。
+  `24787c8` 真机发现 2002 走 `cameraBlocked` 会把按钮锁成「无权限」、整通开不回来 → 改为只关摄像头、按钮可点；**真机验过**：被抢后点开摄像头重出画面，对端恢复。
+- `4a5c983` 收 `call.ringing` 抛 `onUserRinging`，群通话里别人加的人也摆占位格（协议批次，server `dd60ca0`）。**真机验过**：bob 加 carol → 手机上「呼叫中…」→ 拒接「已拒绝」约 2s 收掉。
+- `a4c9fb0` 通话音频跟随系统：扬声器关着时耳机 / 蓝牙优先、监听插拔（`IMAudioRoutePolicy`）。真机只验了扬声器开关（type 2 ↔ 1），**没耳机 / 蓝牙，插拔未验**。
+- `38941d3` 会议房超过一屏「还有 N 人未显示」+ 屏外报 none（M1）；`61d09c6` 打开网络质量图标，「对方网络不佳」只在 1v1。
+- **09-17 下午用户自测通过**：发起人挂断后被邀请回来能响铃接听；来电横幅不出现自己的格子；横幅 / 来电页显示把你加进来的那个人（CLIENT_PARITY v1.42）。
+- **体量**：`IMCallEngine.kt` 600、`IMWebRTCAdapter.kt` 599、`IMCallView.kt` 599、`IMSignalConnection.kt` 600 已到硬顶，下次改先拆；`IMCallKit.kt` 拆后约 580。
