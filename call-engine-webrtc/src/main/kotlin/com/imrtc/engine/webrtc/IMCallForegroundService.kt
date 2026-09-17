@@ -7,7 +7,6 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -142,8 +141,8 @@ internal data class IMForegroundTypes(val microphone: Boolean, val camera: Boole
 
         fun granted(context: Context, withCamera: Boolean) = of(
             withCamera = withCamera,
-            micGranted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
-            cameraGranted = context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED,
+            micGranted = context.hasPermission(Manifest.permission.RECORD_AUDIO),
+            cameraGranted = context.hasPermission(Manifest.permission.CAMERA),
         )
     }
 }

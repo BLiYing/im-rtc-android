@@ -2,7 +2,6 @@ package com.imrtc.engine.webrtc
 
 import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMMediaAdapter
 import com.imrtc.engine.media.IMVideoProfile
@@ -198,11 +197,9 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         // 先摘轨道再 release：反了会崩在 native 层。
         // 渲染器的释放也归主线程（`release` 与 `init` 要在同一条线程上成对）。
         onMain {
-            attached.forEach { (trackId, renderer) ->
-                remoteVideo[trackId]?.let { track -> runCatching { track.removeSink(renderer) } }
-            }
+            attached.forEach { (trackId, renderer) -> remoteVideo[trackId]?.safeRemoveSink(renderer) }
             attached.clear()
-            renderers[LOCAL]?.let { renderer -> runCatching { localBound?.removeSink(renderer) } }
+            renderers[LOCAL]?.let { renderer -> localBound?.safeRemoveSink(renderer) }
             localBound = null
             localViewCid = null
             renderers.values.forEach { renderer -> runCatching { renderer.release() } }
@@ -288,7 +285,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             // 暂停期间权限可能在系统设置里被收回：照开只会异步失败、画面全黑、日志空白。
             if (!cameraPermitted()) { events?.onMediaError(2001, "camera permission denied"); return }
             cameraEvents?.consumeFailure() // 暂停时本来就停着，这里照常重起，失败标记作废
-            active.startCapture(videoProfile.width, videoProfile.height, videoProfile.frameRate)
+            active.startCapture(videoProfile)
         }
         capturePaused = paused
     }
@@ -360,7 +357,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     /** 挂本端画面。视图每挂一次重新 `init`（首帧、尺寸事件跟着重来）；轨道还没起来的话等 [bindLocalView] 补接。 */
     override fun attachLocalView(cid: String, view: Any?) = onMain {
         renderers.remove(LOCAL)?.let { old ->
-            runCatching { localBound?.removeSink(old) }
+            localBound?.safeRemoveSink(old)
             localBound = null
             runCatching { old.release() }
         }
@@ -385,7 +382,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         val renderer = renderers[LOCAL]
         val track = videoTrack?.takeIf { renderer != null && it.id() == localViewCid }
         if (track === localBound) return
-        renderer?.let { r -> localBound?.let { runCatching { it.removeSink(r) } } }
+        renderer?.let { r -> localBound?.safeRemoveSink(r) }
         if (track != null && renderer != null) runCatching { track.addSink(renderer) }
         localBound = track
     }
@@ -421,7 +418,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             val renderer = trackOwners[trackId]?.let { renderers[it] }
             val current = attached[trackId]
             if (current === renderer) continue
-            if (current != null) runCatching { track.removeSink(current) }
+            if (current != null) track.safeRemoveSink(current)
             if (renderer == null) {
                 attached.remove(trackId)
                 continue
@@ -436,7 +433,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         val previous = renderers.remove(uid) ?: return
         val gone = attached.filterValues { it === previous }.keys
         for (trackId in gone) {
-            remoteVideo[trackId]?.let { runCatching { it.removeSink(previous) } }
+            remoteVideo[trackId]?.safeRemoveSink(previous)
             attached.remove(trackId)
         }
         runCatching { previous.release() }
@@ -506,7 +503,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         val helper = SurfaceTextureHelper.create("capture", peers.eglBase.eglBaseContext)
         val source = peers.factory().createVideoSource(false)
         videoCapturer.initialize(helper, appContext, source.capturerObserver)
-        videoCapturer.startCapture(videoProfile.width, videoProfile.height, videoProfile.frameRate)
+        videoCapturer.startCapture(videoProfile)
 
         capturer = videoCapturer as? CameraVideoCapturer
         this.cameraEvents = cameraEvents
@@ -539,11 +536,10 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         if (!cameraPermitted()) { events?.onMediaError(2001, "camera permission denied"); return }
         IMRTCLog.i("media", "上次采集失败过，重起摄像头")
         runCatching { active.stopCapture() }
-        active.startCapture(videoProfile.width, videoProfile.height, videoProfile.frameRate)
+        active.startCapture(videoProfile)
     }
 
-    private fun cameraPermitted() =
-        appContext.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    private fun cameraPermitted() = appContext.hasPermission(Manifest.permission.CAMERA)
 
     /** 第一帧到了就撤 loading——UI 全靠这个信号，不然会露一段黑屏。每次 `init` 新造一个。 */
     private fun firstFrameEvents(uid: String) = object : RendererCommon.RendererEvents {
