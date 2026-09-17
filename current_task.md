@@ -7,6 +7,12 @@
 
 ## 当前焦点
 
+**2026-09-17 16:35：拨出中左上角「收进小窗」补上（`58cde02`，未推送，`test.sh` 6 步全绿，PKD130 / Android 15 真机验过）。**
+- 根因：`IMCallViewState.canMinimize` 原先只认 CONNECTING / CONNECTED（旧理由「拨出中收起不知道怎么挂断」，球下红键加上后已不成立），iOS / Web 是「除来电页与结束画面都给」。
+- 放开后真机暴露两处：① 点收起时通话页还在前台、宿主页没 resume，形态判定只能 hidden，拨出中没有每秒计时不会重判 → `IMActivityTracker.onHostResumed` 触发重挑形态；
+  ② 球下红键点了没反应（UP 被父容器截走，**原先接通后也一样**）→ 按下落在挂断上时整串手势不拦。未接通时球上显示「…」。
+- 真机：拨出中收起出球 → 点球展开 → 再收起点球下红键发出 `call.cancel`；拨出中收起后无人接听 → 自动展开结束画面。**视频通话拨出中收起、接通后球变视频缩略没点过**。
+
 **2026-09-17 下午：清掉三条待办（已提交，`./scripts/test.sh` 6 步全绿；本端预览 cid 用户真机验过）。**
 - `IMCallKit.notifyOutgoing(peers, mediaType, IMCallOptions)` 重载：宿主自己 `engine.call(options)` 时群号 / `userData` 也进界面。为腾体量把切后台停摄像头拆到 `IMBackgroundCamera`。
 - 找向量不再逐级往上：`call-engine/build.gradle.kts` 的 `conformanceDir` 只认主检出 / `.claude/worktrees/<分支>` 两种布局（同 web `e58ec8e`），`RTC_CONFORMANCE_DIR` 相对路径按仓根解析；测试侧 `ConformanceVectors.locate()` 只认系统属性。
