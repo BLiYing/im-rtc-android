@@ -13,7 +13,12 @@
 - **本端唯一一处签名变化**：`joinRoom(roomId, roomToken, autoSubscribe = "all", onResult = null)` 多了一个**可选**参数（iOS / Web 本来就有）。既有 Java 调用靠 `@JvmOverloads` 的两参重载不用改；Kotlin 里传回调要写 `onResult =`。
 - 会议房按页订阅（`statemachine/RoomStateMachinePaging.kt`）：`autoSubscribe == "audio"` 时 `setRemoteLayer` 就是订阅意图——`l/m/h` = 订阅或换层，`none` = 先停包再等 5 s 退订；翻回来只换层不重协商；同时订阅的视频封顶 16 路，满了先退最早翻走的那一条，一条都腾不出来才本地拒绝（**本地拒绝不带帧**）。定时器在 `IMUnsubscribeTimers.kt`，按 `pendingUnsubscribe` **整体对账**。
 - 新测 `statemachine/RoomPagingTest`（12 条）；向量新增两组用例由 `RoomFsmVectorsTest` 跑（现 10 用例 61 步）。
-- **没做**：UIKit 的分页画廊、钉住、成员列表（下一段）；`IMCallKit.joinMeeting` 还是发 `"all"`，等 Kit 那一段改成 `"audio"`。
+- UIKit（同一轮，第四段）：**分页画廊 + 钉住 + 只读成员列表**。
+  - `IMMeetingPager.kt` 是纯算术 + 第一页发言人优先（1.5 s 晋升 / 10 s 驻留 / 2 s 限频），`IMMeetingGallery.kt` 持有页码 / 钉住 / 排序记账并算出一个 `Plan`；`IMCallGridView.apply` 只多了一个 `fixedTileCount` 形参，**摆格子的逻辑一行没改**。
+  - `IMCallView` 贴着 600 行，所以格子那一半整块挪进 `IMCallViewGrid.kt`（群通话 + 会议两条路径），会议的小视图与手势在 `IMMeetingViews.kt`（页码胶囊、演讲者视图、左右滑翻页、双击钉住）。
+  - 只读成员列表 `IMMemberListSheet.kt`（`Dialog` 半屏，自己 → 进房顺序 + 麦克风 / 摄像头角标），从标题栏新加的「👥 N」打开（与加人按钮同一个位置、互斥）。
+  - `IMCallKit.joinMeeting` 改发 `autoSubscribe = "audio"`。
+  - 新测 `MeetingPagerTest` 15 条（与 Web / iOS 同一组场景）。
 
 **2026-09-17 夜：结束帧 / 迟到帧合成一张表（队列 5 的「迟到帧」那条）**：四份「这个状态怎么结束」合进 `statemachine/IMCallExit.kt`
 （`reduceAct` 退出方法 / `forceEndFrames` / `handleLateFrame` 与 `handleInviteOk` 补发 / `IMRequestFailures` 失败收场集合），

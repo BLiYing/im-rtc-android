@@ -22,6 +22,15 @@ import android.widget.TextView
  */
 internal class IMVideoTile(context: Context) : FrameLayout(context) {
 
+    /**
+     * 这一格上已经装过谁的「双击钉住」手势（`IMMeetingViews.kt`）。
+     *
+     * 格子按 uid 复用，重复装手势会让一次双击触发好几回。用一个属性而不是
+     * `setTag(key, ...)`：后者要求 key 是资源 id，而本模块没有资源文件。
+     */
+    internal var pinGestureUid: String? = null
+
+
     /** 渲染器的容器。媒体层造的 View 放这里；互换 / 换版式时**只挪格子不重建渲染器**。 */
     val videoHost = FrameLayout(context)
     private val avatar = TextView(context)

@@ -60,11 +60,17 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val column = LinearLayout(context)
     private val header = IMCallHeader(context)
     private val banner = IMTopBanner(context)
-    private val stage = FrameLayout(context)
+    internal val stage = FrameLayout(context)
     private val audioStage = IMAudioStage(context)
-    private val grid = IMCallGridView(context)
-    private val hiddenPill = IMHiddenCountPill(context)
-    private val pip = IMPipView(context)
+    internal val grid = IMCallGridView(context)
+    internal val hiddenPill = IMHiddenCountPill(context)
+    internal val pip = IMPipView(context)
+    /** 会议分页画廊的页码（`1 / 7`），底部居中。取代了 M1 那枚右下角的胶囊（§4.5）。 */
+    internal val pagePill = IMPagePill(context)
+    /** 会议钉住后的演讲者视图（§4.4）。只在会议房用得到。 */
+    internal val speakerStage = IMSpeakerStage(context)
+    /** 会议画廊的页码、钉住与第一页排序（`IMMeetingGallery.kt`）。 */
+    internal val meeting = IMMeetingGallery()
     private val endedLabel = TextView(context)
     private val controlsScrim = View(context)
     private val controls = LinearLayout(context)
@@ -72,10 +78,10 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val controlsTop = LinearLayout(context)
     /** 控制条下排：挂断居中 + 翻转摄像头。 */
     private val controlsBottom = LinearLayout(context)
-    private val selfTile = IMVideoTile(context)
+    internal val selfTile = IMVideoTile(context)
     /** uid → 这个人的格子。**不每次重建**：重建会让媒体层挂着的渲染器重来，画面会闪。 */
-    private val tiles = LinkedHashMap<String, IMVideoTile>()
-    private var fullTile: IMVideoTile? = null
+    internal val tiles = LinkedHashMap<String, IMVideoTile>()
+    internal var fullTile: IMVideoTile? = null
 
     private val micButton = IMControlButton(context, IMKitIcon.MIC, "静音", IMKitIcon.MIC_SLASH, "已静音")
     private val cameraButton = IMControlButton(context, IMKitIcon.VIDEO_SLASH, "开摄像头", IMKitIcon.VIDEO, "关摄像头")
@@ -89,7 +95,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
     private val main = Handler(Looper.getMainLooper())
     private var layout = IMCallViewState.Layout.AUDIO
-    private var state = IMCallViewState()
+    internal var state = IMCallViewState()
 
     /** 控制条的「3s 后淡出、任意触摸恢复」。判据与 iOS 对齐，细节全在 [IMChromeGate]。 */
     private val chrome = IMChromeGate(
@@ -136,6 +142,11 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         stage.addView(endedLabel, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply { setMargins(dp(24), 0, dp(24), 0) })
         stage.addView(pip, LayoutParams(dp(96), dp(128)))
         stage.addView(hiddenPill, IMHiddenCountPill.layoutParams(hiddenPill))
+        stage.addView(pagePill, IMPagePill.layoutParams(pagePill))
+        stage.addView(speakerStage, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        speakerStage.visibility = GONE
+        speakerStage.onUnpin = { meeting.unpin(); render(state) }
+        installMeetingGestures()
         // 单击画面空白处：显示 / 隐藏控制条（视频版式才生效）。
         stage.setOnClickListener { if (layout == IMCallViewState.Layout.VIDEO) chrome.set(!chrome.visible) }
 
@@ -180,6 +191,10 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
         header.minimizeButton.setOnClickListener { actions?.onMinimize() }
         header.inviteButton.setOnClickListener { actions?.onInvite() }
+        // 会议房的成员列表（§4.6）：半屏面板，只读。
+        header.membersButton.setOnClickListener {
+            IMMemberListSheet.show(context, state, IMCallKit.config.profileResolver)
+        }
         micButton.setOnClickListener { actions?.onToggleMic() }
         cameraButton.setOnClickListener { actions?.onToggleCamera() }
         speakerButton.setOnClickListener { actions?.onToggleSpeaker() }
@@ -243,7 +258,13 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         pip.layoutInContainer()
         // 第一轮 render 时 stage 还没量出来，格子边长只能按默认形状估。这里补摆一次。
         if (layout == IMCallViewState.Layout.GRID && grid.tiles.isNotEmpty()) {
-            post { layoutGrid(grid.tiles) }
+            // 会议分页时恒按满页算行列，与 renderMeeting 一致（最后一页不放大）。
+            val fixed = if (state.isMeeting && IMMeetingPager.paged(state.members.size)) {
+                IMMeetingPager.TILES_PER_PAGE
+            } else {
+                0
+            }
+            post { layoutGrid(grid.tiles, fixed) }
         }
     }
 
@@ -303,19 +324,33 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             if (state.phase == IMCallViewState.Phase.CONNECTED) peerLevel else 0,
             showsMinimize = state.canMinimize && IMCallKit.config.floatingWindow,
             showsInvite = state.canShowInvite,
+            // 会议房右上角是「👥 N」（§4.6）；它与加人按钮共用那个位置，互斥。
+            memberCount = if (state.isMeeting && state.phase == IMCallViewState.Phase.CONNECTED) {
+                state.members.size + 1
+            } else {
+                0
+            },
         )
         background = if (layout == IMCallViewState.Layout.VIDEO && !isEnded) null else IMKitTheme.callBackground()
         if (background == null) setBackgroundColor(IMKitTheme.background)
         endedLabel.visibility = if (isEnded) VISIBLE else GONE
         endedLabel.text = state.statusText
         audioStage.visibility = if (layout == IMCallViewState.Layout.AUDIO && !isEnded) VISIBLE else GONE
-        grid.visibility = if (layout == IMCallViewState.Layout.GRID && !isEnded) VISIBLE else GONE
+        val pinned = meeting.pinnedUid.isNotEmpty()
+        grid.visibility =
+            if (layout == IMCallViewState.Layout.GRID && !isEnded && !pinned) VISIBLE else GONE
+        speakerStage.visibility =
+            if (layout == IMCallViewState.Layout.GRID && !isEnded && pinned) VISIBLE else GONE
         if (grid.visibility == GONE) hiddenPill.show(0)
+        if (grid.visibility == GONE) pagePill.show("")
         controlsScrim.visibility = if (layout == IMCallViewState.Layout.VIDEO && !isEnded) VISIBLE else GONE
         renderBanner(state)
         renderControls(state, isEnded)
         if (isEnded) {
             pip.visibility = GONE
+            // 下一次进会议不带着上一次的页码与钉住。
+            meeting.reset()
+            speakerStage.detach()
             unpinFull()
             // 结束画面要停 1.5~3s，**这期间远端渲染器没有任何用处**，占着解码器不放。
             retireTiles(emptySet())
@@ -478,62 +513,12 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         actions?.reportLayer(peer.uid, if (state.isSwapped) "l" else "h")
     }
 
-    private fun renderGrid(state: IMCallViewState) {
-        unpinFull()
-        pip.visibility = GONE
-        val members = state.tiles
-        retireTiles(members.map { it.uid }.toSet())
-        applySelf(state, actions?.hasLocalVideo() ?: false, 44)
-        val ordered = ArrayList<View>()
-        ordered += selfTile
-        selfTile.setRounded(true)
-        // 层上界按格子数算：**加号格已经没有了**，格数就是真人数（本端 + 远端）。
-        val layer = IMGrid.layerFor(members.size + 1, focused = false)
-        for (m in members) {
-            val tile = tiles.getOrPut(m.uid) { IMVideoTile(context) }
-            tile.setRounded(true)
-            /*
-             **渲染器一直挂着，有没有画面交给 `apply` 用 visibility 切**（与 iOS 一致）。
-             原先「没画面就 setVideoView(null)」会把 SurfaceView 摘下来，Surface 当场销毁；
-             对端一开摄像头就得重建 Surface 再等一个关键帧——白等半秒还闪一下。
-            */
-            tile.setVideoView(actions?.videoViewFor(m.uid))
-            tile.apply(m.uid, m.uid, m.showsVideo, m.audio, m.speaking, m.volume,
-                isRinging = !m.accepted, settled = m.settled, networkLevel = m.networkLevel)
-            actions?.reportLayer(m.uid, layer)
-            ordered += tile
-        }
-        /*
-         **九宫格里没有加号格**（v3.3 撤掉）。加人入口只有标题栏右上角那一颗
-         （`canShowInvite` 同一条判据）：网格里再放一个是同一个动作的第二个入口，
-         而它还会占掉一个格位——三个人的通话看起来像四个人，行列也跟着多排一格。
-        */
-        layoutGrid(ordered)
-        // 没格子的人视频报 none，并说一句「还有 N 人未显示」（会议房 M1 止血，MEETING_ROOM_DESIGN §4.3 / §4.5）。
-        state.hiddenMembers.forEach { actions?.reportLayer(it.uid, "none") }
-        hiddenPill.show(state.hiddenMembers.size)
-    }
-
-    /**
-     * 把可用区算出来交给 [IMCallGridView]——**摆放本身在那边**（含「没变就不重挂」那条闸）。
-     *
-     * 可用区要连**给控制条让出来的那条 padding** 一起扣掉（见 [applyStageInsets]），
-     * 否则九宫格是在整块屏幕里居中，最后一行被按钮压着。
-     */
-    private fun layoutGrid(ordered: List<View>) {
-        val gap = dp(IMKitTheme.TILE_GAP_DP)
-        // 每格四周各留 gap/2 的外边距，所以可用区要先扣掉一整个 gap，算出来的边长才放得下。
-        val width = stage.width - stage.paddingLeft - stage.paddingRight - dp(24) - gap
-        val height = stage.height - stage.paddingTop - stage.paddingBottom - dp(8) - gap
-        grid.apply(ordered, width, height, gap, fallbackCell = dp(120))
-    }
-
     /**
      * 本端那格。**只表达麦克风开 / 关两态**（2026-09-09 拍板）——
      * 自己在不在说话自己知道，所以这里不再需要「哪种版式才显示说话」那个参数：
      * 三种版式一视同仁。
      */
-    private fun applySelf(state: IMCallViewState, hasLocalVideo: Boolean, avatarDp: Int) {
+    internal fun applySelf(state: IMCallViewState, hasLocalVideo: Boolean, avatarDp: Int) {
         val showVideo = state.cameraOn && hasLocalVideo
         selfTile.setVideoView(if (showVideo) actions?.localPreviewView() else null, overlay = !state.isSwapped)
         // 本端那格也显示（2026-09-09 拍板）：uid 为空串，说话状态按本端音量判。
@@ -564,21 +549,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         fullTile = tile
     }
 
-    private fun unpinFull() {
+    internal fun unpinFull() {
         fullTile?.let { videoFull.removeView(it) }
         fullTile = null
-    }
-
-    /** 收掉不再需要的远端格子。**卸载要成对**：不摘的话渲染器还占着解码器。 */
-    private fun retireTiles(wanted: Set<String>) {
-        tiles.keys.filter { it !in wanted }.forEach { uid ->
-            val tile = tiles.remove(uid) ?: return@forEach
-            tile.setVideoView(null)
-            (tile.parent as? android.view.ViewGroup)?.removeView(tile)
-            if (fullTile === tile) fullTile = null
-            // 视图摘了还不算完，Engine 那一侧也要解绑（见 Actions.releaseVideoView）。
-            actions?.releaseVideoView(uid)
-        }
     }
 
     override fun onDetachedFromWindow() {

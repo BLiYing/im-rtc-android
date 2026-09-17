@@ -58,11 +58,22 @@ internal class IMCallGridView(context: Context) : GridLayout(context) {
      * @param gap 格子之间的间距（像素）。
      * @param fallbackCell 容器还没量出来时先用的边长——第一轮 render 早于第一次 layout，
      *   那时只能按竖屏手机的形状估一版，`onLayout` 量到真尺寸会再来一次。
+     * @param fixedTileCount 恒按这么多格算行列；0 = 按实际格数（群通话）。
+     *   会议分页固定 3×3：**最后一页不满时格子和满页一样大**，不放大
+     *   （MEETING_ROOM_DESIGN §4.1）——放大的话层会从 l 跳到 m、还要多等一次关键帧。
      */
-    fun apply(wanted: List<View>, boxWidth: Int, boxHeight: Int, gap: Int, fallbackCell: Int) {
+    fun apply(
+        wanted: List<View>,
+        boxWidth: Int,
+        boxHeight: Int,
+        gap: Int,
+        fallbackCell: Int,
+        fixedTileCount: Int = 0,
+    ) {
         val measured = boxWidth > 0 && boxHeight > 0
         val aspect = if (measured) boxWidth.toDouble() / boxHeight else DEFAULT_ASPECT
-        val (columns, rows) = IMGrid.dimensions(wanted.size, aspect)
+        val (columns, rows) =
+            IMGrid.dimensions(if (fixedTileCount > 0) fixedTileCount else wanted.size, aspect)
         val wantedWidth: Int
         val wantedHeight: Int
         when {

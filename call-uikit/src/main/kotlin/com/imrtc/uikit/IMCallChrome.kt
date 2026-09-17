@@ -21,6 +21,13 @@ import android.widget.TextView
 internal class IMCallHeader(context: Context) : FrameLayout(context) {
     val minimizeButton = roundButton(IMKitIcon.PIP, "收进小窗")
     val inviteButton = roundButton(IMKitIcon.PERSON_ADD, "添加成员")
+    /**
+     * 成员列表入口（MEETING_ROOM_DESIGN §4.6 的「👥 N」）。**只有会议房给**。
+     *
+     * 它与「添加成员」共用右上角那一个位置：会议房没有加人这回事
+     * （`canShowInvite` 明确排除了会议），两颗按钮不会同时出现。
+     */
+    val membersButton = TextView(context)
     private val title = TextView(context)
     private val subtitle = TextView(context)
     private val bars = IMNetworkBarsView(context)
@@ -52,15 +59,38 @@ internal class IMCallHeader(context: Context) : FrameLayout(context) {
         })
         addView(minimizeButton, LayoutParams(dp(32), dp(32), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(16) })
         addView(inviteButton, LayoutParams(dp(32), dp(32), Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = dp(16) })
+
+        membersButton.textSize = 12f
+        membersButton.setTextColor(IMKitTheme.primaryText)
+        membersButton.gravity = Gravity.CENTER
+        membersButton.background = IMKitTheme.circleDrawable(IMKitTheme.controlOff)
+        membersButton.contentDescription = "成员列表"
+        membersButton.visibility = View.GONE
+        addView(
+            membersButton,
+            LayoutParams(dp(44), dp(32), Gravity.END or Gravity.CENTER_VERTICAL)
+                .apply { rightMargin = dp(16) },
+        )
     }
 
-    fun apply(titleText: String, subtitleText: String, networkLevel: Int, showsMinimize: Boolean, showsInvite: Boolean) {
+    fun apply(
+        titleText: String,
+        subtitleText: String,
+        networkLevel: Int,
+        showsMinimize: Boolean,
+        showsInvite: Boolean,
+        memberCount: Int = 0,
+    ) {
         title.text = titleText
         subtitle.text = subtitleText
         bars.level = networkLevel
         bars.visibility = if (networkLevel > 0) View.VISIBLE else View.GONE
         minimizeButton.visibility = if (showsMinimize) View.VISIBLE else View.INVISIBLE
         inviteButton.visibility = if (showsInvite) View.VISIBLE else View.INVISIBLE
+        // 两颗按钮同一个位置，互斥：加人按钮出现时就没有成员列表这一说（会议房才有它）。
+        membersButton.visibility =
+            if (!showsInvite && memberCount > 0) View.VISIBLE else View.GONE
+        membersButton.text = "👥$memberCount"
     }
 
     private fun roundButton(icon: IMKitIcon, label: String) = ImageButton(context).apply {

@@ -208,7 +208,8 @@ object IMCallKit {
                 onLocalMediaStarted()
             }
             syncCameraIntent(instance)
-            instance.joinRoom(roomId, roomToken, onResult = IMKitResults.logOnly("进会议"))
+            // 会议房发 "audio"：音频服务端自动订，视频由分页画廊按当前页订（见 joinRoom 的注释）。
+            instance.joinRoom(roomId, roomToken, "audio", IMKitResults.logOnly("进会议"))
         }
     }
 
