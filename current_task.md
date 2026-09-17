@@ -7,7 +7,7 @@
 
 ## 当前焦点
 
-**2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `5ad5bad`…`e11761f`，`test.sh` 6 步全绿）。** 同批推上去的还有 `58cde02` 拨出中「收进小窗」。
+**2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `5ad5bad`…`e11761f`，`test.sh` 6 步全绿）。**
 - **行为修复 `5ad5bad`**：关闭码 4400 原先落进默认分支一直重连，改从 `IMCloseCode.shouldReconnect` 取判据，只报 `onDisconnected(4400, false)`、不抛 `onKickedOut`，对齐 iOS / Web（CLIENT_PARITY 那句「4400 四端都不重连」此前对 Android 不成立，现在成立）。JVM 单测 8 条，真机没造 4400。
 - Demo 通话记录补齐 answered_elsewhere / rejected_elsewhere / room_closed，kicked 改「已被移出」。
 - 行为不变：`applyOutput` 按引用短路 `claimRemoteTracks`；控制按钮 setter 判重、头像底纹按 `avatarKey` 判重；`Wire` 统一取值、`invalidStateOutput` 合并；`View.dp()` 收进 `IMKitTheme`（统一截断，`IMHiddenCountPill` 可能差 1px）；`scheduleResetIfEnded`；`startCapture(profile)` / `safeRemoveSink` / `hasPermission`；删零调用的 8 个 `IMKitIcon` 与 drawable、`Settled.OFFLINE`、`IMCallOverlay.isAttached`。
