@@ -99,20 +99,26 @@ internal class IMAudioRouter(context: Context) {
         }
     }
 
-    /** API 31 以下：扬声器开关 + 蓝牙 SCO 要自己拉起；有线耳机系统会自己切。 */
+    /**
+     * API 31 以下：扬声器开关 + 蓝牙 SCO 要自己拉起；有线耳机系统会自己切。
+     *
+     * **先后直接用 [IMAudioRoutePolicy.pick]**（有线排在蓝牙前面）：两样都接着时不该拉起蓝牙 SCO——
+     * 原先只看 `hasSco`，车载蓝牙连着时插上有线耳机，声音仍然走蓝牙，跟策略里「插线是更晚、更有意的动作」矛盾。
+     */
     @Suppress("DEPRECATION")
     private fun applyLegacyRoute(why: String) {
         audioManager.isSpeakerphoneOn = speakerForced
-        val hasSco = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            .any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
-        if (!speakerForced && hasSco && !scoStarted) {
+        val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { it.type }
+        val wantSco = !speakerForced &&
+            IMAudioRoutePolicy.pick(speakerForced = false, available = outputs) == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+        if (wantSco && !scoStarted) {
             audioManager.startBluetoothSco()
             audioManager.isBluetoothScoOn = true
             scoStarted = true
-        } else if ((speakerForced || !hasSco) && scoStarted) {
+        } else if (!wantSco && scoStarted) {
             stopSco()
         }
-        IMRTCLog.i("audio", "$why：扬声器=$speakerForced 蓝牙SCO=$scoStarted（API 31 以下的旧路径）")
+        IMRTCLog.i("audio", "$why：扬声器=$speakerForced 蓝牙SCO=$scoStarted 输出=$outputs（API 31 以下的旧路径）")
     }
 
     @Suppress("DEPRECATION")
