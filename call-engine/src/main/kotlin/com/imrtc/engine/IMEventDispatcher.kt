@@ -4,6 +4,7 @@ import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.statemachine.IMEmittedEvent
+import com.imrtc.engine.statemachine.Wire
 
 /**
  * 把状态机吐出来的 [IMEmittedEvent]（线路形状、snake_case）翻译成 [IMCallEngineListener]
@@ -151,14 +152,14 @@ internal class IMEventDispatcher(
     private fun onMain(block: () -> Unit) = main.run(block)
 }
 
-private fun Map<String, IMJson>.str(key: String) = (this[key] as? IMJson.Str)?.value ?: ""
+// 四个都是「从线路 Map 里安全取值」的薄包装，唯一实现在 [Wire]（statemachine 包）——
+// 这里只是保留原有的 `args.str("key")` 调用写法，不重复兜底值。
+private fun Map<String, IMJson>.str(key: String) = Wire.str(this, key)
 
-private fun Map<String, IMJson>.num(key: String) = (this[key] as? IMJson.Num)?.value ?: 0L
+private fun Map<String, IMJson>.num(key: String) = Wire.num(this, key)
 
-private fun Map<String, IMJson>.flag(key: String) = (this[key] as? IMJson.Bool)?.value ?: false
+private fun Map<String, IMJson>.flag(key: String) = Wire.flag(this, key)
 
-private fun Map<String, IMJson>.strs(key: String): List<String> =
-    ((this[key] as? IMJson.Arr)?.items ?: emptyList()).mapNotNull { (it as? IMJson.Str)?.value }
+private fun Map<String, IMJson>.strs(key: String) = Wire.strList(this, key)
 
-private fun Map<String, IMJson>.objects(key: String): List<Map<String, IMJson>> =
-    ((this[key] as? IMJson.Arr)?.items ?: emptyList()).mapNotNull { (it as? IMJson.Obj)?.fields }
+private fun Map<String, IMJson>.objects(key: String) = Wire.objects(this, key)

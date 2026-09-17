@@ -3,6 +3,7 @@ package com.imrtc.engine
 import com.imrtc.engine.media.IMMediaAdapter
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
+import com.imrtc.engine.statemachine.Wire
 
 /**
  * 把协商类下行帧原样喂给媒体层。
@@ -26,5 +27,5 @@ internal fun IMMediaAdapter.applyNegotiationFrame(type: String, data: Map<String
     }
 }
 
-/** 取一个字符串字段；类型不对或缺字段都给空串（帧级解码已经补过默认值，这里只是兜底）。 */
-internal fun Map<String, IMJson>.text(key: String) = (this[key] as? IMJson.Str)?.value ?: ""
+/** 取一个字符串字段；类型不对或缺字段都给空串（唯一实现在 [Wire]，这里只是保留调用写法）。 */
+internal fun Map<String, IMJson>.text(key: String) = Wire.str(this, key)

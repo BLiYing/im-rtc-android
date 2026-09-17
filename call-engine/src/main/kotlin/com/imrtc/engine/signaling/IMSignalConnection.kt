@@ -232,7 +232,10 @@ internal class IMSignalConnection(
             // 从全默认值起手再覆盖（发送侧默认值陷阱，见 [IMEnvelope.request]）。
             val reqId = "f-${fireSequence.incrementAndGet()}"
             transport.send(IMEnvelope.request(type, reqId, scheduler.nowMs()) { it.putAll(data) }.encode())
-            IMRTCLog.d("signal", "↑ $type${reqSuffix(reqId)}${idSuffix(data)}（不等应答）")
+            // 同 [sendFrame]：先问一句有没有人要，别不问就把 String 拼好。
+            if (IMRTCLog.isLoggable(IMRTCLog.Level.DEBUG)) {
+                IMRTCLog.d("signal", "↑ $type${reqSuffix(reqId)}${idSuffix(data)}（不等应答）")
+            }
             true
         } catch (e: IMRtcException) {
             IMRTCLog.e("signal", "发送失败 $type：${e.detail}")

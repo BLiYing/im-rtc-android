@@ -430,10 +430,12 @@ class IMCallEngine private constructor(
     private fun applyOutput(before: IMEngineContext, output: IMMachineOutput<IMEngineContext>) {
         ctx = output.state
 
-        // 每推进一步就把「哪条轨道是谁的」同步给媒体层。**轨道与归属谁先到都可能**，
-        // 所以这一步不能只挂在 track_published 那一支上（iOS 的 IMFrameLoop、Web 的
-        // frameLoop.ts 都是同一处）。
-        media?.claimRemoteTracks(output.state.room.remoteTracks.mapValues { it.value.uid })
+        // 把「哪条轨道是谁的」同步给媒体层。**轨道与归属谁先到都可能**：「轨道后到」那一半
+        // 媒体层自己接住（IMWebRTCAdapter 收新轨道时用存好的 trackOwners 对齐），这里只管
+        // 「归属变了」那一半，引用没变就跳过——remoteTracks 不可变，reduce 没碰过就还是原引用。
+        if (before.room.remoteTracks !== output.state.room.remoteTracks) {
+            media?.claimRemoteTracks(output.state.room.remoteTracks.mapValues { it.value.uid })
+        }
 
         for (frame in output.send) sendFrame(frame)
         dispatcher.dispatchAll(output.emit)
@@ -490,10 +492,8 @@ class IMCallEngine private constructor(
         IMRequestFailures.handle(ctx, frame, code, message, dispatcher, ::input) { reason -> forceEnder.run(reason) }
 
     private fun requireMedia(): IMMediaAdapter? {
-        if (media == null) {
-            // **不为它新造错误码**：错误码表是五仓共用的契约，加一个码等于改五个仓 + 改向量。
-            dispatcher.error(IMErrorCode.INVALID_STATE.code, "没有媒体适配器；引 call-engine-webrtc")
-        }
+        // 不为它新造错误码：错误码表是五仓共用的契约，加一个码等于改五个仓 + 改向量。
+        if (media == null) dispatcher.error(IMErrorCode.INVALID_STATE.code, "没有媒体适配器；引 call-engine-webrtc")
         return media
     }
 
@@ -545,8 +545,7 @@ class IMCallEngine private constructor(
         }
 
         override fun onKickedOut(reason: IMKickedOutReason) {
-            // 状态机只认「被踢了」这一件事；原因是给宿主做处置判断的，两者分开走
-            // （dispatcher 里刻意不派发状态机那份 onKickedOut）。
+            // 状态机只认「被踢了」这一件事；原因给宿主做处置判断，两者分开走（dispatcher 里刻意不派发状态机那份 onKickedOut）。
             input(IMMachineInput.Internal("ws_closed_4403"))
             dispatcher.kickedOut(reason)
         }

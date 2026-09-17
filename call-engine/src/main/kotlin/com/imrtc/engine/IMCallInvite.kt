@@ -3,6 +3,7 @@ package com.imrtc.engine
 import com.imrtc.engine.protocol.IMCallOptionsGuard
 import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMJson
+import com.imrtc.engine.protocol.IMProtocolEnums
 import com.imrtc.engine.statemachine.IMEmittedEvent
 import com.imrtc.engine.statemachine.IMMachineInput
 
@@ -13,9 +14,6 @@ import com.imrtc.engine.statemachine.IMMachineInput
  * 这段逻辑本来也和门面的「核心循环」是两个关注点。
  */
 internal object IMCallInvite {
-
-    /** 0 = 用协议默认值。 */
-    private const val DEFAULT_TIMEOUT_SEC = 30L
 
     /**
      * 校验通过就返回喂给状态机的 [IMMachineInput.Act]；校验不过直接经 [dispatcher] 抛
@@ -49,7 +47,7 @@ internal object IMCallInvite {
 
     /** `call` 动作的完整参数表——**总是带上 chat_group_id / user_data / timeout_sec**。 */
     private fun args(calleeIds: List<String>, mediaType: String, options: IMCallOptions): Map<String, IMJson> {
-        val resolvedTimeoutSec = if (options.timeoutSec > 0) options.timeoutSec.toLong() else DEFAULT_TIMEOUT_SEC
+        val resolvedTimeoutSec = if (options.timeoutSec > 0) options.timeoutSec.toLong() else IMProtocolEnums.DEFAULT_TIMEOUT_SEC
         return mapOf(
             "callee_ids" to IMJson.Arr(calleeIds.map { IMJson.Str(it) }),
             "media_type" to IMJson.Str(mediaType),

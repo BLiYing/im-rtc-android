@@ -1,6 +1,5 @@
 package com.imrtc.engine.statemachine
 
-import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
 
@@ -455,16 +454,5 @@ internal object IMRoomMachine {
     )
 
     /** 不变量 R1 的落点：错误状态下的调用**本地拒绝**，不发上去。 */
-    internal fun localReject(ctx: IMRoomContext) = out(
-        ctx,
-        emit = listOf(
-            IMEmittedEvent(
-                "onError",
-                mapOf(
-                    "code" to n(IMErrorCode.INVALID_STATE.code.toLong()),
-                    "name" to s(IMErrorCode.INVALID_STATE.wireName),
-                ),
-            ),
-        ),
-    )
+    internal fun localReject(ctx: IMRoomContext) = invalidStateOutput(ctx)
 }

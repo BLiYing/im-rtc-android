@@ -1,7 +1,6 @@
 package com.imrtc.engine.statemachine
 
 import com.imrtc.engine.IMCallEndReason
-import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMEnvelope
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
@@ -238,18 +237,7 @@ internal object IMCallMachine {
     internal fun callIdFrame(type: String, ctx: IMCallContext) =
         IMOutgoingFrame(type, mapOf("call_id" to s(ctx.callId)))
 
-    internal fun invalidState(ctx: IMCallContext) = out(
-        ctx,
-        emit = listOf(
-            IMEmittedEvent(
-                "onError",
-                mapOf(
-                    "code" to n(IMErrorCode.INVALID_STATE.code.toLong()),
-                    "name" to s(IMErrorCode.INVALID_STATE.wireName),
-                ),
-            ),
-        ),
-    )
+    internal fun invalidState(ctx: IMCallContext) = invalidStateOutput(ctx)
 
     /**
      * 不变量 I8 的那个**唯一例外**。

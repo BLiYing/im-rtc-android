@@ -127,10 +127,10 @@ private fun handleJoinOk(ctx: IMRoomContext, data: Map<String, IMJson>): IMMachi
         participantId = Wire.str(data, "participant_id"),
     )
 
-    for (participant in objects(data["participants"])) {
+    for (participant in Wire.objects(data, "participants")) {
         emit += IMEmittedEvent("onUserEnter", mapOf("uid" to s(Wire.str(participant, "uid"))))
     }
-    for (track in objects(data["tracks"])) {
+    for (track in Wire.objects(data, "tracks")) {
         val trackId = Wire.str(track, "track_id")
         val kind = if (Wire.str(track, "kind") == "video") "video" else "audio"
         val uid = Wire.str(track, "uid")
@@ -225,5 +225,3 @@ private fun availability(kind: String, uid: String, available: Boolean) = IMEmit
     mapOf("uid" to s(uid), "available" to b(available)),
 )
 
-private fun objects(value: IMJson?): List<Map<String, IMJson>> =
-    ((value as? IMJson.Arr)?.items ?: emptyList()).mapNotNull { (it as? IMJson.Obj)?.fields }

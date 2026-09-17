@@ -1,5 +1,6 @@
 package com.imrtc.engine.statemachine
 
+import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMJson
 
 /**
@@ -53,6 +54,25 @@ internal data class IMMachineOutput<S>(
 )
 
 /**
+ * 「当前状态不接受这个操作」的落点：不发帧、只本地抛一条 `onError(INVALID_STATE)`。
+ *
+ * [CallStateMachine.invalidState] 与 [RoomStateMachine.localReject] 曾经是逐字重复的两份
+ * 实现，各自 `ctx` 类型不同（`IMCallContext` / `IMRoomContext`），这里用泛型收成一份。
+ */
+internal fun <S> invalidStateOutput(ctx: S): IMMachineOutput<S> = IMMachineOutput(
+    ctx,
+    emit = listOf(
+        IMEmittedEvent(
+            "onError",
+            mapOf(
+                "code" to n(IMErrorCode.INVALID_STATE.code.toLong()),
+                "name" to s(IMErrorCode.INVALID_STATE.wireName),
+            ),
+        ),
+    ),
+)
+
+/**
  * 从线路数据里安全取值的小工具。
  *
  * **缺字段不报错、取默认值**：帧级解码（`FieldCodec`）已经补过默认值了，
@@ -67,6 +87,9 @@ internal object Wire {
 
     fun strList(data: Map<String, IMJson>, key: String): List<String> =
         ((data[key] as? IMJson.Arr)?.items ?: emptyList()).mapNotNull { (it as? IMJson.Str)?.value }
+
+    fun objects(data: Map<String, IMJson>, key: String): List<Map<String, IMJson>> =
+        ((data[key] as? IMJson.Arr)?.items ?: emptyList()).mapNotNull { (it as? IMJson.Obj)?.fields }
 }
 
 /** 造 `IMJson` 的简写，让状态机里的帧构造读起来还像帧。 */
