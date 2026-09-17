@@ -23,8 +23,6 @@ internal class IMCallOverlay {
     private var view: View? = null
     private var host: ViewGroup? = null
 
-    val isAttached: Boolean get() = view != null
-
     /**
      * 把 [make] 造出来的视图挂到前台 Activity 上；已经挂着同一类视图就只刷新。
      *

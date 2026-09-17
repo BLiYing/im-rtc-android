@@ -561,6 +561,15 @@ object IMCallKit {
     }
 
     /** 邀请中的格子拿到终局（已拒绝 / 未接听）后停 2s 再收（交互稿 §05 G3，记账见 [IMSettleTimers]）。 */
+    /**
+     * `holdMs` 后若还停在 ENDED（没被新一轮通话/邀请打断）就收场回 IDLE。
+     *
+     * 四处逐字重复的收尾动作抽到 [postResetIfEnded]：`onCallEnd` / `onRoomLeft` /
+     * `onRoomClosed` 三条回调都要「停一下让用户看清结束原因，再自动收起」，
+     * `IMRedButton` 兜底同理（它自己注入的 main/state/update，直接调 [postResetIfEnded]）。
+     */
+    internal fun scheduleResetIfEnded(holdMs: Long) = postResetIfEnded(main, { state }, ::update, holdMs)
+
     private fun scheduleSettledRemovals(current: IMCallViewState) {
         val settled = current.members.values
             .filter { it.settled != IMCallViewState.Settled.NONE }

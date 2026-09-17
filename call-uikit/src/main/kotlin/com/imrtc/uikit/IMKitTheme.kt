@@ -1,7 +1,9 @@
 package com.imrtc.uikit
 
+import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.view.View
 
 /**
  * 设计令牌 —— 设计稿《通话界面规范》§02–§04、§07 的落点。
@@ -133,19 +135,21 @@ internal enum class IMKitIcon(val resId: Int) {
     PHONE(R.drawable.ic_im_phone),
     PHONE_DOWN(R.drawable.ic_im_phone_down),
     XMARK(R.drawable.ic_im_xmark),
-    MINIMIZE(R.drawable.ic_im_minimize),
     /** 收进小窗。**画中画字形**（外框 + 右下角一个实心小窗）——双向箭头那一版在真机上被认成「全屏」。 */
     PIP(R.drawable.ic_im_pip),
-    EXPAND(R.drawable.ic_im_expand),
     SPEAKER(R.drawable.ic_im_speaker),
     SPEAKER_SLASH(R.drawable.ic_im_speaker_slash),
     CAMERA_FLIP(R.drawable.ic_im_camera_flip),
     PERSON_ADD(R.drawable.ic_im_person_add),
-    PLUS(R.drawable.ic_im_plus),
-    CHEVRON_DOWN(R.drawable.ic_im_chevron_down),
-    MORE(R.drawable.ic_im_more),
-    SCREEN_SHARE(R.drawable.ic_im_screen_share),
-    GRID(R.drawable.ic_im_grid),
-    SETTINGS(R.drawable.ic_im_settings),
     MAGNIFYING_GLASS(R.drawable.ic_im_magnifyingglass),
 }
+
+/**
+ * dp → px，**统一截断** `(value * density).toInt()`（多数原实现的取整方式）；
+ * 在 View 子类里直接 `dp(n)`（隐式接收者），不是 View 的持有者（如 [IMInvitePicker] 持
+ * `Activity`）改用 [Context.dp]。原先 10 个文件各自一份，逐字重复挪到这一处。
+ */
+internal fun Context.dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+/** 同 [Context.dp]，给 View 子类用的便利版（就是自己的 `context`）。 */
+internal fun View.dp(value: Int): Int = context.dp(value)

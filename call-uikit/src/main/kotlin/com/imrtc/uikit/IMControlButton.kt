@@ -39,15 +39,27 @@ internal class IMControlButton(
     private var offCaption = caption
 
     var isOn = false
-        set(value) { field = value; paint() }
+        set(value) {
+            if (field == value) return
+            field = value
+            paint()
+        }
 
     /** 禁用态：**仍然可点**——调用方要借这一下出提示。 */
     var isDisabledLook = false
-        set(value) { field = value; paint() }
+        set(value) {
+            if (field == value) return
+            field = value
+            paint()
+        }
 
     var caption: String
         get() = offCaption
-        set(value) { offCaption = value; paint() }
+        set(value) {
+            if (offCaption == value) return
+            offCaption = value
+            paint()
+        }
 
     init {
         orientation = VERTICAL
@@ -100,6 +112,4 @@ internal class IMControlButton(
         }
         return super.onTouchEvent(event)
     }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }

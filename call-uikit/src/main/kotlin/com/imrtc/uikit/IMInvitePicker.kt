@@ -387,7 +387,8 @@ internal class IMInvitePicker(
         }
     }
 
-    private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
+    /** [IMInvitePicker] 不是 View（持有 [Activity] 不是继承它），用 Context 版。 */
+    private fun dp(value: Int): Int = activity.dp(value)
 
     private companion object {
         const val DEBOUNCE_MS = 300L

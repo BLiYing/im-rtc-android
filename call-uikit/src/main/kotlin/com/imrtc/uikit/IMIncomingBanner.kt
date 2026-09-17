@@ -134,6 +134,4 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
         setPadding(pad, pad, pad, pad)
         scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
     }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }

@@ -242,8 +242,6 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
         ghosts = null
     }
 
-    private fun dp(value: Int): Int = (value * density).toInt()
-
     /** 拖动中四个角的虚线框。 */
     private class GhostsView(context: Context, private val rects: List<RectF>, private val radius: Float) : View(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

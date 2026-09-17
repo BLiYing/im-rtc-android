@@ -200,8 +200,6 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
             .start()
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
     companion object {
         /** 挂断按钮的直径。28 是「拇指够得着」的下限（规范 §04 的小控件尺寸）。 */
         private const val HANGUP_DP = 28

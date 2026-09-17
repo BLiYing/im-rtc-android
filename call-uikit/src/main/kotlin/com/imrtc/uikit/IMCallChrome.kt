@@ -72,8 +72,6 @@ internal class IMCallHeader(context: Context) : FrameLayout(context) {
         setPadding(pad, pad, pad, pad)
         scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
     }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
 
 /** 顶部橙条（规范 §08）：「正在重连…」「连接已断开」「对方网络不佳」。橙底深字，圆角胶囊。 */
@@ -92,8 +90,6 @@ internal class IMTopBanner(context: Context) : TextView(context) {
         this.text = text
         visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
     }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }
 
 /**
@@ -108,6 +104,9 @@ internal class IMAudioStage(context: Context) : FrameLayout(context) {
     private val netChip = LinearLayout(context)
     private val netBars = IMNetworkBarsView(context)
     private val netText = TextView(context)
+
+    /** 底色只跟这个键走；没变就不重建 GradientDrawable（同 [IMVideoTile] 的 avatarKey）。 */
+    private var avatarKey: String? = null
 
     init {
         val size = dp(IMKitTheme.AVATAR_LARGE_DP)
@@ -168,7 +167,11 @@ internal class IMAudioStage(context: Context) : FrameLayout(context) {
         showsCaption: Boolean = true,
     ) {
         avatar.text = IMAvatar.initial(nameText)
-        avatar.background = IMKitTheme.avatarDrawable(uid.ifEmpty { nameText })
+        val avatarKey = uid.ifEmpty { nameText }
+        if (this.avatarKey != avatarKey) {
+            this.avatarKey = avatarKey
+            avatar.background = IMKitTheme.avatarDrawable(avatarKey)
+        }
         name.text = nameText
         status.text = statusText
         name.visibility = if (showsCaption) View.VISIBLE else View.GONE
@@ -194,6 +197,4 @@ internal class IMAudioStage(context: Context) : FrameLayout(context) {
             ring.animate().alpha(1f).setDuration(800).withEndAction { if (ring.visibility == View.VISIBLE) breathe() }.start()
         }.start()
     }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 }

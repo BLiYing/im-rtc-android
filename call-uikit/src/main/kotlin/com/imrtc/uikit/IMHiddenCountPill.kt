@@ -35,10 +35,6 @@ internal class IMHiddenCountPill(context: Context) : TextView(context) {
         visibility = if (hidden > 0) VISIBLE else GONE
     }
 
-    private fun dp(value: Int) = TypedValue.applyDimension(
-        TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics,
-    ).toInt()
-
     companion object {
         fun layoutParams(pill: IMHiddenCountPill): FrameLayout.LayoutParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END,

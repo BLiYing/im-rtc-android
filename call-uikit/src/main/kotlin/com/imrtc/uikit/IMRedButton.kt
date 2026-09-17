@@ -75,6 +75,17 @@ internal class IMRedButton(
         val current = state()
         IMRTCLog.w("kit", "红按钮本地收场：$why（phase=${current.phase} reason=$reason）")
         update(IMCallViewReducer.ended(current, reason))
-        main.postDelayed({ if (state().phase == IMCallViewState.Phase.ENDED) update(IMCallViewReducer.reset()) }, 1_500)
+        postResetIfEnded(main, state, update, 1_500)
     }
+}
+
+/**
+ * `holdMs` 后若还停在 ENDED（没被新一轮通话/邀请打断）就收场回 IDLE。
+ *
+ * [IMKitListener] 的 `onCallEnd`/`onRoomLeft`/`onRoomClosed` 三处与本类的 [IMRedButton.endLocally]
+ * 曾经逐字重复这一段，抽到这里；[IMCallKit.scheduleResetIfEnded] 是 `IMCallKit.main`/`state`/`update`
+ * 那一套的转调版，本类直接传自己的注入函数。
+ */
+internal fun postResetIfEnded(main: Handler, state: () -> IMCallViewState, update: (IMCallViewState) -> Unit, holdMs: Long) {
+    main.postDelayed({ if (state().phase == IMCallViewState.Phase.ENDED) update(IMCallViewReducer.reset()) }, holdMs)
 }

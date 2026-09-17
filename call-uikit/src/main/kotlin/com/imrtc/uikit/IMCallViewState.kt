@@ -85,8 +85,14 @@ internal data class IMCallViewState(
 
     enum class Connection { OK, RECONNECTING, LOST }
 
-    /** 邀请中的成员给出的终局：拒了 / 没接。有终局的格子停 2s 再移除（交互稿 §05 G3）。 */
-    enum class Settled { NONE, REJECTED, NO_ANSWER, OFFLINE }
+    /**
+     * 邀请中的成员给出的终局：拒了 / 没接。有终局的格子停 2s 再移除（交互稿 §05 G3）。
+     *
+     * **没有 OFFLINE**：群通话里成员「不在线」在线路上折进了 `call.no_answer{uid}`
+     * （server `RTC_PROTOCOL.md` §4.3「群通话里的『不在线』多发一条 call.no_answer{uid}」），
+     * Kit 收到的只有 [NO_ANSWER]，没有独立的线路事件能落到这个值上。
+     */
+    enum class Settled { NONE, REJECTED, NO_ANSWER }
 
     /**
      * 一个远端成员。`audio` 默认 true：`onUserAudioAvailable` 只在**变化**时抛，
@@ -250,7 +256,6 @@ internal data class IMCallViewState(
             Settled.NONE -> ""
             Settled.REJECTED -> "已拒绝"
             Settled.NO_ANSWER -> "未接听"
-            Settled.OFFLINE -> "对方不在线"
         }
 
         /** 网络质量的人话（协议 §3.5 的表）。 */

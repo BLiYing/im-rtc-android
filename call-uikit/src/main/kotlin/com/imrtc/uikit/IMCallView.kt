@@ -366,7 +366,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
                 top = emptyList()
                 bottom = emptyList()
             }
-            state.phase == IMCallViewState.Phase.INCOMING -> {
+            // showAnswerButton 就是 phase == INCOMING（同一件事，见 IMCallViewState），
+            // 这个分支管的不只是接听键，但判据完全等价。
+            state.showAnswerButton -> {
                 // 视频来电多一个摄像头开关，而不是「以语音接听」按钮（拍板 §11-10）。
                 top = emptyList()
                 bottom = if (state.showsCameraButton) {
@@ -583,8 +585,6 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         chrome.cancel()
         super.onDetachedFromWindow()
     }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
         /** 控制条离屏幕底边的距离（还要再加上手势条的 inset）。 */

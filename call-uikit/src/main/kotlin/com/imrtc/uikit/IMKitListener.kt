@@ -141,7 +141,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
             IMCallKit.update(IMCallViewReducer.ended(state, reason.wire, durationSec))
             // 停一会让用户看清结束原因再收场。**说不清原因的那几种要停久一点**（与 iOS / Web 同一张表）。
             val hold = if (reason == IMCallEndReason.HANGUP || reason == IMCallEndReason.CANCEL) 1_500L else 3_000L
-            IMCallKit.main.postDelayed({ if (state.phase == IMCallViewState.Phase.ENDED) IMCallKit.update(IMCallViewReducer.reset()) }, hold)
+            IMCallKit.scheduleResetIfEnded(hold)
         }
         host.onCallEnd(callId, reason, durationSec, endedBy)
     }
@@ -275,14 +275,14 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         IMCallKit.stopTimer()
         // 会议没有 onCallEnd，收尾只能靠这一条；振铃通话的房间也会在结束时清掉，那时已经在 ENDED 了，别动。
         if (state.isMeeting) IMCallKit.update(IMCallViewReducer.ended(state, "hangup"))
-        if (state.isMeeting) IMCallKit.main.postDelayed({ if (state.phase == IMCallViewState.Phase.ENDED) IMCallKit.update(IMCallViewReducer.reset()) }, 1_500)
+        if (state.isMeeting) IMCallKit.scheduleResetIfEnded(1_500)
         host.onRoomLeft(roomId)
     }
 
     override fun onRoomClosed(roomId: String, reason: String) {
         IMCallKit.stopTimer()
         IMCallKit.update(IMCallViewReducer.ended(state, reason))
-        IMCallKit.main.postDelayed({ if (state.phase == IMCallViewState.Phase.ENDED) IMCallKit.update(IMCallViewReducer.reset()) }, 1_500)
+        IMCallKit.scheduleResetIfEnded(1_500)
         host.onRoomClosed(roomId, reason)
     }
 

@@ -46,6 +46,9 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
     private val ringingLabel = TextView(context)
     private var avatarSizeDp = 44
 
+    /** 底色只跟这个键走（见下方 apply 里的说明）；没变就不重建 GradientDrawable。 */
+    private var avatarKey: String? = null
+
     var uid = ""
         private set
 
@@ -240,7 +243,11 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
           而显示名是每台设备各算各的（备注！），拿它取色会让同一个人换台设备就变个颜色。
         */
         avatar.text = IMAvatar.initial(shown)
-        avatar.background = IMKitTheme.avatarDrawable(uid.ifEmpty { label })
+        val avatarKey = uid.ifEmpty { label }
+        if (this.avatarKey != avatarKey) {
+            this.avatarKey = avatarKey
+            avatar.background = IMKitTheme.avatarDrawable(avatarKey)
+        }
         // 有图就盖上去（居中裁切 + 圆形裁剪都由 avatarPhoto 负责）；没有就露出下面的色块。
         avatarPhoto.setImageDrawable(photo)
         avatarPhoto.visibility = if (photo == null) GONE else VISIBLE
@@ -284,8 +291,6 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         val chrome = dp(PLATE_INSET_DP) * 2 + dp(8) * 2 + dp(9) + dp(5)
         nameText.maxWidth = (w - chrome).coerceAtLeast(dp(24))
     }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
         /**
