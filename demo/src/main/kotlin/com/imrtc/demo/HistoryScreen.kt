@@ -85,15 +85,22 @@ internal class HistoryScreen(private val activity: Activity) : DemoScreen {
     private fun summary(record: DemoRecord): String {
         val direction = if (record.role == "callee") "来电" else "呼出"
         // 协议 §2.4 规则 6：表外的值 Engine 已经折成 error 了；即便漏进来也不能把生值显给用户。
+        // 文案对齐 call-uikit 的 IMCallViewState.endReasonText（那个函数是 internal，
+        // Demo 是独立模块摸不到，只能照抄一份；RTC_PROTOCOL.md §6/§7.5 的 reason 表为准）。
         val outcome = when (record.reason) {
             "hangup" -> formatDuration(record.durationSec)
             "cancel" -> "已取消"
             "reject" -> if (record.role == "callee") "已拒接" else "对方拒接"
-            "busy" -> "对方忙线"
+            "busy" -> "对方忙线中"
             "no_answer", "timeout" -> if (record.role == "callee") "未接来电" else "无应答"
-            "offline" -> "对方不在线"
+            "offline" -> "对方当前不在线"
+            "answered_elsewhere" -> "已在其他设备接听"
+            "rejected_elsewhere" -> "已在其他设备拒绝"
+            "room_closed" -> "房间已解散"
             "network" -> "网络中断"
-            "kicked" -> "登录态失效"
+            // 协议 §7.5：kicked 是「被主持人/管理 API 移出通话」，不是登录态失效（那是连接层
+            // 的 IMKickedOutReason，另一件事）——写错了会把用户指向错误的排查方向。
+            "kicked" -> "已被移出"
             else -> "已结束"
         }
         return "$direction · $outcome"
