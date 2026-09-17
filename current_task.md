@@ -7,6 +7,10 @@
 
 ## 当前焦点
 
+**2026-09-17 傍晚：四仓 /simplify 清理（本仓 5 个提交 `5ad5bad`…`e11761f`，未推送，`test.sh` 6 步全绿）。**
+- **行为修复 `5ad5bad`**：关闭码 4400 原先落进默认分支一直重连，改从 `IMCloseCode.shouldReconnect` 取判据，只报 `onDisconnected(4400, false)`、不抛 `onKickedOut`，对齐 iOS / Web（CLIENT_PARITY 那句「4400 四端都不重连」此前对 Android 不成立，现在成立）。
+- Demo 通话记录补齐 answered_elsewhere / rejected_elsewhere / room_closed，kicked 改「已被移出」。其余为行为不变的收拢；dp 换算统一截断后 `IMHiddenCountPill` 个别尺寸可能差 1px，未真机比对。
+
 **2026-09-17 16:35：拨出中左上角「收进小窗」补上（`58cde02`，未推送，`test.sh` 6 步全绿，PKD130 / Android 15 真机验过）。**
 - 根因：`IMCallViewState.canMinimize` 原先只认 CONNECTING / CONNECTED（旧理由「拨出中收起不知道怎么挂断」，球下红键加上后已不成立），iOS / Web 是「除来电页与结束画面都给」。
 - 放开后真机暴露两处：① 点收起时通话页还在前台、宿主页没 resume，形态判定只能 hidden，拨出中没有每秒计时不会重判 → `IMActivityTracker.onHostResumed` 触发重挑形态；
