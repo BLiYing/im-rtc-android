@@ -62,8 +62,21 @@ internal data class IMEnvelope(
     }
 
     companion object {
-        /** 单帧上限（协议 §1.3），超了服务端直接以 4400 关连接。 */
+        /** 单帧**上行**上限（协议 §2.6），超了服务端直接以 4400 关连接。 */
         const val MAX_FRAME_BYTES = 65536
+
+        /**
+         * **收帧**的容忍上限（协议 §2.6，2.0.0 起）。
+         *
+         * **发帧与收帧不是同一个数**：发仍卡 64 KiB，收放宽到 256 KiB。
+         * 服务端今天发的下行 offer 都远小于 64 KiB；放宽的是**以后**——会议到 100 人时
+         * 每人一条音频 m-line，整帧约 80 KB（MEETING_ROOM_DESIGN §9 ③）。那时只要改服务端，
+         * 不必让已经发出去的 2.0.0 客户端跟着升一次版本。
+         *
+         * 放宽收不放宽发，是因为收帧上限是「愿意为对端花多少内存」，
+         * 发帧上限是「允许对端为我花多少内存」——后者松不得。
+         */
+        const val MAX_RECEIVED_FRAME_BYTES = 256 * 1024
 
         /** 应答帧的后缀：`room.join` 的应答是 `room.join.ok`。 */
         const val OK_SUFFIX = ".ok"
@@ -79,8 +92,11 @@ internal data class IMEnvelope(
         @Throws(IMRtcException::class)
         fun decode(raw: String): IMEnvelope {
             val bytes = raw.toByteArray(Charsets.UTF_8).size
-            if (bytes > MAX_FRAME_BYTES) {
-                throw IMRtcException(IMErrorCode.FRAME_TOO_LARGE, "帧 $bytes 字节 > 上限 $MAX_FRAME_BYTES")
+            if (bytes > MAX_RECEIVED_FRAME_BYTES) {
+                throw IMRtcException(
+                    IMErrorCode.FRAME_TOO_LARGE,
+                    "帧 $bytes 字节 > 收帧上限 $MAX_RECEIVED_FRAME_BYTES",
+                )
             }
 
             val parsed = try {

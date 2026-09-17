@@ -49,6 +49,11 @@ internal class IMFrameLoop(
     /** 状态迁移带来的媒体动作。见 [IMMediaDriver]。 */
     private val mediaDriver = IMMediaDriver(media, publisher, muteBook) { trackId, muted -> sendMute(trackId, muted, null) }
 
+    /** 会议房翻页退订的五秒迟滞（`RoomStateMachinePaging.kt`）。到点喂一个内部事件回状态机。 */
+    private val unsubscribeTimers = IMUnsubscribeTimers(scheduler) { trackId ->
+        input(IMMachineInput.Internal("unsubscribe_hysteresis_elapsed", mapOf("track_id" to IMJson.Str(trackId))))
+    }
+
     /** 强制收场的两段（直发结束帧 / 落地本地收场），见 [IMForceEnd]。 */
     val forceEnder by lazy {
         IMForceEnd(scheduler, connection(), { ctx }) { before, output -> applyOutput(before, output, null) }
@@ -73,6 +78,7 @@ internal class IMFrameLoop(
     fun reset() {
         publisher.clear()
         muteBook.clear()
+        unsubscribeTimers.clear()
         ctx = IMEngineContext()
     }
 
@@ -110,6 +116,8 @@ internal class IMFrameLoop(
         if (before.room.remoteTracks !== output.state.room.remoteTracks) {
             media?.claimRemoteTracks(output.state.room.remoteTracks.mapValues { it.value.uid })
         }
+        // 翻页退订的定时器**每轮对账一次**，不在各条来路上各排各撤（见 [IMUnsubscribeTimers]）。
+        unsubscribeTimers.sync(output.state.room.pendingUnsubscribe)
 
         for (frame in output.send) sendFrame(frame, result)
         dispatcher.dispatchAll(output.emit)

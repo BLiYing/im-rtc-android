@@ -7,6 +7,14 @@
 
 ## 当前焦点
 
+**2026-09-18 凌晨：会议房 M2 的 Engine 那一半已做完并提交（server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2 步）。`test.sh` 6 步全绿。**
+- 协议 2：`sys.hello` 的 `protocol_version` 默认值 1 → 2；收帧上限拆成两个数（发仍 `IMEnvelope.MAX_FRAME_BYTES` 64 KiB，收按 `MAX_RECEIVED_FRAME_BYTES` 256 KiB）。
+- `room.join.auto_subscribe` 布尔 → 三档字符串 `all | audio | none`（`IMProtocolEnums.AUTO_SUBSCRIBE_MODES`，兜底 `all`）。
+- **本端唯一一处签名变化**：`joinRoom(roomId, roomToken, autoSubscribe = "all", onResult = null)` 多了一个**可选**参数（iOS / Web 本来就有）。既有 Java 调用靠 `@JvmOverloads` 的两参重载不用改；Kotlin 里传回调要写 `onResult =`。
+- 会议房按页订阅（`statemachine/RoomStateMachinePaging.kt`）：`autoSubscribe == "audio"` 时 `setRemoteLayer` 就是订阅意图——`l/m/h` = 订阅或换层，`none` = 先停包再等 5 s 退订；翻回来只换层不重协商；同时订阅的视频封顶 16 路，满了先退最早翻走的那一条，一条都腾不出来才本地拒绝（**本地拒绝不带帧**）。定时器在 `IMUnsubscribeTimers.kt`，按 `pendingUnsubscribe` **整体对账**。
+- 新测 `statemachine/RoomPagingTest`（12 条）；向量新增两组用例由 `RoomFsmVectorsTest` 跑（现 10 用例 61 步）。
+- **没做**：UIKit 的分页画廊、钉住、成员列表（下一段）；`IMCallKit.joinMeeting` 还是发 `"all"`，等 Kit 那一段改成 `"audio"`。
+
 **2026-09-17 夜：结束帧 / 迟到帧合成一张表（队列 5 的「迟到帧」那条）**：四份「这个状态怎么结束」合进 `statemachine/IMCallExit.kt`
 （`reduceAct` 退出方法 / `forceEndFrames` / `handleLateFrame` 与 `handleInviteOk` 补发 / `IMRequestFailures` 失败收场集合），
 `CallExitTableTest` 逐条对 `call_fsm.json`，与 iOS `IMCallExit` 同一张表。行为不变。

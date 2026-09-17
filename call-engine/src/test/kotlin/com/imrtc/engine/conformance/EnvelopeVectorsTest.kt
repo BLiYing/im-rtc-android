@@ -113,7 +113,7 @@ class EnvelopeVectorsTest {
             it["room_id"] = IMJson.Str("r-1")
             it["room_token"] = IMJson.Str("tk")
         }
-        assertEquals(IMJson.Bool(true), join.data["auto_subscribe"])
+        assertEquals(IMJson.Str("all"), join.data["auto_subscribe"])
         assertEquals(IMJson.Bool(true), join.data["publish_audio"])
         assertEquals(IMJson.Bool(false), join.data["publish_video"])
 

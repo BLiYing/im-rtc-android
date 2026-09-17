@@ -22,6 +22,25 @@ internal object IMProtocolEnums {
     /** simulcast 层。`none` = 暂停下发但保留订阅。兜底 `l`——宁可给小图。 */
     val LAYERS = listOf("none", "l", "m", "h")
 
+    /**
+     * `room.join.auto_subscribe` 的三档（协议 2 起，之前是布尔）。
+     *
+     * 兜底 `all`——认不出的档位按「全订」处理。反过来兜成 `none` 的话，
+     * 一个字母写错就是「人进了房，谁都看不见也听不见」，而且没有任何一处报错。
+     *
+     * - `all`   音频 + 视频都由服务端自动订阅（通话房）
+     * - `audio` 只自动订音频，视频由客户端按当前页 `room.subscribe`（会议分页画廊）
+     * - `none`  一条都不自动订
+     */
+    val AUTO_SUBSCRIBE_MODES = listOf("all", "audio", "none")
+
+    /** 这一档要不要让服务端自动订阅某种 kind 的 Track。 */
+    fun autoSubscribeCovers(mode: String, kind: String): Boolean = when (mode) {
+        "all" -> true
+        "audio" -> kind == "audio"
+        else -> false
+    }
+
     /** Track 类型。 */
     val TRACK_KINDS = listOf("audio", "video")
 

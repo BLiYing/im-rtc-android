@@ -2,6 +2,7 @@ package com.imrtc.engine.statemachine
 
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
+import com.imrtc.engine.protocol.IMProtocolEnums
 
 /**
  * 房间状态机：`RTC_PROTOCOL.md` §5.3。一致性向量 `room_fsm.json`，五端跑同一份。
@@ -72,7 +73,8 @@ internal data class IMRoomContext(
     val roomId: String = "",
     val roomToken: String = "",
     val participantId: String = "",
-    val autoSubscribe: Boolean = true,
+    /** 进房时声明的自动订阅档位（协议 §3.1）。会议房是 `audio`，通话房是 `all`。 */
+    val autoSubscribe: String = "all",
     /** cid → 发布状态。用 cid 而不是 track_id：发布请求发出时还没有 track_id。 */
     val publish: Map<String, IMPublishState> = emptyMap(),
     /** cid → 服务端分配的 track_id。 */
@@ -85,6 +87,14 @@ internal data class IMRoomContext(
     val layers: Map<String, String> = emptyMap(),
     /** joining / reconnecting 期间缓存的用户意图（不变量 R2）。 */
     val buffered: List<IMBufferedIntent> = emptyList(),
+    /**
+     * 翻页翻走、等五秒迟滞到点才退订的 track_id，**最早翻走的排在前面**
+     * （见 `RoomStateMachinePaging.kt`）。
+     *
+     * 顺序有用：订满 16 路要提前腾位置时，退的就是最早翻走的那一个。
+     * 不进一致性向量——向量只断言 `room` / `publish` / `subscribe` 三个键。
+     */
+    val pendingUnsubscribe: List<String> = emptyList(),
     /**
      * 这个房间**真的收到过 `room.join.ok`** 吗。
      *
@@ -196,6 +206,13 @@ internal object IMRoomMachine {
             */
             "subscribe_failed" -> dropFailedSubscribe(ctx, Wire.str(args, "track_id"))
 
+            /*
+             翻页退订的五秒到了（`RoomStateMachinePaging.kt`）。带 track_id 就只退那一条
+             （帧循环按 track 排定时器），不带就把排着的一次清掉（一致性向量用的是这一种）。
+            */
+            "unsubscribe_hysteresis_elapsed" ->
+                flushHysteresis(ctx, Wire.str(args, "track_id").ifEmpty { null })
+
             else -> out(ctx)
         }
 
@@ -251,7 +268,7 @@ internal object IMRoomMachine {
                     mapOf(
                         "room_id" to s(ctx.roomId),
                         "room_token" to s(ctx.roomToken),
-                        "auto_subscribe" to b(ctx.autoSubscribe),
+                        "auto_subscribe" to s(ctx.autoSubscribe),
                     ),
                 ),
             ),
@@ -329,9 +346,9 @@ internal object IMRoomMachine {
 
     private fun joinRoom(ctx: IMRoomContext, args: Map<String, IMJson>): IMMachineOutput<IMRoomContext> {
         if (ctx.state != IMRoomState.IDLE) return localReject(ctx)
-        // auto_subscribe 默认 true——直接读 args 会把「没写」当成 false，
-        // 那正是 §2.4 点名的发送侧陷阱。
-        val autoSubscribe = (args["auto_subscribe"] as? IMJson.Bool)?.value ?: true
+        // auto_subscribe 默认 `all`——直接读 args 会把「没写」当成空串，
+        // 那正是 §2.4 点名的发送侧陷阱。集合外的值按 §2.4 规则 6 兜底成 `all`。
+        val autoSubscribe = coerceAutoSubscribe((args["auto_subscribe"] as? IMJson.Str)?.value)
         val roomId = Wire.str(args, "room_id")
         val roomToken = Wire.str(args, "room_token")
 
@@ -348,7 +365,7 @@ internal object IMRoomMachine {
                     mapOf(
                         "room_id" to s(roomId),
                         "room_token" to s(roomToken),
-                        "auto_subscribe" to b(autoSubscribe),
+                        "auto_subscribe" to s(autoSubscribe),
                     ),
                 ),
             ),
@@ -418,14 +435,27 @@ internal object IMRoomMachine {
     private fun unsubscribeTrack(ctx: IMRoomContext, args: Map<String, IMJson>): IMMachineOutput<IMRoomContext> {
         val trackId = Wire.str(args, "track_id")
         return out(
-            ctx.copy(subscribe = ctx.subscribe + (trackId to IMSubscribeState.UNSUBSCRIBING)),
+            ctx.copy(
+                subscribe = ctx.subscribe + (trackId to IMSubscribeState.UNSUBSCRIBING),
+                // 已经手动退了，排着的那次迟滞退订就不必再来一遍。
+                pendingUnsubscribe = ctx.pendingUnsubscribe - trackId,
+            ),
             send = listOf(IMOutgoingFrame(IMFrameType.ROOM_UNSUBSCRIBE, mapOf("track_id" to s(trackId)))),
         )
     }
 
+    /**
+     * 报某条流的层上界。
+     *
+     * **会议房里它同时是订阅意图**：视频不由服务端自动订，所以「看得见」= 订阅、
+     * 「看不见」= 五秒后退订（见 `RoomStateMachinePaging.kt`）。通话房照旧只换层。
+     */
     private fun updateLayer(ctx: IMRoomContext, args: Map<String, IMJson>): IMMachineOutput<IMRoomContext> {
         val trackId = Wire.str(args, "track_id")
         val layer = Wire.str(args, "max_layer").ifEmpty { "m" }
+        if (usesPagedVideo(ctx) && ctx.remoteTracks[trackId]?.kind == "video") {
+            return pagedUpdateLayer(ctx, trackId, layer)
+        }
         return out(
             ctx.copy(layers = ctx.layers + (trackId to layer)),
             send = listOf(
@@ -436,6 +466,10 @@ internal object IMRoomMachine {
             ),
         )
     }
+
+    /** 把线路上的档位归一化，认不出的一律按 `all`（§2.4 规则 6）。 */
+    internal fun coerceAutoSubscribe(value: String?): String =
+        if (value != null && value in IMProtocolEnums.AUTO_SUBSCRIBE_MODES) value else "all"
 
     /** 把中间态期间的用户意图缓存起来（不变量 R2）。 */
     private fun bufferIntent(

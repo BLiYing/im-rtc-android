@@ -81,8 +81,8 @@ class EngineLoopTest {
         assertTrue("拿到 room_token 就该把媒体拉起来", media.started)
         val join = transport.lastOf(IMFrameType.ROOM_JOIN) ?: error("没发 room.join")
         assertEquals("r-1", (join.data["room_id"] as IMJson.Str).value)
-        // 发送侧的默认值陷阱：auto_subscribe 必须是 true，不能因为「没写」变成 false
-        assertEquals(IMJson.Bool(true), join.data["auto_subscribe"])
+        // 发送侧的默认值陷阱：auto_subscribe 必须是 "all"，不能因为「没写」变成空串
+        assertEquals(IMJson.Str("all"), join.data["auto_subscribe"])
 
         transport.replyOk(
             IMFrameType.ROOM_JOIN,

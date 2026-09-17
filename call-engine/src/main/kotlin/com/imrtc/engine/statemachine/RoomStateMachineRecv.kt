@@ -3,6 +3,7 @@ package com.imrtc.engine.statemachine
 import com.imrtc.engine.protocol.IMEnvelope
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
+import com.imrtc.engine.protocol.IMProtocolEnums
 
 /*
  房间状态机的**下行帧**分支。
@@ -140,7 +141,8 @@ private fun handleJoinOk(ctx: IMRoomContext, data: Map<String, IMJson>): IMMachi
         )
         emit += availability(kind = kind, uid = uid, available = !Wire.flag(track, "muted"))
         // 自动订阅是**服务端**做的，客户端这边只记账，等 sub offer 来把它们坐实。
-        if (ctx.autoSubscribe) {
+        // 会议房只有音频落这一路，视频等界面报「看得见」时再按页订（RoomStateMachinePaging.kt）。
+        if (IMProtocolEnums.autoSubscribeCovers(ctx.autoSubscribe, kind)) {
             next = next.copy(subscribe = next.subscribe + (trackId to IMSubscribeState.SUBSCRIBING))
         }
     }
@@ -181,6 +183,7 @@ private fun handleParticipantLeft(ctx: IMRoomContext, data: Map<String, IMJson>)
         ctx.copy(
             remoteTracks = ctx.remoteTracks - goneTracks,
             subscribe = ctx.subscribe - goneTracks,
+            pendingUnsubscribe = dropPending(ctx.pendingUnsubscribe, goneTracks),
         ),
         emit = listOf(IMEmittedEvent("onUserLeave", mapOf("uid" to s(Wire.str(data, "uid"))))),
     )
@@ -195,7 +198,7 @@ private fun handleTrackPublished(ctx: IMRoomContext, data: Map<String, IMJson>):
         remoteTracks = ctx.remoteTracks +
             (trackId to IMRemoteTrack(uid, kind, Wire.str(data, "participant_id"))),
     )
-    if (ctx.autoSubscribe) {
+    if (IMProtocolEnums.autoSubscribeCovers(ctx.autoSubscribe, kind)) {
         next = next.copy(subscribe = next.subscribe + (trackId to IMSubscribeState.SUBSCRIBING))
     }
     return IMRoomMachine.out(
@@ -211,6 +214,7 @@ private fun handleTrackUnpublished(ctx: IMRoomContext, data: Map<String, IMJson>
     val next = ctx.copy(
         remoteTracks = ctx.remoteTracks - trackId,
         subscribe = ctx.subscribe - trackId,
+        pendingUnsubscribe = dropPending(ctx.pendingUnsubscribe, setOf(trackId)),
     )
     if (known == null) return IMRoomMachine.out(next)
     return IMRoomMachine.out(

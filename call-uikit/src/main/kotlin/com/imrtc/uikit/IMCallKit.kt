@@ -208,7 +208,7 @@ object IMCallKit {
                 onLocalMediaStarted()
             }
             syncCameraIntent(instance)
-            instance.joinRoom(roomId, roomToken, IMKitResults.logOnly("进会议"))
+            instance.joinRoom(roomId, roomToken, onResult = IMKitResults.logOnly("进会议"))
         }
     }
 

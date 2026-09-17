@@ -19,7 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * `room_fsm.json` 逐条驱动，8 个用例、41 步。**与另外四端同一份文件。**
+ * `room_fsm.json` 逐条驱动，10 个用例、61 步。**与另外四端同一份文件。**
  *
  * 注意驱动的是 **engine 总状态机**而不是房间机本身：向量里有
  * `onDisconnected` / `onConnected` / `onKickedOut` / `onCallEnd` 这些连接级与跨机事件，
@@ -48,7 +48,7 @@ class RoomFsmVectorsTest {
     }
 
     @Test
-    fun `八个用例逐步跑过`() {
+    fun `每个用例逐步跑过`() {
         val cases = root.optObjArr("cases") ?: error("cases 不是对象数组")
         var steps = 0
         for (case in cases) {

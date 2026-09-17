@@ -42,8 +42,17 @@ internal object IMEngineMachine {
         "restart_pub_ice",
     )
 
-    /** 帧循环把「房间帧没送到」翻译成的内部事件，全归房间机——不显式路由会落到通话机被静默丢掉。 */
-    private val ROOM_FAILURES = setOf("join_failed", "leave_failed", "publish_failed", "subscribe_failed")
+    /**
+     * **只归房间机**的内部事件。
+     *
+     * 前四条是帧循环把「房间帧没送到」翻译过来的回滚；最后一条是会议房翻页退订的五秒
+     * 迟滞到点（`RoomStateMachinePaging.kt`）。**不显式路由的话它们会落到通话机去，被静默丢掉**——
+     * 症状分别是「房间永远停在 joining」和「翻走的人五秒后没退订，订阅位一直占着」。
+     */
+    private val ROOM_INTERNALS = setOf(
+        "join_failed", "leave_failed", "publish_failed", "subscribe_failed",
+        "unsubscribe_hysteresis_elapsed",
+    )
 
     /** engine 状态的唯一入口。 */
     fun reduce(
@@ -170,7 +179,7 @@ internal object IMEngineMachine {
                 emit = listOf(IMEmittedEvent("onKickedOut"), IMEmittedEvent("onDisconnected")),
             )
         }
-        if (name in ROOM_FAILURES) {
+        if (name in ROOM_INTERNALS) {
             val room = IMRoomMachine.reduce(ctx.room, input)
             return IMMachineOutput(ctx.copy(room = room.state), send = room.send, emit = room.emit)
         }

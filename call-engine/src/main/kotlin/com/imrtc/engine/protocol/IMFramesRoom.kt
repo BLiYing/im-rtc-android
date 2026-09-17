@@ -32,13 +32,17 @@ internal object RoomFrames {
     /**
      * 进房请求。
      *
-     * **注意 auto_subscribe / publish_audio 默认是 true**：直接发零值 data，
-     * 线路上会变成 false，人进了房却收不到任何流。发送侧一律从 [FieldCodec.defaults] 起手。
+     * **注意 auto_subscribe 默认 `all`、publish_audio 默认 true**：直接发零值 data，
+     * 线路上会变成空串 / false，人进了房却收不到任何流。发送侧一律从 [FieldCodec.defaults] 起手。
      */
     val JOIN: IMFrameFields = mapOf(
         "room_id" to IMFieldKind.Str(),
         "room_token" to IMFieldKind.Str(),
-        "auto_subscribe" to IMFieldKind.Flag(default = true),
+        "auto_subscribe" to IMFieldKind.Enumeration(
+            E.AUTO_SUBSCRIBE_MODES,
+            fallback = "all",
+            default = "all",
+        ),
         "publish_audio" to IMFieldKind.Flag(default = true),
         "publish_video" to IMFieldKind.Flag(default = false),
     )

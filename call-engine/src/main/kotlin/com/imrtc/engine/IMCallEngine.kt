@@ -344,10 +344,36 @@ class IMCallEngine private constructor(
 
     // ── 会议房 ────────────────────────────────────────────────────────
 
+    /**
+     * 直接进一个会议房（不走振铃）。
+     *
+     * [autoSubscribe] 是服务端替你自动订多少（协议 §3.1，2.0.0 起是三档字符串）：
+     *
+     * - `"all"`（默认）音视频全自动订上，通话房与小会议用它；
+     * - `"audio"` **会议分页画廊用这一档**：音频照旧自动订上（页外的人说话也听得见），
+     *   视频一条都不自动订，由 [setRemoteLayer] 按当前页订与退
+     *   （`none` = 五秒后退订，见 MEETING_ROOM_DESIGN §4.3）；
+     * - `"none"` 一条都不自动订，全部由宿主自己订。
+     *
+     * 认不出的值按 §2.4 规则 6 兜底成 `"all"`。
+     *
+     * **这是 2.0.0 里本端唯一一处签名变化**：iOS / Web 的 `joinRoom` 本来就有这个参数，
+     * 本端原先没有，会议房也就没法声明「视频我自己按页订」。加的是**可选参数**，
+     * 既有调用（Java 那边靠 `@JvmOverloads` 生成的两参重载）一行都不用改。
+     */
     @JvmOverloads
-    fun joinRoom(roomId: String, roomToken: String, onResult: IMResultCallback<Unit>? = null) = act(
+    fun joinRoom(
+        roomId: String,
+        roomToken: String,
+        autoSubscribe: String = "all",
+        onResult: IMResultCallback<Unit>? = null,
+    ) = act(
         "join",
-        mapOf("room_id" to IMJson.Str(roomId), "room_token" to IMJson.Str(roomToken)),
+        mapOf(
+            "room_id" to IMJson.Str(roomId),
+            "room_token" to IMJson.Str(roomToken),
+            "auto_subscribe" to IMJson.Str(autoSubscribe),
+        ),
         onResult,
     )
 
