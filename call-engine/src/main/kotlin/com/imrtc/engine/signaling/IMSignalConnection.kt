@@ -38,43 +38,8 @@ import java.util.concurrent.atomic.AtomicLong
 internal class IMSignalConnection(
     private val transport: IMTransport,
     private val scheduler: IMScheduler,
-    private val events: Events,
+    private val events: IMSignalConnectionEvents,
 ) {
-
-    /** 连接层向上的出口。全部在 engine 线程上回调。 */
-    interface Events {
-        /** 握手成功。`resumed` 决定房间要不要归零（§1.4）。 */
-        fun onConnected(sessionId: String, resumed: Boolean)
-
-        /** 连接断开。`code` 是**真实关闭码**，没有就给 0；`willReconnect` 见 [handleClosed]。 */
-        fun onDisconnected(code: Int, willReconnect: Boolean)
-
-        /** 一条下行帧（事件或双向帧；应答已经在本层配对掉了）。 */
-        fun onFrame(type: String, data: Map<String, IMJson>)
-
-        /**
-         * 被踢下线，**不会自动重连**。
-         *
-         * `reason` 决定宿主该做什么，两者处置相反——合并成一个「被踢」的话，
-         * 宿主只能都当登录失效处理，把本可静默恢复的场景也变成「请重新登录」。
-         */
-        fun onKickedOut(reason: IMKickedOutReason)
-
-        /** 票快到期了，宿主该去取新票并 updateToken。见 [IMTokenExpiryTimer]。 */
-        fun onTokenWillExpire(expiresAtMs: Long)
-
-        /**
-         * 断得太久了，**服务端那一侧的会话已经不可能再恢复**（§1.4 的恢复窗口过了）。
-         *
-         * 与「重连上了但 `resumed=false`」是同一件事，只是**不必等重连成功**——
-         * 网络一直不回来的话那一刻永远不会到。少了它，界面就永远停在「正在重连」、
-         * 连挂断都点不动（真机 2026-09-08）。
-         */
-        fun onSessionUnrecoverable()
-
-        /** 连接层自己的错误（解析失败等）。 */
-        fun onError(code: IMErrorCode, message: String)
-    }
 
     data class Config(
         val url: String,
@@ -424,16 +389,21 @@ internal class IMSignalConnection(
             IMCloseCode.UNAUTHORIZED.code -> {
                 authFailures++
                 IMRTCLog.w("signal", "鉴权失败（4401），第 $authFailures 次")
-                if (authFailures >= MAX_AUTH_FAILURES) {
+                if (!willReconnect) {
                     // 四端同一个数：3。到顶就别再敲了，让宿主回登录页换票。
                     IMRTCLog.e("signal", "连续 $MAX_AUTH_FAILURES 次鉴权失败，放弃")
                     giveUp(IMKickedOutReason.AUTH_EXPIRED)
                     return
                 }
             }
-            IMCloseCode.NORMAL.code -> {
-                // 服务端正常关闭且我们没主动 stop：还是要重连（可能是它在滚动重启）。
-            }
+        }
+        if (!willReconnect) {
+            // 其余不重连的码（当前只有 4400）：对齐 iOS/Web 只报 onDisconnected，不算被踢；
+            // 闩上 stopped 防内部路径误排重连，宿主重新 login() 会解开（见 [start]）。
+            IMRTCLog.e("signal", "关闭码 $code 不重连（shouldReconnect=false）")
+            stopped = true
+            tokenExpiry.disarm()
+            return
         }
         scheduleReconnect(IMReconnectPolicy.plan(wasConnected, aliveMs, foreground, backoff::reset))
     }

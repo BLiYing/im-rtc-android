@@ -152,7 +152,7 @@ class StaleSocketCloseTest {
         assertEquals("logout 之后不该重连", 1, transport.connectCount)
     }
 
-    private class Recorder : IMSignalConnection.Events {
+    private class Recorder : IMSignalConnectionEvents {
         var disconnects = 0
         val kicks = mutableListOf<IMKickedOutReason>()
 

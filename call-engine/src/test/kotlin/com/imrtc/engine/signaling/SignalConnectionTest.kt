@@ -158,6 +158,36 @@ class SignalConnectionTest {
     }
 
     @Test
+    fun `4400 协议错误：不再重连，也不算被踢`() {
+        connect()
+        transport.closed(IMCloseCode.BAD_PROTOCOL.code, "bad envelope")
+        val connectsSoFar = transport.connectCount
+        scheduler.advance(120_000)
+        assertEquals("4400 是我们自己发的信封有问题，重连只会再撞一次", connectsSoFar, transport.connectCount)
+        assertEquals("不是账号问题，不该抛 onKickedOut（与 iOS / Web 对齐）", 0, events.kickedOut)
+        assertEquals(listOf(false), events.disconnectWillReconnect)
+    }
+
+    @Test
+    fun `1000 照常重连——那不是我们自己主动 logout 时才会走到这条判断`() {
+        connect()
+        // 我们自己 logout 会先把 stopped 闩上（走不到这个判断）；这里收到的 1000
+        // 只会是代理/系统在后台掐链路那种，跟服务端主动发的 4400 4403 不是一回事。
+        transport.closed(IMCloseCode.NORMAL.code, "代理断的，不是我们主动 logout")
+        scheduler.advance(60_000)
+        assertTrue("1000 不是服务端主动发的（server 只发 1001），应当照常重连", transport.connectCount > 1)
+        assertEquals(listOf(true), events.disconnectWillReconnect)
+    }
+
+    @Test
+    fun `1006 异常断连照常重连`() {
+        connect()
+        transport.closed(1006, "abnormal closure")
+        scheduler.advance(60_000)
+        assertTrue("1006 是异常断连，应当照常重连", transport.connectCount > 1)
+    }
+
+    @Test
     fun `stop 之后一律不再重连——放弃必须用闩`() {
         connect()
         connection.stop()
@@ -640,7 +670,7 @@ class SignalConnectionTest {
         assertEquals("握手之前发业务帧会被服务端当成协议错误", 0, transport.countOf(IMFrameType.CALL_HANGUP))
     }
 
-    private class RecordingEvents : IMSignalConnection.Events {
+    private class RecordingEvents : IMSignalConnectionEvents {
         val connected = mutableListOf<Pair<String, Boolean>>()
         val frames = mutableListOf<Pair<String, Map<String, IMJson>>>()
         val errors = mutableListOf<Pair<IMErrorCode, String>>()
@@ -648,6 +678,7 @@ class SignalConnectionTest {
         val kickReasons = mutableListOf<IMKickedOutReason>()
         val tokenWarnings = mutableListOf<Long>()
         var disconnects = 0
+        val disconnectWillReconnect = mutableListOf<Boolean>()
         var unrecoverable = 0
 
         override fun onConnected(sessionId: String, resumed: Boolean) {
@@ -656,6 +687,7 @@ class SignalConnectionTest {
 
         override fun onDisconnected(code: Int, willReconnect: Boolean) {
             disconnects++
+            disconnectWillReconnect += willReconnect
         }
 
         override fun onSessionUnrecoverable() {

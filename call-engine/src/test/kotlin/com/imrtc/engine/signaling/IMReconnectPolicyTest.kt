@@ -1,5 +1,6 @@
 package com.imrtc.engine.signaling
 
+import com.imrtc.engine.protocol.IMCloseCode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -61,4 +62,40 @@ class IMReconnectPolicyTest {
         assertFalse("从未连上不许被误判成后台短命连接", resetBg)
         assertNull("从未连上不许被封顶", bg.capMs)
     }
+
+    /**
+     * [IMReconnectPolicy.willReconnect] 判据要跟 [IMCloseCode.shouldReconnect] 这张表同步——
+     * 这几条钉住「不许两份表再分叉」（曾经 4400 掉进默认分支变成一直重连）。
+     */
+    @Test
+    fun `willReconnect：4400 协议错误不重连`() {
+        assertFalse(willReconnect(code = IMCloseCode.BAD_PROTOCOL.code, authFailuresAfterIncrement = 1))
+    }
+
+    @Test
+    fun `willReconnect：4403 被踢不重连`() {
+        assertFalse(willReconnect(code = IMCloseCode.KICKED.code, authFailuresAfterIncrement = 1))
+    }
+
+    @Test
+    fun `willReconnect：4401 前两次重连，第三次放弃`() {
+        assertTrue(willReconnect(code = IMCloseCode.UNAUTHORIZED.code, authFailuresAfterIncrement = 1))
+        assertTrue(willReconnect(code = IMCloseCode.UNAUTHORIZED.code, authFailuresAfterIncrement = 2))
+        assertFalse(willReconnect(code = IMCloseCode.UNAUTHORIZED.code, authFailuresAfterIncrement = 3))
+    }
+
+    @Test
+    fun `willReconnect：1000 与 1006 都重连`() {
+        assertTrue(willReconnect(code = IMCloseCode.NORMAL.code, authFailuresAfterIncrement = 1))
+        assertTrue("1006 不在表里，未知码按「要重连」处理", willReconnect(code = 1006, authFailuresAfterIncrement = 1))
+    }
+
+    @Test
+    fun `willReconnect：已经 stopped 或握手判过要放弃，一律不重连`() {
+        assertFalse(IMReconnectPolicy.willReconnect(stopped = true, hasPendingGiveUp = false, code = 1006, authFailuresAfterIncrement = 1, maxAuthFailures = 3))
+        assertFalse(IMReconnectPolicy.willReconnect(stopped = false, hasPendingGiveUp = true, code = 1006, authFailuresAfterIncrement = 1, maxAuthFailures = 3))
+    }
+
+    private fun willReconnect(code: Int, authFailuresAfterIncrement: Int, maxAuthFailures: Int = 3): Boolean =
+        IMReconnectPolicy.willReconnect(stopped = false, hasPendingGiveUp = false, code = code, authFailuresAfterIncrement = authFailuresAfterIncrement, maxAuthFailures = maxAuthFailures)
 }

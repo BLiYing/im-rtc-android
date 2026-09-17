@@ -135,10 +135,24 @@ internal enum class IMErrorCode(
     }
 }
 
-/** 关闭码（WebSocket close code），对应协议 §1.5。 */
+/**
+ * 关闭码（WebSocket close code），对应协议 §1.5。
+ *
+ * [shouldReconnect] 是协议层「这个码本身代表什么」的判据（与 `im-rtc-server/docs/conformance/
+ * error_codes.json` 的 `close_codes[].reconnect` 逐条对照，见 `ErrorCodeVectorsTest`），
+ * **只此一份**——别在别处再抄一张真值表。[IMSignalConnection.handleClosed] 与
+ * `IMReconnectPolicy.willReconnect` 都从这里取判据，唯一的例外是 1000——
+ * 见该值的注释，那是运行时的边界情况，不改协议表的定义。
+ */
 internal enum class IMCloseCode(val code: Int, val meaning: String, val shouldReconnect: Boolean) {
+    // 协议表把 1000 定义成「客户端主动 logout，不重连」——但我们自己 logout 时 stopped
+    // 早已闩上，走不到重连判断。走到判断时收到的 1000 只会是「不是我们自己要走」的那种
+    // （代理/系统在后台掐链路，服务端从不主动发 1000，重启走 1001），运行时按重连处理，
+    // 这条例外在 IMReconnectPolicy.willReconnect 里单独判，不影响这张表本身对协议的表达。
     NORMAL(1000, "正常关闭（客户端主动 logout）", false),
     GOING_AWAY(1001, "服务端下线/重启", true),
+    // 4400 与 4403 **绝不重连**（与 iOS / Web 对齐）：前者是我们自己发的信封有问题
+    // （实现 bug），重连只会再撞一次同样的错误；后者是被踢，重连等于跟另一台设备打架。
     BAD_PROTOCOL(4400, "信封非法/帧超长/协议版本不支持", false),
     UNAUTHORIZED(4401, "未鉴权/鉴权超时/token 无效或过期", true),
     KICKED(4403, "被踢（同 uid 同 device_id 在别处登录）", false),

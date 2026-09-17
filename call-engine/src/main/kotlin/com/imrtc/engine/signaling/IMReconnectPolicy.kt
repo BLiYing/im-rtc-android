@@ -69,6 +69,13 @@ internal object IMReconnectPolicy {
      * 断开这一刻会不会自动重连——供 [IMSignalConnection.handleClosed] 在抛 `onDisconnected`
      * 之前当场裁决，判据要跟它随后真正走的 giveUp/reconnect 分支同步。
      *
+     * 4401 单独判（计数到 [maxAuthFailures] 次才放弃）；1000 单独判——协议表把它定义成
+     * 「客户端主动 logout」，但我们自己 logout 时 [stopped] 早已闩上、走不到这里，能走到
+     * 这条判断的 1000 只会是代理/系统掐链路那种，照常重连（见 [IMCloseCode.NORMAL] 的注释，
+     * 这条例外不改协议表本身，`ErrorCodeVectorsTest` 校验的是 [IMCloseCode.shouldReconnect]
+     * 这张表，不是这个函数）。其余码一律从 [IMCloseCode.shouldReconnect] 取判据——
+     * **这张表只此一份**，未知码（如 1006 异常断连）当作「要重连」处理。
+     *
      * @param authFailuresAfterIncrement 鉴权失败计数**自增之后**的值（不是自增前）。
      */
     fun willReconnect(
@@ -79,8 +86,8 @@ internal object IMReconnectPolicy {
         maxAuthFailures: Int,
     ): Boolean = when {
         stopped || hasPendingGiveUp -> false
-        code == IMCloseCode.KICKED.code -> false
         code == IMCloseCode.UNAUTHORIZED.code -> authFailuresAfterIncrement < maxAuthFailures
-        else -> true
+        code == IMCloseCode.NORMAL.code -> true
+        else -> IMCloseCode.fromCode(code)?.shouldReconnect ?: true
     }
 }

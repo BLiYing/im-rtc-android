@@ -499,7 +499,7 @@ class IMCallEngine private constructor(
 
     // ── 内部：两个回调出口 ────────────────────────────────────────────
 
-    private inner class ConnectionEvents : IMSignalConnection.Events {
+    private inner class ConnectionEvents : com.imrtc.engine.signaling.IMSignalConnectionEvents {
         override fun onConnected(sessionId: String, resumed: Boolean) {
             input(IMMachineInput.Recv(IMFrameType.HELLO + ".ok", mapOf(
                 "session_id" to IMJson.Str(sessionId),
