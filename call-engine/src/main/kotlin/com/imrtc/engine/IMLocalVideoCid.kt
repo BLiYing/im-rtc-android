@@ -17,6 +17,13 @@ package com.imrtc.engine
  * - 预览关掉（[releaseIfUnpublished]）且**还没发布**：作废，下次开是新 cid（与 Web 一致）；
  * - 已经发布：通话中关摄像头只停采集、不 unpublish，cid 留着，再开还是它；
  * - 这一轮媒体停掉（挂断 / 离房 / 登出，[reset]）：作废。
+ *
+ * # 作废为什么不排到 Engine 线程上
+ *
+ * 宿主「关了马上又开」是同一条线程上连着两次调用：作废要是排队，第二次 [acquire] 会先拿回旧 cid、
+ * 随后才被作废，发布就对不上预览了。代价是另一个竞态：刚作废、进房发布正好在 Engine 线程上跑，
+ * 发布会领到新 cid，而媒体层的停止还在排队——媒体层按 cid 对不上就换轨道、释放旧的
+ * （`IMWebRTCAdapter.replaceVideoTrack`），宿主再开预览时拿到的就是发布用的那个。
  */
 internal class IMLocalVideoCid(private val nowMs: () -> Long) {
     private var cid: String? = null

@@ -241,7 +241,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         // 采集可能早就起来了（拨出中的本端预览）——那时摄像头只开一次，轨道也沿用预览那条（id 同为 cid）。
         val track = synchronized(captureLock) {
             val source = ensureCapture() ?: return
-            videoTrack?.takeIf { it.id() == cid } ?: peers.factory().createVideoTrack(cid, source).also { videoTrack = it }
+            videoTrack?.takeIf { it.id() == cid } ?: replaceVideoTrack(cid, source)
         }
         videoPublished = true
         onMain { bindLocalView() }
@@ -334,14 +334,27 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     override fun startLocalPreview(cid: String) {
         synchronized(captureLock) {
             val existing = videoTrack
-            if (existing == null) {
-                val source = ensureCapture() ?: return
-                videoTrack = peers.factory().createVideoTrack(cid, source)
-            } else if (existing.id() != cid) {
-                IMRTCLog.w("media", "本端已有摄像头轨道 ${existing.id()}，不为预览 cid=$cid 另开一路")
+            when {
+                existing?.id() == cid -> Unit
+                // 已发布的不换（换了 transceiver 上那条就对不上）；Engine 这时发的本该就是它的 cid。
+                existing != null && videoPublished ->
+                    IMRTCLog.w("media", "本端已发布轨道 ${existing.id()}，不为预览 cid=$cid 另开一路")
+                else -> replaceVideoTrack(cid, ensureCapture() ?: return)
             }
         }
         onMain { bindLocalView() }
+    }
+
+    /** 换成 id = `cid` 的新轨道（同一 source）；旧的先摘渲染器再 dispose，只丢引用会漏。何时会换见 `IMLocalVideoCid`。持 [captureLock] 调。 */
+    private fun replaceVideoTrack(cid: String, source: VideoSource): VideoTrack {
+        val stale = videoTrack
+        val track = peers.factory().createVideoTrack(cid, source)
+        videoTrack = track
+        if (stale != null) {
+            IMRTCLog.i("media", "本端摄像头轨道换 cid：${stale.id()} → $cid")
+            onMain { bindLocalView(); runCatching { stale.dispose() } }
+        }
+        return track
     }
 
     /** 挂本端画面。视图每挂一次重新 `init`（首帧、尺寸事件跟着重来）；轨道还没起来的话等 [bindLocalView] 补接。 */

@@ -10,7 +10,7 @@
 **2026-09-17 下午：清掉三条待办（已提交，`./scripts/test.sh` 6 步全绿；本端预览 cid 用户真机验过）。**
 - `IMCallKit.notifyOutgoing(peers, mediaType, IMCallOptions)` 重载：宿主自己 `engine.call(options)` 时群号 / `userData` 也进界面。为腾体量把切后台停摄像头拆到 `IMBackgroundCamera`。
 - 找向量不再逐级往上：`call-engine/build.gradle.kts` 的 `conformanceDir` 只认主检出 / `.claude/worktrees/<分支>` 两种布局（同 web `e58ec8e`），`RTC_CONFORMANCE_DIR` 相对路径按仓根解析；测试侧 `ConformanceVectors.locate()` 只认系统属性。
-- **本端预览对齐 cid**：`IMCallEngine.startLocalPreview(): String` + `attachLocalView(cid, view)`（旧的 `startLocalPreview(view)` 留 `@Deprecated`）。cid 由 `IMLocalVideoCid` 在调用方线程当场发，发布视频沿用；媒体层只剩**一条**摄像头轨道（id = cid），删掉 `PREVIEW_TRACK_ID` 与 `IMPreviewIntent`（起停都回到 Engine 线程上，不再需要那个号）。`IMMediaAdapter` 接口改了：`startLocalPreview(cid)`、新增 `attachLocalView(cid, view)`。**用户真机验过**：拨出中见自己且接通不断、来电页 / 通话中开关摄像头（灯灭 / 亮）、翻转镜像、切后台回来、群通话关着进房后再开（机型未记，下次补）。CLIENT_PARITY v1.40。
+- **本端预览对齐 cid**：`IMCallEngine.startLocalPreview(): String` + `attachLocalView(cid, view)`（旧的 `startLocalPreview(view)` 留 `@Deprecated`）。cid 由 `IMLocalVideoCid` 在调用方线程当场发，发布视频沿用；媒体层只剩**一条**摄像头轨道（id = cid），删掉 `PREVIEW_TRACK_ID` 与 `IMPreviewIntent`（起停都回到 Engine 线程上，不再需要那个号）。`IMMediaAdapter` 接口改了：`startLocalPreview(cid)`、新增 `attachLocalView(cid, view)`。**用户真机验过**：拨出中见自己且接通不断、来电页 / 通话中开关摄像头（灯灭 / 亮）、翻转镜像、切后台回来、群通话关着进房后再开（**PKD130 / Android 15**）。code-review 两条（关预览与进房发布竞态时旧轨道没释放、没发布的预览 cid 对不上只打日志）已修：媒体层 `replaceVideoTrack` 换轨道并 dispose 旧的；这条修复走的是竞态路径，真机没专门造过。CLIENT_PARITY v1.40。
 
 **2026-09-17：夜里逐项补了五件（本地已提交、未推送），早上 PKD130 / Android 15 真机补验，顺手修了一个真机才暴露的问题。** SDK 1.0.0 已公网发布（JitPack，MIT），这些进下一个版本。
 - `c2c20db` 摄像头打不开 / 中途被抢走回报 2002，下次打开重起采集（`IMCameraEvents`，静默失败审计 android #1）。
@@ -18,7 +18,7 @@
 - `4a5c983` 收 `call.ringing` 抛 `onUserRinging`，群通话里别人加的人也摆占位格（协议批次，server `dd60ca0`）。**真机验过**：bob 加 carol → 手机上「呼叫中…」→ 拒接「已拒绝」约 2s 收掉。
 - `a4c9fb0` 通话音频跟随系统：扬声器关着时耳机 / 蓝牙优先、监听插拔（`IMAudioRoutePolicy`）。真机只验了扬声器开关（type 2 ↔ 1），**没耳机 / 蓝牙，插拔未验**。
 - `38941d3` 会议房超过一屏「还有 N 人未显示」+ 屏外报 none（M1）；`61d09c6` 打开网络质量图标，「对方网络不佳」只在 1v1。
-- **体量**：`IMCallEngine.kt` 600、`IMCallView.kt` 599、`IMSignalConnection.kt` 600 已到硬顶，下次改先拆；`IMCallKit.kt` 拆后约 580。
+- **体量**：`IMCallEngine.kt` 600、`IMWebRTCAdapter.kt` 599、`IMCallView.kt` 599、`IMSignalConnection.kt` 600 已到硬顶，下次改先拆；`IMCallKit.kt` 拆后约 580。
 
 ## 下一步
 
