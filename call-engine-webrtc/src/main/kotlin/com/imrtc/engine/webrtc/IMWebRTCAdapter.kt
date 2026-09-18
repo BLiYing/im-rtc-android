@@ -143,7 +143,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     private var localBound: VideoTrack? = null
 
     /** uid → 渲染器（本端预览用 [LOCAL] 这把钥匙）。**卸载时一定要先摘轨道**。 */
-    private val renderers = LinkedHashMap<String, SurfaceViewRenderer>()
+    internal val renderers = LinkedHashMap<String, SurfaceViewRenderer>()
 
     /**
      * 远端轨道：**track_id → VideoTrack**。
@@ -151,13 +151,20 @@ class IMWebRTCAdapter @JvmOverloads constructor(
      * 键是 track_id 而不是 uid：轨道到达时归属通常还不知道（信令帧可能后到），
      * 先按 track_id 收着，等 [claimRemoteTracks] 认领。
      */
-    private val remoteVideo = LinkedHashMap<String, VideoTrack>()
+    internal val remoteVideo = LinkedHashMap<String, VideoTrack>()
 
     /** 归属表：track_id → uid，由信令层通过 [claimRemoteTracks] 灌进来。 */
-    private val trackOwners = LinkedHashMap<String, String>()
+    internal val trackOwners = LinkedHashMap<String, String>()
 
     /** 已经挂上去的：track_id → 渲染器。摘 sink 要拿它，重复挂也靠它判。 */
-    private val attached = LinkedHashMap<String, SurfaceViewRenderer>()
+    internal val attached = LinkedHashMap<String, SurfaceViewRenderer>()
+
+    /**
+     * 已经挂上去的**那条轨道对象**：track_id → VideoTrack。**光比渲染器不够**：
+     * 会议翻页退订再重订，track_id 不变而 `VideoTrack` 是新对象，只比渲染器会被当成「没变」
+     * 跳过，画面定格在最后一帧（2026-09-18 真机）。摘旧 sink 也得拿它。
+     */
+    internal val attachedTracks = LinkedHashMap<String, VideoTrack>()
 
     private var running = false
     private var frontCamera = true
@@ -197,8 +204,9 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         // 先摘轨道再 release：反了会崩在 native 层。
         // 渲染器的释放也归主线程（`release` 与 `init` 要在同一条线程上成对）。
         onMain {
-            attached.forEach { (trackId, renderer) -> remoteVideo[trackId]?.safeRemoveSink(renderer) }
+            attached.forEach { (trackId, renderer) -> attachedTracks[trackId]?.safeRemoveSink(renderer) }
             attached.clear()
+            attachedTracks.clear()
             renderers[LOCAL]?.let { renderer -> localBound?.safeRemoveSink(renderer) }
             localBound = null
             localViewCid = null
@@ -407,37 +415,6 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         }
     }
 
-    /**
-     * bindRemoteTracks 把「已认领归属 + 有渲染器」的远端轨道接上去。
-     *
-     * 轨道、归属、渲染器三者**到达顺序完全不定**，所以三条路径（onRemoteTrack /
-     * claimRemoteTracks / attachView）都调它，由这一个地方判重与换绑。
-     */
-    private fun bindRemoteTracks() {
-        for ((trackId, track) in remoteVideo) {
-            val renderer = trackOwners[trackId]?.let { renderers[it] }
-            val current = attached[trackId]
-            if (current === renderer) continue
-            if (current != null) track.safeRemoveSink(current)
-            if (renderer == null) {
-                attached.remove(trackId)
-                continue
-            }
-            runCatching { track.addSink(renderer) }
-            attached[trackId] = renderer
-        }
-    }
-
-    /** 卸掉某个 uid 的渲染器：先把挂在它上面的轨道摘干净，再 release（反了会崩在 native 层）。 */
-    private fun detachRenderer(uid: String) {
-        val previous = renderers.remove(uid) ?: return
-        val gone = attached.filterValues { it === previous }.keys
-        for (trackId in gone) {
-            remoteVideo[trackId]?.safeRemoveSink(previous)
-            attached.remove(trackId)
-        }
-        runCatching { previous.release() }
-    }
 
     override fun switchCamera() {
         // 停着采集时 libwebrtc 只会回一句 "camera is not running"；界面上关着摄像头时翻转键本来就是灰的。
