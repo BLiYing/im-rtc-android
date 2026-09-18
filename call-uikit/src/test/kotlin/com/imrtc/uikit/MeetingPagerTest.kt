@@ -243,6 +243,18 @@ class MeetingPagerTest {
     }
 
     @Test
+    fun `底部条放不下就收边长，而不是把两头切掉`() {
+        // 360dp 的屏：可用 336dp，4 格每格还要 8dp 间距 → 每格 76dp，不是设计值 84dp。
+        // 写死 84 的话 4 × 84 + 4 × 8 = 368 > 336，容器居中后第一格与最后一格各被裁一截。
+        assertEquals(76, IMGrid.stripSide(available = 336, count = 4, gap = 8, max = 84))
+        // 放得下就用设计值，宽屏也不放大。
+        assertEquals(84, IMGrid.stripSide(available = 600, count = 4, gap = 8, max = 84))
+        // 窄到负数也不能回负值（会被当成 MATCH_PARENT 之类的特殊值）。
+        assertEquals(0, IMGrid.stripSide(available = 10, count = 4, gap = 8, max = 84))
+        assertEquals(0, IMGrid.stripSide(available = 336, count = 0, gap = 8, max = 84))
+    }
+
+    @Test
     fun `分页恒为方阵，不跟着容器形状变`() {
         // 9 格按「格子最大」算在横屏上是 5×2、竖屏上是 2×5；
         // 分页要的是格子位置固定，左滑只换人。

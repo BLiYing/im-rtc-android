@@ -85,6 +85,23 @@ internal object IMGrid {
     }
 
     /**
+     * 演讲者视图底部条每格的边长（像素）：**要么是设计值，要么是这块屏放得下的**。
+     *
+     * 底部条恒 4 格、恒正方形（MEETING_ROOM_DESIGN §4.4），而 4 × 84dp 加上间距与边距
+     * 要 392dp——常见手机只有 360dp。写死的后果是容器把溢出的部分从两头切掉，
+     * **第一格与最后一格被裁成长方形**（2026-09-18 真机 360dp）。
+     *
+     * @param available 底部条的可用宽（已扣掉左右边距）。
+     * @param count 几格。
+     * @param gap 每格占掉的水平间距（左右外边距之和）。
+     * @param max 设计边长，放得下就用它。
+     */
+    fun stripSide(available: Int, count: Int, gap: Int, max: Int): Int {
+        if (count <= 0) return 0
+        return maxOf(minOf(max, (available - count * gap) / count), 0)
+    }
+
+    /**
      * 每个格子该订阅到哪一层。**格子越小越该要小图**：九宫格里八个小格子每个都收大图，既费带宽又费解码。
      * 这个上界会随订阅一起发给服务端（`max_layer`），**漏发的话服务端记 m、实际发 h**。
      */

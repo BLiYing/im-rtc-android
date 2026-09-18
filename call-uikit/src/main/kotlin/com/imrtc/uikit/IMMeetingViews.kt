@@ -80,6 +80,9 @@ internal class IMSpeakerStage(context: Context) : FrameLayout(context) {
     private val unpinButton = TextView(context)
     private var mainTile: View? = null
 
+    /** 底部条当前那一批格子。边长要跟着容器宽度收，见 [applyStripSize]。 */
+    private var stripTiles: List<View> = emptyList()
+
     init {
         mainHost.background = GradientDrawable().apply {
             cornerRadius = dp(IMKitTheme.TILE_RADIUS_DP).toFloat()
@@ -135,14 +138,54 @@ internal class IMSpeakerStage(context: Context) : FrameLayout(context) {
             tiles.indices.all { strip.getChildAt(it) === tiles[it] }
         if (same) return
         strip.removeAllViews()
+        stripTiles = tiles
         for (tile in tiles) {
             (tile.parent as? android.view.ViewGroup)?.removeView(tile)
+            // 边长交给 applyStripSize：这里填多少都会被它改掉。
             strip.addView(
                 tile,
-                LinearLayout.LayoutParams(dp(STRIP_HEIGHT_DP), dp(STRIP_HEIGHT_DP)).apply {
-                    setMargins(dp(4), 0, dp(4), 0)
-                },
+                LinearLayout.LayoutParams(0, 0).apply { setMargins(dp(4), 0, dp(4), 0) },
             )
+        }
+        applyStripSize()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        applyStripSize()
+    }
+
+    /**
+     * 底部条的格子恒为**正方形**，边长取「[STRIP_HEIGHT_DP]」与「这块屏放得下的」里小的那个。
+     *
+     * 写死 84dp 在窄屏上放不下：4 格要 4 × 84 + 4 × 8（每格左右各 4）+ 24（左右边距）= **392dp**，
+     * 而常见手机只有 360dp。`strip` 的 gravity 是 `CENTER`，溢出就从两头各切掉一截——
+     * 中间两格是正方形，**第一格与最后一格被裁成长方形**（2026-09-18 真机 360dp，各切 12dp）。
+     *
+     * 主画面的下边距也跟着走，否则边长收了之后底部会空出一条。
+     */
+    private fun applyStripSize() {
+        val count = stripTiles.size
+        if (count == 0 || width <= 0) return
+        val side = IMGrid.stripSide(
+            available = width - dp(24),
+            count = count,
+            gap = dp(8),
+            max = dp(STRIP_HEIGHT_DP),
+        )
+        for (tile in stripTiles) {
+            val lp = tile.layoutParams as? LinearLayout.LayoutParams ?: continue
+            lp.width = side
+            lp.height = side
+            tile.layoutParams = lp
+        }
+        (strip.layoutParams as? LayoutParams)?.let {
+            it.height = side
+            strip.layoutParams = it
+        }
+        (mainHost.layoutParams as? LayoutParams)?.let {
+            it.setMargins(dp(12), dp(4), dp(12), dp(4) + side + dp(8))
+            mainHost.layoutParams = it
         }
     }
 
