@@ -1,5 +1,7 @@
 package com.imrtc.uikit
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.view.Gravity
 import android.view.View
@@ -18,6 +20,21 @@ import android.widget.TextView
  * 左上角那颗就是**收进小窗的唯一入口**（控制条里不再重复放一颗）：那个位置在三端都是
  * 「离开这一屏」的手势位，用户第一反应就是往那儿点。
  */
+/**
+ * 把会议房号复制到剪贴板（点标题栏触发，MEETING_ROOM_DESIGN §4.6 的配套）。
+ *
+ * 房号是这一屏里**要报给别人**的那个东西，光显示不够。反馈走 `hint`：
+ * 状态行的一次性提示本来就是这个用途，且会自己到点撤掉（`IMHintExpiry`）。
+ * Android 13 起系统自己会弹一条复制提示，这里的 hint 是给更老的版本看的。
+ */
+internal fun IMCallKit.copyRoomId(context: Context) {
+    val roomId = state.roomId
+    if (!state.isMeeting || roomId.isEmpty()) return
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+    clipboard.setPrimaryClip(ClipData.newPlainText("房间号", roomId))
+    hint("已复制房间号 $roomId")
+}
+
 internal class IMCallHeader(context: Context) : FrameLayout(context) {
     val minimizeButton = roundButton(IMKitIcon.PIP, "收进小窗")
     val inviteButton = roundButton(IMKitIcon.PERSON_ADD, "添加成员")
@@ -29,6 +46,9 @@ internal class IMCallHeader(context: Context) : FrameLayout(context) {
      */
     val membersButton = TextView(context)
     private val title = TextView(context)
+
+    /** 点标题（会议房才可点）：复制房号。由 [IMCallView] 接上。 */
+    var onTitleClick: (() -> Unit)? = null
     private val subtitle = TextView(context)
     private val bars = IMNetworkBarsView(context)
 
@@ -39,6 +59,7 @@ internal class IMCallHeader(context: Context) : FrameLayout(context) {
         title.setTextColor(IMKitTheme.primaryText)
         title.gravity = Gravity.CENTER
         title.maxLines = 1
+        title.setOnClickListener { onTitleClick?.invoke() }
         subtitle.textSize = 13f
         subtitle.setTextColor(IMKitTheme.secondaryText)
         subtitle.gravity = Gravity.CENTER
@@ -80,8 +101,12 @@ internal class IMCallHeader(context: Context) : FrameLayout(context) {
         showsMinimize: Boolean,
         showsInvite: Boolean,
         memberCount: Int = 0,
+        /** 标题点一下复制（会议房的房号）。其余场合标题不可点。 */
+        titleIsCopyable: Boolean = false,
     ) {
         title.text = titleText
+        title.isClickable = titleIsCopyable
+        title.contentDescription = if (titleIsCopyable) "$titleText，点一下复制房间号" else null
         subtitle.text = subtitleText
         bars.level = networkLevel
         bars.visibility = if (networkLevel > 0) View.VISIBLE else View.GONE

@@ -50,7 +50,10 @@ class CallViewStateTest {
             IMCallViewReducer.meeting(IMCallViewState(), "r-1"),
             "bob",
         )
-        assertEquals("会议 · 2 人", meeting.titleText)
+        // 会议写房号、**不写人数**：右上角「👥 N」已经是人数的唯一出处。
+        assertEquals("会议 r-1", meeting.titleText)
+        // 还没拿到房号的那一瞬（进房应答之前）不显示一个空房号。
+        assertEquals("会议", IMCallViewReducer.meeting(IMCallViewState(), "").titleText)
 
         // 1v1 还是显示对方是谁。
         val single = IMCallViewReducer.outgoing(IMCallViewState(), listOf("bob"), "audio", false)

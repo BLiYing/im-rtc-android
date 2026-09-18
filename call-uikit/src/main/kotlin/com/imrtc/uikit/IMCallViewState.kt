@@ -184,10 +184,15 @@ internal data class IMCallViewState(
      */
     val incomingFromUid: String get() = inviter.ifEmpty { members.keys.firstOrNull() ?: peer }
 
-    /** 标题栏那一行。**群通话与会议不能显示某一个人的名字**；人数要 `+1`：[members] 里不含自己。 */
+    /**
+     * 标题栏那一行。**群通话与会议不能显示某一个人的名字**；人数要 `+1`：[members] 里不含自己。
+     *
+     * 会议写**房号**、不写人数：右上角那颗「👥 N」已经是人数的出处，标题再写一遍
+     * 就是同一个数字的第二处真相。房号才是这一屏里要念给别人听的那个东西（点一下能复制）。
+     */
     val titleText: String
         get() = when {
-            isMeeting -> "会议 · ${members.size + 1} 人"
+            isMeeting -> if (roomId.isEmpty()) "会议" else "会议 $roomId"
             isGroup -> "群通话 · ${members.size + 1} 人"
             peer.isNotEmpty() -> peer
             else -> "通话"

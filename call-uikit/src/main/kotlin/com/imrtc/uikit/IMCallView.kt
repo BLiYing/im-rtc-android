@@ -31,6 +31,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         fun onMinimize()
         fun onSwap()
         fun onInvite()
+
+        /** 点标题：把会议房号复制到剪贴板（只有会议房的标题可点）。 */
+        fun onCopyRoomId()
         /** 要一个远端渲染器。同一个 uid 反复要拿到的是同一个 View。 */
         fun videoViewFor(uid: String): View?
 
@@ -59,7 +62,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
     private val column = LinearLayout(context)
     private val header = IMCallHeader(context)
-    private val banner = IMTopBanner(context)
+    internal val banner = IMTopBanner(context)
     internal val stage = FrameLayout(context)
     private val audioStage = IMAudioStage(context)
     internal val grid = IMCallGridView(context)
@@ -102,7 +105,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val answerButton = IMControlButton(context, IMKitIcon.PHONE, "接听", role = IMControlButton.Role.ACCEPT)
     private val rejectButton = IMControlButton(context, IMKitIcon.XMARK, "拒绝", role = IMControlButton.Role.DANGER)
 
-    private val main = Handler(Looper.getMainLooper())
+    internal val main = Handler(Looper.getMainLooper())
     private var layout = IMCallViewState.Layout.AUDIO
     internal var state = IMCallViewState()
 
@@ -201,6 +204,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
         header.minimizeButton.setOnClickListener { actions?.onMinimize() }
         header.inviteButton.setOnClickListener { actions?.onInvite() }
+        header.onTitleClick = { actions?.onCopyRoomId() }
         // 会议房的成员列表（§4.6）：半屏面板，只读。
         header.membersButton.setOnClickListener {
             IMMemberListSheet.show(context, state, IMCallKit.config.profileResolver)
@@ -348,6 +352,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
             } else {
                 0
             },
+            // 标题是房号时才可点（复制）。收场之后不给：房间已经散了。
+            titleIsCopyable = state.isMeeting && !bare && !isEnded && state.roomId.isNotEmpty(),
         )
         background = if (layout == IMCallViewState.Layout.VIDEO && !isEnded) null else IMKitTheme.callBackground()
         if (background == null) setBackgroundColor(IMKitTheme.background)
@@ -390,34 +396,11 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         if (layout != IMCallViewState.Layout.VIDEO) chrome.set(visible = true, arm = false) else if (chrome.visible) chrome.armAutoHide()
     }
 
-    /** 橙条：文案怎么定见 [IMBannerRules]，这里只管把它写上去、以及给「网络不佳」那条排定时器。 */
-    private fun renderBanner(state: IMCallViewState) {
-        val poor = !state.isGroup && state.members.values.any { IMCallViewState.isNetworkPoor(it.networkLevel) } // 只做 1v1
-        if (!poor) poorShown = false
-        val next = IMBannerRules.next(state.connection, poor, poorShown, bannerText) ?: return
-        if (next == IMBannerRules.POOR) {
-            poorShown = true
-            // 定时器**只撤自己那条**：这 2s 里连接可能已经断了，那时橙条上写的是
-            // 「正在重连…」，不认一下就会把它一起抹掉。
-            main.postDelayed(
-                { if (bannerText == IMBannerRules.POOR) applyBanner("") },
-                IMKitTheme.NETWORK_BANNER_MS,
-            )
-        }
-        applyBanner(next)
-    }
-
     /** 橙条上此刻真正写着什么。空串 = 没有横幅。[IMBannerRules.next] 靠它判断该不该动。 */
-    private var bannerText = ""
-
-    private fun applyBanner(text: String) {
-        if (text == bannerText) return
-        bannerText = text
-        banner.apply(text)
-    }
+    internal var bannerText = ""
 
     /** 「对方网络不佳」只出一次、2s 后收成角标，**不一直霸占顶部**。 */
-    private var poorShown = false
+    internal var poorShown = false
 
     private fun renderControls(state: IMCallViewState, isEnded: Boolean) {
         val top: List<View>

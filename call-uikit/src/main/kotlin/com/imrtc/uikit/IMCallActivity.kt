@@ -46,6 +46,7 @@ class IMCallActivity : Activity() {
             override fun onMinimize() = minimize()
             override fun onSwap() = IMCallKit.swap()
             override fun onInvite() = IMCallKit.showInvitePicker(this@IMCallActivity)
+            override fun onCopyRoomId() = IMCallKit.copyRoomId(this@IMCallActivity)
             override fun videoViewFor(uid: String): View? = IMCallKit.videoViewFor(this@IMCallActivity, uid)
             override fun releaseVideoView(uid: String) = IMCallKit.releaseRemoteView(uid)
             override fun reportLayer(uid: String, layer: String) = IMCallKit.reportLayer(uid, layer)
