@@ -360,6 +360,7 @@ class ActionResultTest {
         engine.setRemoteLayer("bob", "l")
         engine.setSpeakerOn(true)
         engine.setAppForeground(false)
+        engine.notifyNetworkChanged()
         engine.updateToken("tk2")
         engine.destroy()
         assertEquals("销毁后清理类不许再发帧（forceEnd 读到旧状态直发结束帧的竞态）", sentBefore, transport.sent.size)

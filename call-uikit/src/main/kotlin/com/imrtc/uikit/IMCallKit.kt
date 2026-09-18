@@ -73,8 +73,9 @@ object IMCallKit {
     private var localPreview: View? = null
     private var localPreviewStarted = false
 
-    /** 切后台停摄像头、回前台按原选择恢复，见 [IMBackgroundCamera]。 */
+    /** 切后台停摄像头、回前台按原选择恢复，见 [IMBackgroundCamera]；默认网络换了叫 Engine 立即重连，见 [IMNetworkWatcher]。 */
     private val backgroundCamera = IMBackgroundCamera()
+    private val networkWatcher = IMNetworkWatcher { engine?.notifyNetworkChanged() }
 
     /** 铃声播放层，见 [IMRingPlayer]。造得晚——要 `appContext`，[start] 里才有。 */
     private var ring: IMRingPlayer? = null
@@ -102,11 +103,13 @@ object IMCallKit {
         }
         // 宿主页面回到前台就按当前状态再挑一次形态，见 [IMActivityTracker.onHostResumed]。
         IMActivityTracker.onHostResumed = { presentation.apply(state, appContext) }
+        networkWatcher.start(context.applicationContext)
     }
 
     @JvmStatic
     fun stop() {
         engine = null
+        networkWatcher.stop()
         stopTimer()
         settleTimers.clear()
         hintExpiry.clear()

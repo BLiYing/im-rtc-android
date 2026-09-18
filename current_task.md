@@ -7,6 +7,11 @@
 
 ## 当前焦点
 
+**2026-09-18 晚：网络变化立即重连（未上真机）**。20:45 alice 的 Wi-Fi 自己重连换了 IP，信令在 30 秒退避档空等、
+错过服务端 30 秒恢复窗口。`IMCallKit.start()` 监听默认网络，换网就调 `IMCallEngine.notifyNetworkChanged()`：
+等着重连的立刻连、退避归零；连着的探 3 s，判死立刻重连；两次至少隔 2 s。真机验法：通话中关 Wi-Fi 再开，
+logcat 看 `系统网络变了` → `规则=网络变化立即重连`。状态见 CLIENT_PARITY `[^netchange]`。
+
 **2026-09-18：会议房 M2 真机验收进行中（OPPO PKD130 / Android 15）。M2 的 Engine 与 UIKit 两段已在 09-18 凌晨做完（`e55bbbc` / `493883e`，见 server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2、5 步）。今天全是真机才暴露的修复，`test.sh` 6 步全绿。**
 
 - **补了两条看不见的东西**（未提交，为 09-18 下午那次联调加的）：**下行一个统计都没有**——

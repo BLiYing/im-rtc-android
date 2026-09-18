@@ -34,6 +34,12 @@ import java.util.concurrent.atomic.AtomicLong
  * 1/2/4/8/15/30s 退避一旦超过 5 秒，后台就接不到来电了。四条判定规则（纯函数，
  * 不碰这个类的任何状态，单测直接构造入参）在 [IMReconnectPolicy]，由 [setForeground]
  * 喂前后台状态。回到前台时如果正等着下一次重连，不必等了：立刻重连、退避归零。
+ *
+ * ## 网络变化：清零退避、立刻重连（2026-09-18，真机 OPPO/ColorOS）
+ *
+ * 系统默认网络换了（Wi-Fi 重连换 IP、Wi-Fi ⇄ 蜂窝），由 [onNetworkChanged] 喂。正等着重连就
+ * 不等了；连着的先探一下死活（[IMNetworkProbe]）；正在连的那次失败后立刻再连。
+ * 排、取消、立刻开这几件事在 [IMReconnectTimer]（含防重连风暴的最小间隔）。
  */
 internal class IMSignalConnection(
     private val transport: IMTransport,
@@ -64,7 +70,7 @@ internal class IMSignalConnection(
         private set
 
     private val pending = IMPendingRequests(scheduler)
-    private val backoff = IMBackoff()
+    private val reconnect = IMReconnectTimer(scheduler) { openSocket() }
 
     /** 闩：`logout()` 之后一切重连都不许再排（见类注释第 2 条）。 */
     private var stopped = true
@@ -102,7 +108,6 @@ internal class IMSignalConnection(
 
     /** 已经为哪一代收过场了。同一代的第二条关闭事件一律丢掉。 */
     private var closedGeneration = -1
-    private var reconnectTimer: IMScheduler.Cancellable? = null
     private var heartbeatTimer: IMScheduler.Cancellable? = null
 
     /** 服务端最近一次告知的心跳周期。[IMSessionRecoveryTimer] 要用它推算服务端何时判死。 */
@@ -122,6 +127,9 @@ internal class IMSignalConnection(
      */
     private var foreground = true
 
+    /** 网络变化后连着的那条先探死活，见 [IMNetworkProbe]。 */
+    private val networkProbe = IMNetworkProbe(scheduler)
+
     /** 最近一次握手成功（[onHelloOk]）的时刻。断开时算「这条连接活了多久」要用它。 */
     private var connectedAtMs = 0L
     private val tokenExpiry = IMTokenExpiryTimer(scheduler) { expiresAtMs ->
@@ -131,7 +139,7 @@ internal class IMSignalConnection(
     val isConnected: Boolean get() = connected
 
     /** 仅供单测观察退避档位有没有被清零（规则①③⑤该清零、规则②④不该）；生产代码不读它。 */
-    internal val debugBackoffAttempts: Int get() = backoff.attempts
+    internal val debugBackoffAttempts: Int get() = reconnect.attempts
 
     /** 开始连接。`token` 是宿主给的票，换票走 [updateToken]。 */
     fun start(config: Config, token: String) {
@@ -139,8 +147,9 @@ internal class IMSignalConnection(
         this.token = token
         stopped = false
         pendingGiveUp = null
+        reconnect.networkChangePending = false
         authFailures = 0
-        backoff.reset()
+        reconnect.resetBackoff()
         openSocket()
     }
 
@@ -170,17 +179,35 @@ internal class IMSignalConnection(
         if (value == foreground) return
         foreground = value
         IMRTCLog.i("signal", "App 切到${if (value) "前台" else "后台"}")
-        if (!value) return
-        val timer = reconnectTimer ?: return
-        timer.cancel()
-        reconnectTimer = null
-        backoff.reset()
-        IMRTCLog.i("signal", "0ms 后重连（attempt=${backoff.attempts}，规则=回前台立即重连）")
-        openSocket()
+        if (value) reconnect.reconnectNow("回前台立即重连")
+    }
+
+    /**
+     * 系统默认网络换了，由 `IMCallEngine.notifyNetworkChanged` 喂（类注释「网络变化」）。
+     *
+     * 三种处境三种做法：等着重连 → 清零退避立刻连；连着 → 探一下，判死再立刻重连；
+     * 正在连 → 让这次跑完（成了最好），失败了不走退避、立刻再连。
+     */
+    fun onNetworkChanged() {
+        if (stopped) return
+        IMRTCLog.i(
+            "signal",
+            "系统网络变了 connected=$connected connecting=$connecting 等重连=${reconnect.waiting}",
+        )
+        when {
+            connected -> networkProbe.arm({ send(IMFrameType.PING, emptyMap()) }) {
+                IMRTCLog.w("signal", "网络变化后 ${IMNetworkProbe.PROBE_MS}ms 没收到下行，旧连接判死")
+                reconnect.networkChangePending = true
+                closeAndReconnect(0, "network changed")
+            }
+            connecting -> reconnect.networkChangePending = true
+            reconnect.waiting -> reconnect.reconnectForNetwork()
+        }
     }
 
     fun stop(code: Int = IMCloseCode.NORMAL.code, reason: String = "logout") {
         stopped = true
+        reconnect.networkChangePending = false
         // 当前这一代就此收场：logout 之后 transport 还会回一次 onClosed，
         // 那条不该再走一遍 failAll 与 onDisconnected。
         closedGeneration = generation
@@ -251,7 +278,7 @@ internal class IMSignalConnection(
         if (stopped || connecting || connected) return
         connecting = true
         generation += 1
-        IMRTCLog.i("signal", "连接 ${cfg.url}（第 ${backoff.attempts} 次尝试，gen=$generation）")
+        IMRTCLog.i("signal", "连接 ${cfg.url}（第 ${reconnect.attempts} 次尝试，gen=$generation）")
         transport.connect(cfg.url, TransportListener(generation))
     }
 
@@ -285,6 +312,7 @@ internal class IMSignalConnection(
     private fun onHelloOk(data: Map<String, IMJson>) {
         connected = true
         connecting = false
+        reconnect.networkChangePending = false
         // 退避归零与否要看这条连接能活多久、断开时前后台是什么状态——
         // 那要等断开才知道，见 [IMReconnectPolicy]，这里只记下起点。
         connectedAtMs = scheduler.nowMs()
@@ -324,10 +352,10 @@ internal class IMSignalConnection(
     }
 
     private fun cancelTimers() {
-        reconnectTimer?.cancel()
-        reconnectTimer = null
+        reconnect.cancel()
         heartbeatTimer?.cancel()
         heartbeatTimer = null
+        networkProbe.cancel()
     }
 
     private fun closeAndReconnect(code: Int, reason: String) {
@@ -355,6 +383,7 @@ internal class IMSignalConnection(
         connecting = false
         heartbeatTimer?.cancel()
         heartbeatTimer = null
+        networkProbe.cancel()
         pending.failAll(IMErrorCode.NETWORK_UNREACHABLE, "连接断开：$reason")
 
         IMRTCLog.i(
@@ -410,7 +439,7 @@ internal class IMSignalConnection(
             tokenExpiry.disarm()
             return
         }
-        scheduleReconnect(IMReconnectPolicy.plan(wasConnected, aliveMs, foreground, backoff::reset))
+        scheduleReconnect(IMReconnectPolicy.plan(wasConnected, aliveMs, foreground, reconnect::resetBackoff))
     }
 
     /**
@@ -428,15 +457,7 @@ internal class IMSignalConnection(
 
     private fun scheduleReconnect(plan: IMReconnectPolicy.Plan) {
         if (stopped) return
-        // 一次断线只排一次（类注释第 3 条）。
-        if (reconnectTimer != null) return
-        val raw = backoff.nextDelayMs()
-        val delay = plan.capMs?.let { minOf(raw, it) } ?: raw
-        IMRTCLog.i("signal", "${delay}ms 后重连（attempt=${backoff.attempts}，规则=${plan.rule}）")
-        reconnectTimer = scheduler.postDelayed(delay) {
-            reconnectTimer = null
-            openSocket()
-        }
+        reconnect.schedule(plan)
     }
 
     // ── 内部：收发 ─────────────────────────────────────────────────────
@@ -481,6 +502,7 @@ internal class IMSignalConnection(
 
     private fun handleText(text: String) {
         lastInboundMs = scheduler.nowMs()
+        networkProbe.onInbound()
         val envelope = try {
             IMEnvelope.decode(text)
         } catch (e: IMRtcException) {

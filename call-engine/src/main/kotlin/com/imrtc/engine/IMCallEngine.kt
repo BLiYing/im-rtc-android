@@ -178,6 +178,19 @@ class IMCallEngine private constructor(
         scheduler.post { connection.setForeground(foreground) }
     }
 
+    /**
+     * 告知 Engine 系统默认网络换了（Wi-Fi 断开重连换了 IP、Wi-Fi ⇄ 蜂窝）。正等着重连的
+     * 立刻重连、退避归零；连着的先探一下死活，死了立刻重连——不再按退避白等最长 30 秒，
+     * 错过服务端 30 秒的恢复窗口（2026-09-18 真机 OPPO：Wi-Fi 重连换 IP 后通话被结束）。
+     * **接了 `call-uikit` 的宿主不用管**，`IMCallKit.start()` 已自动监听；自画 UI 的宿主在
+     * `ConnectivityManager.registerDefaultNetworkCallback` 里默认网络**换成另一个**时调用即可
+     * （注册时回调的第一个网络不算变化）。提示类，销毁后空操作。
+     */
+    fun notifyNetworkChanged() {
+        if (destroyed) return
+        scheduler.post { connection.onNetworkChanged() }
+    }
+
     /** 登出并释放连接。**之后可以再 login。** 清理类：永不失败，销毁后是空操作。 */
     fun logout() {
         scheduler.post { teardown() }
@@ -198,7 +211,7 @@ class IMCallEngine private constructor(
      * - **发起类与本地设备类**（`login` / `call` / `accept` / … / `openCamera` / `switchCamera` / `startLocalPreview`）
      *   一律**以 `2005 invalid_state` 结束**，从结果回调回来（没传回调就走 `onError`）——静默丢弃的话宿主永远等不到结果。
      * - **清理类与提示类**（`logout` / `forceEnd` / `closeMicrophone` / `closeCamera` / `stopLocalPreview` /
-     *   `attachView` / `attachLocalView` / `setRemoteLayer` / `setSpeakerOn` / `setAppForeground` / `updateToken`）
+     *   `attachView` / `attachLocalView` / `setRemoteLayer` / `setSpeakerOn` / `setAppForeground` / `notifyNetworkChanged` / `updateToken`）
      *   是空操作、不报错——宿主卸载时经常无脑清理这几个，不该因为清理顺序先后而报错。
      *
      * 销毁之前一瞬间已经交出去的调用照常结算（调度器会把队里的任务跑完，那时连接已停，结果是 `2007`）。
