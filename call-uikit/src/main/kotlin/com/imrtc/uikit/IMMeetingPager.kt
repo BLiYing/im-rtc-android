@@ -174,7 +174,11 @@ internal object IMMeetingPager {
         order[candidateIndex] = victim
         return state.copy(
             order = order,
-            enteredAt = state.enteredAt + (candidate to input.nowMs),
+            // 被换下去的人要**清掉**进入时刻（`- victim`）：留着的话，等他哪天因为有人离开
+            // 而补位回第一页，同步那一步看见这一条已存在就不补新的起点，
+            // 10 s 驻留判据从那个陈旧的时刻起算早就满了——他会被下一个说话的人
+            // **立刻**顶掉，位置一闪就没。
+            enteredAt = state.enteredAt - victim + (candidate to input.nowMs),
             lastSwapAt = input.nowMs,
         )
     }

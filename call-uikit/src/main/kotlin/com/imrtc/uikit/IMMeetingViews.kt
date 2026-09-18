@@ -163,6 +163,13 @@ internal class IMSpeakerStage(context: Context) : FrameLayout(context) {
  *
  * 只认横向：竖向留给别的手势。阈值挡住「点一下」——单击是「显示 / 隐藏控制条」，
  * 不该被误判成翻页。
+ *
+ * # 光挂在 grid 上是不够的
+ *
+ * 九宫格是 `WRAP_CONTENT` + `CENTER`，画面之外的地方压根不属于它；而属于它的那块，
+ * 每一格又都为了认双击（[attachPinGesture]）在 `onDown` 里返回 true 把事件吃掉了。
+ * 两条加起来的结果是**手指落在人脸上怎么滑都不翻页**，只有格子之间那几毫米的缝隙管用。
+ * 所以识别器存在 [IMCallView.pageSwipe] 上，格子那边收到事件时也喂它一份。
  */
 @SuppressLint("ClickableViewAccessibility")
 internal fun IMCallView.installMeetingGestures() {
@@ -187,6 +194,7 @@ internal fun IMCallView.installMeetingGestures() {
             }
         },
     )
+    pageSwipe = detector
     grid.setOnTouchListener { _, event -> detector.onTouchEvent(event) }
 }
 
@@ -214,7 +222,12 @@ internal fun IMCallView.attachPinGesture(tile: IMVideoTile, uid: String) {
             }
         },
     )
-    tile.setOnTouchListener { _, event -> detector.onTouchEvent(event) }
+    tile.setOnTouchListener { _, event ->
+        // 双击要认，翻页也要认：格子吃下 DOWN 之后父视图再也收不到事件，
+        // 只好在这里把同一串事件**两边各喂一份**（见 installMeetingGestures 的注释）。
+        pageSwipe?.onTouchEvent(event)
+        detector.onTouchEvent(event)
+    }
 }
 
 /** 翻页要滑多远（像素）。太小会把「点一下」误判成翻页。 */

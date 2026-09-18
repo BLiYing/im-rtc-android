@@ -54,13 +54,42 @@ internal fun IMCallView.renderGrid(state: IMCallViewState) {
 internal fun IMCallView.renderMeeting(state: IMCallViewState) {
     val plan = meeting.plan(state, System.currentTimeMillis())
 
+    /*
+     **`none` 要先报，再报这一页的 l/h。**
+
+     会议房里 `none` 就是「排退订」，而新一页的 `l` 是「订阅」，订阅那头顶着 16 路的硬上限。
+     反过来先报 `l` 的话，翻页的那一瞬间旧页还整整占着 8 路、新页又要 8 路，
+     第 17 路直接被本地拒掉——表现成「翻过去有一格永远是头像」，而且一条报错都不抛。
+     （`tileFor` 顺手就把层报了，所以这一段必须在摆格子之前。）
+    */
+    plan.offscreen.forEach { actions?.reportLayer(it.uid, "none") }
+
     val keep = plan.visible.map { it.uid }.toMutableSet()
     plan.pinned?.let { keep += it.uid }
-    retireTiles(keep)
+    /*
+     **翻走 / 被钉住挤下去的人，格子多留五秒再摘。**
+
+     引擎那边翻走并不立刻退订，而是等五秒（`IMRoomMachine` 的迟滞），为的就是
+     「左滑看一眼再滑回来」不必重协商。格子这边要是立刻摘掉，翻回来就得重建 SurfaceView、
+     重新 attach、重等一个关键帧——引擎省下的那次协商在画面上一点也看不出来。
+
+     钉住那一下更明显：`plan.visible` 这时只剩底部条 3 个人，当前页其余 5 个全被摘掉；
+     取消钉住回画廊，整页从头重建，黑一片。多留五秒正好覆盖「钉一下看看就取消」。
+
+     真的离开房间的人不在 `plan.offscreen` 里（那是「还在房里、只是没格子」），照旧立刻摘。
+    */
+    retireTiles(
+        keep,
+        linger = plan.offscreen.map { it.uid }.toSet(),
+        graceMs = IMMeetingGallery.TILE_GRACE_MS,
+    )
     applySelf(state, actions?.hasLocalVideo() ?: false, 44)
     selfTile.setRounded(true)
 
     if (plan.pinned != null) {
+        // 先把九宫格清空：格子马上要挂到演讲者视图上，`grid.tiles` 里还记着它们的话，
+        // 转屏时 onLayout 的补摆会把主画面那一格抢回来（见 IMCallView.onLayout）。
+        layoutGrid(emptyList(), 0)
         speakerStage.setMain(tileFor(plan.pinned, "h", rounded = false))
         // 底部条第一格恒是自己，与画廊「自己占第一格」同一条规则。
         speakerStage.setStrip(listOf(selfTile) + plan.visible.map { tileFor(it, "l") })
@@ -80,7 +109,6 @@ internal fun IMCallView.renderMeeting(state: IMCallViewState) {
         // 分页之后没有「看不见的人」这回事，只有「在别的页上」——那枚 M1 胶囊就此退役。
         hiddenPill.show(0)
     }
-    plan.offscreen.forEach { actions?.reportLayer(it.uid, "none") }
 }
 
 /**
@@ -124,10 +152,23 @@ internal fun IMCallView.layoutGrid(ordered: List<View>, fixedTileCount: Int) {
     grid.apply(ordered, width, height, gap, fallbackCell = dp(120), fixedTileCount = fixedTileCount)
 }
 
-/** 收掉不再需要的远端格子。**卸载要成对**：不摘的话渲染器还占着解码器。 */
-internal fun IMCallView.retireTiles(wanted: Set<String>) {
+/**
+ * 收掉不再需要的远端格子。**卸载要成对**：不摘的话渲染器还占着解码器。
+ *
+ * [linger] 里的人多留 [graceMs] 再摘——**会议翻页专用**，理由见 [renderMeeting]。
+ * 群通话不传，行为与原先一字不差。
+ */
+internal fun IMCallView.retireTiles(
+    wanted: Set<String>,
+    linger: Set<String> = emptySet(),
+    graceMs: Long = 0,
+) {
+    val now = System.currentTimeMillis()
+    wanted.forEach { tileSeenAt[it] = now }
     tiles.keys.filter { it !in wanted }.forEach { uid ->
+        if (graceMs > 0 && uid in linger && now - (tileSeenAt[uid] ?: 0L) < graceMs) return@forEach
         val tile = tiles.remove(uid) ?: return@forEach
+        tileSeenAt.remove(uid)
         tile.setVideoView(null)
         (tile.parent as? android.view.ViewGroup)?.removeView(tile)
         if (fullTile === tile) fullTile = null

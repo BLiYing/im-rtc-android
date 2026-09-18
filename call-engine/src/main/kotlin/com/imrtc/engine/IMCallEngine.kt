@@ -358,15 +358,21 @@ class IMCallEngine private constructor(
      * 认不出的值按 §2.4 规则 6 兜底成 `"all"`。
      *
      * **这是 2.0.0 里本端唯一一处签名变化**：iOS / Web 的 `joinRoom` 本来就有这个参数，
-     * 本端原先没有，会议房也就没法声明「视频我自己按页订」。加的是**可选参数**，
-     * 既有调用（Java 那边靠 `@JvmOverloads` 生成的两参重载）一行都不用改。
+     * 本端原先没有，会议房也就没法声明「视频我自己按页订」。加的是**可选参数**。
+     *
+     * **[autoSubscribe] 排在 [onResult] 之后，不排在它前面**：`@JvmOverloads` 是按
+     * 参数表从右往左生成重载的，放前面的话 Java 那句既有的
+     * `joinRoom(id, token, null)` 会**悄悄改绑**到新的三参 `(String, String, String)` 上——
+     * 编译照过，运行时把 `null` 当档位塞进帧里。宿主那边一行没改却在进房时崩，
+     * 而且崩的地方离改动十万八千里。排在后面，Java 的旧三参重载仍是
+     * `(String, String, IMResultCallback)`，既有调用原样编译、原样运行。
      */
     @JvmOverloads
     fun joinRoom(
         roomId: String,
         roomToken: String,
-        autoSubscribe: String = "all",
         onResult: IMResultCallback<Unit>? = null,
+        autoSubscribe: String = "all",
     ) = act(
         "join",
         mapOf(

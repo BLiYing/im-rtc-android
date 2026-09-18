@@ -180,6 +180,11 @@ final class JavaApiCheck {
 
         // 会议房
         engine.joinRoom("room-1", "room-token");
+        // 2.0.0 加了 autoSubscribe 档位，但它排在 onResult 之后——**旧的三参调用照样编译成
+        // `(String, String, IMResultCallback)`**。这一行就是那条防线：真要是哪天把新参数挪到
+        // 前面去，这里会当场变成把 null 当档位传，Java 侧编译不再是同一个方法。
+        engine.joinRoom("room-2", "room-token", null);
+        engine.joinRoom("room-3", "room-token", null, "audio");
         engine.leaveRoom();
 
         // 设备与画面

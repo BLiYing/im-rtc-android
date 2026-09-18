@@ -226,4 +226,51 @@ class RoomPagingTest {
             "muted" to IMJson.Bool(false),
         ),
     )
+
+    // ── 评审补的三条边界 ────────────────────────────────────────
+
+    @Test
+    fun `断网重连期间迟滞到点也不发退订，清单留着等回来`() {
+        val paged = layer(subscribeAll(meeting(3), 2), "t-1", "none").state
+        assertEquals(listOf("t-1"), paged.pendingUnsubscribe)
+
+        val cut = IMRoomMachine.reduce(paged, IMMachineInput.Internal("disconnected", emptyMap()))
+        assertEquals(IMRoomState.RECONNECTING, cut.state.state)
+
+        val fired = IMRoomMachine.reduce(
+            cut.state,
+            IMMachineInput.Internal(
+                "unsubscribe_hysteresis_elapsed",
+                mapOf("track_id" to IMJson.Str("t-1")),
+            ),
+        )
+        // 一帧都不许发：退订帧没有回滚路径，扔进死连接会让这条 track 永远卡在 UNSUBSCRIBING。
+        assertTrue(fired.send.isEmpty())
+        assertEquals(IMSubscribeState.SUBSCRIBED, fired.state.subscribe["t-1"])
+        // 还在清单上，定时器会重新排一只，等回到 joined 再退。
+        assertEquals(listOf("t-1"), fired.state.pendingUnsubscribe)
+    }
+
+    @Test
+    fun `订阅被拒时连带把待退订摘掉`() {
+        // 订上 → 翻走排退订 → 这时订阅的 reject 才回来（两件事各走各的，顺序能排到）。
+        val ctx = layer(meeting(2), "t-1", "l").state.copy(pendingUnsubscribe = listOf("t-1"))
+        val out = IMRoomMachine.reduce(
+            ctx,
+            IMMachineInput.Internal("subscribe_failed", mapOf("track_id" to IMJson.Str("t-1"))),
+        )
+        assertNull(out.state.subscribe["t-1"])
+        // 不摘的话五秒后那条 unsubscribe 会打在空处——人要是翻回来了，退掉的是刚订上的那一路。
+        assertTrue(out.state.pendingUnsubscribe.isEmpty())
+    }
+
+    @Test
+    fun `已经在退订中的不再排一次迟滞`() {
+        val ctx = subscribeAll(meeting(2), 1).let {
+            it.copy(subscribe = it.subscribe + ("t-1" to IMSubscribeState.UNSUBSCRIBING))
+        }
+        val out = layer(ctx, "t-1", "none")
+        assertTrue(out.send.isEmpty())
+        assertTrue(out.state.pendingUnsubscribe.isEmpty())
+    }
 }

@@ -222,10 +222,23 @@ internal object IMRoomMachine {
         return out(ctx.copy(publish = ctx.publish - cid))
     }
 
-    /** 只摘 `subscribing` 那一条；已经 `subscribed` / `unsubscribing` 的不碰。 */
+    /**
+     * 只摘 `subscribing` 那一条；已经 `subscribed` / `unsubscribing` 的不碰。
+     *
+     * **待退订队列要一起摘**：会议房里「订上 → 翻走排退订 → 订阅这时才被拒」是能排到的顺序
+     * （订阅与翻页各走各的），队列里留着一个已经没有订阅记账的 track，
+     * 五秒后会发一条打在空处的 `room.unsubscribe`；要是这中间那个人又翻回来了，
+     * 那一条会把**刚重新订上的**那一路退掉，表现成「翻回来看了五秒，画面自己没了」。
+     */
     private fun dropFailedSubscribe(ctx: IMRoomContext, trackId: String): IMMachineOutput<IMRoomContext> {
         if (ctx.subscribe[trackId] != IMSubscribeState.SUBSCRIBING) return out(ctx)
-        return out(ctx.copy(subscribe = ctx.subscribe - trackId, layers = ctx.layers - trackId))
+        return out(
+            ctx.copy(
+                subscribe = ctx.subscribe - trackId,
+                layers = ctx.layers - trackId,
+                pendingUnsubscribe = ctx.pendingUnsubscribe - trackId,
+            ),
+        )
     }
 
     /**

@@ -64,9 +64,13 @@ internal fun pagedUpdateLayer(
     if (maxLayer == "none") pageOut(ctx, trackId) else pageIn(ctx, trackId, maxLayer)
 
 private fun pageOut(ctx: IMRoomContext, trackId: String): IMMachineOutput<IMRoomContext> {
-    // 没订过的不用退；已经排着退订的也不用再报一次 none——它早就不出包了，
+    // 没订过的不用退；**正在退的也不用**——那条 `room.unsubscribe` 已经在路上，
+    // 再排一次迟滞，五秒后会往一条已经不存在的订阅上再打一发，
+    // 而它回来的 1301 会被 dropFailedSubscribe 当成「订阅失败」处理。
+    val state = ctx.subscribe[trackId] ?: return IMRoomMachine.out(ctx)
+    if (state == IMSubscribeState.UNSUBSCRIBING) return IMRoomMachine.out(ctx)
+    // 已经排着退订的也不用再报一次 none——它早就不出包了，
     // 再报一次只会把五秒的计时重新拉长。
-    if (!ctx.subscribe.containsKey(trackId)) return IMRoomMachine.out(ctx)
     if (trackId in ctx.pendingUnsubscribe) return IMRoomMachine.out(ctx)
 
     return IMRoomMachine.out(
@@ -145,6 +149,18 @@ internal fun flushHysteresis(
     trackId: String?,
 ): IMMachineOutput<IMRoomContext> {
     if (!usesPagedVideo(ctx)) return IMRoomMachine.out(ctx)
+    /*
+     **不在 joined 就按兵不动。**
+
+     断网重连期间这只定时器照样会到点。此时把 `room.unsubscribe` 发出去等于扔进一条死连接：
+     它没有 reject 可回（退订帧没有回滚路径），那条 track 会**永远卡在 UNSUBSCRIBING**——
+     16 路的账从此少算一路，攒够几次翻页就再也订不上新的人；
+     更糟的是它仍占着 sub PC 的 m-line，offer 还在往 64 KiB 上顶。
+
+     留在 pendingUnsubscribe 里不动即可：帧循环每轮按清单对账，
+     这一条还在清单上，定时器会**重新排一只**，等房间回到 joined 再退。
+    */
+    if (ctx.state != IMRoomState.JOINED) return IMRoomMachine.out(ctx)
     val targets = if (trackId == null) ctx.pendingUnsubscribe else ctx.pendingUnsubscribe.filter { it == trackId }
     if (targets.isEmpty()) return IMRoomMachine.out(ctx)
 

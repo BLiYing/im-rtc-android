@@ -40,6 +40,21 @@ internal object IMGrid {
      * 4 格 `≈ 0.495`），同一通电话换台设备就是另一种版式。
      * 横屏（`aspect >= 1`）不受这条约束：宽容器上 3 个人一行排开本来就更好。
      */
+    /**
+     * fixedDimensions 算**不看容器形状**的方阵行列：`ceil(sqrt(n))` 列。
+     *
+     * 会议分页用它，9 格恒为 3×3（MEETING_ROOM_DESIGN §4.1）。[dimensions] 那套
+     * 「按容器形状挑最大格子」在这里是错的：横屏上 9 格会被排成 5×2、竖屏排成 2×5，
+     * 而分页的前提是**每一页的格子位置固定**——左滑一页格子还在原地，只是换了人。
+     * 跟着方向变行列的话，翻页看起来像整屏重新洗牌，最后一页不满时排法还会再变一次。
+     */
+    @JvmStatic
+    fun fixedDimensions(count: Int): Pair<Int, Int> {
+        val n = count.coerceIn(1, MAX_TILES)
+        val columns = kotlin.math.ceil(kotlin.math.sqrt(n.toDouble())).toInt()
+        return columns to (n + columns - 1) / columns
+    }
+
     @JvmStatic
     @JvmOverloads
     fun dimensions(count: Int, aspect: Double = 0.7): Pair<Int, Int> {

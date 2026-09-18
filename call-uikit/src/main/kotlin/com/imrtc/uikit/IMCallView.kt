@@ -81,7 +81,16 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     internal val selfTile = IMVideoTile(context)
     /** uid → 这个人的格子。**不每次重建**：重建会让媒体层挂着的渲染器重来，画面会闪。 */
     internal val tiles = LinkedHashMap<String, IMVideoTile>()
+
+    /** 每个格子最后一次「还要用」是什么时候，供 [retireTiles] 的宽限期用。 */
+    internal val tileSeenAt = HashMap<String, Long>()
     internal var fullTile: IMVideoTile? = null
+
+    /**
+     * 会议翻页那只手势识别器。**格子也要往它喂事件**（见 [attachPinGesture]）：
+     * 格子为了认双击必须吃下 DOWN，父视图的 `onTouchEvent` 从此一个事件都收不到。
+     */
+    internal var pageSwipe: android.view.GestureDetector? = null
 
     private val micButton = IMControlButton(context, IMKitIcon.MIC, "静音", IMKitIcon.MIC_SLASH, "已静音")
     private val cameraButton = IMControlButton(context, IMKitIcon.VIDEO_SLASH, "开摄像头", IMKitIcon.VIDEO, "关摄像头")
@@ -257,7 +266,15 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         if (!changed) return
         pip.layoutInContainer()
         // 第一轮 render 时 stage 还没量出来，格子边长只能按默认形状估。这里补摆一次。
-        if (layout == IMCallViewState.Layout.GRID && grid.tiles.isNotEmpty()) {
+        /*
+         钉住时**不补摆**：格子这时都在 [speakerStage] 上（主画面 + 底部条），
+         而 `layoutGrid` 会把 `grid.tiles` 里记着的那批重新 addView 回九宫格——
+         主画面那一格被抢走，演讲者视图当场变成一块黑，且转回来也回不去
+         （renderMeeting 只在状态变化时跑）。转屏必经 onLayout，所以这条很容易撞上。
+        */
+        if (layout == IMCallViewState.Layout.GRID && grid.tiles.isNotEmpty() &&
+            meeting.pinnedUid.isEmpty()
+        ) {
             // 会议分页时恒按满页算行列，与 renderMeeting 一致（最后一页不放大）。
             val fixed = if (state.isMeeting && IMMeetingPager.paged(state.members.size)) {
                 IMMeetingPager.TILES_PER_PAGE
@@ -336,6 +353,14 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         endedLabel.visibility = if (isEnded) VISIBLE else GONE
         endedLabel.text = state.statusText
         audioStage.visibility = if (layout == IMCallViewState.Layout.AUDIO && !isEnded) VISIBLE else GONE
+        /*
+         **先把走掉的钉住对象清掉，再读 pinnedUid。**
+
+         清理原本只发生在 `meeting.plan()` 里，而那是 renderGrid 里才调的：
+         被钉的人离开的那一帧，这里仍然认为还钉着——画廊继续藏着、演讲者视图露着，
+         可主画面那一格刚被摘掉。界面上是整块黑屏，要等下一次渲染才回来。
+        */
+        if (state.isMeeting) meeting.dropPinnedIfGone(state.members.keys)
         val pinned = meeting.pinnedUid.isNotEmpty()
         grid.visibility =
             if (layout == IMCallViewState.Layout.GRID && !isEnded && !pinned) VISIBLE else GONE

@@ -219,4 +219,36 @@ class MeetingPagerTest {
         assertEquals("1 / 7", IMMeetingPager.pageLabel(0, 7))
         assertEquals("7 / 7", IMMeetingPager.pageLabel(6, 7))
     }
+
+    @Test
+    fun `被换下去的人回到第一页时重新起算 10 秒`() {
+        val (base, now) = settle()
+        val speaking = setOf("u10")
+        // u1 最久没说话，被 u10 顶掉。
+        var state = IMMeetingPager.reorderFirstPage(base, input(speaking = speaking, nowMs = now))
+        state = IMMeetingPager.reorderFirstPage(
+            state, input(speaking = speaking, nowMs = now + IMMeetingPager.PROMOTE_AFTER_MS),
+        )
+        assertFalse(firstPage(state).contains("u1"))
+        assertNull(state.enteredAt["u1"])
+
+        // u1 因为有人离开补位回第一页：驻留时刻要从此刻重新起算，
+        // 留着旧的那一条的话他会被下一个说话的人立刻再顶掉，位置一闪就没。
+        // 走两个人 u1 才从第 10 位补回来（换位是跟第 10 位对调，不是挪一格）。
+        val back = now + IMMeetingPager.PROMOTE_AFTER_MS + 1
+        val fewer = names(10).filter { it != "u2" && it != "u3" }
+        state = IMMeetingPager.reorderFirstPage(state, input(uids = fewer, nowMs = back))
+        assertTrue(firstPage(state).contains("u1"))
+        assertEquals(back, state.enteredAt["u1"])
+    }
+
+    @Test
+    fun `分页恒为方阵，不跟着容器形状变`() {
+        // 9 格按「格子最大」算在横屏上是 5×2、竖屏上是 2×5；
+        // 分页要的是格子位置固定，左滑只换人。
+        assertEquals(3 to 3, IMGrid.fixedDimensions(9))
+        assertTrue(IMGrid.dimensions(9, 2.2) != 3 to 3)
+        // 最后一页不满也按同样的方阵排，格子不放大（§4.1）。
+        assertEquals(3, IMGrid.fixedDimensions(9).first)
+    }
 }

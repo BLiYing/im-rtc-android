@@ -72,8 +72,10 @@ internal class IMCallGridView(context: Context) : GridLayout(context) {
     ) {
         val measured = boxWidth > 0 && boxHeight > 0
         val aspect = if (measured) boxWidth.toDouble() / boxHeight else DEFAULT_ASPECT
+        // 分页时**不跟着容器形状变**：格子位置固定，左滑才只是换人而不是整屏重排（§4.1）。
         val (columns, rows) =
-            IMGrid.dimensions(if (fixedTileCount > 0) fixedTileCount else wanted.size, aspect)
+            if (fixedTileCount > 0) IMGrid.fixedDimensions(fixedTileCount)
+            else IMGrid.dimensions(wanted.size, aspect)
         val wantedWidth: Int
         val wantedHeight: Int
         when {

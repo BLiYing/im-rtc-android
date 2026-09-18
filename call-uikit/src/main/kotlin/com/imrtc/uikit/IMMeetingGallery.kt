@@ -35,17 +35,24 @@ internal class IMMeetingGallery {
         val fixedTileCount: Int,
     )
 
-    /** 演讲者视图底部条放几格：自己 + 最近 3 位（§4.4）。 */
     companion object {
+        /** 演讲者视图底部条放几格：自己 + 最近 3 位（§4.4）。 */
         const val STRIP_TILES = 4
+
+        /**
+         * 翻走 / 被挤下去的格子**多留多久**再摘，与引擎那边的退订迟滞取同一个数。
+         *
+         * 五秒是 `IMRoomMachine.UNSUBSCRIBE_HYSTERESIS_MS`：引擎正是等这么久才真的退订，
+         * 格子早退一步的话滑回来照样要重建、重等关键帧，那次省下的协商白省。
+         */
+        const val TILE_GRACE_MS = 5_000L
     }
 
     /** 算这一轮该显示什么。`nowMs` 由调用方给，让这套时间闸在测试里可控。 */
     fun plan(state: IMCallViewState, nowMs: Long): Plan {
         val ordered = reorder(state, nowMs)
 
-        // 钉住的人走了要自动回画廊，否则主画面会一直盯着一个不在房里的 uid。
-        if (pinnedUid.isNotEmpty() && ordered.none { it.uid == pinnedUid }) pinnedUid = ""
+        dropPinnedIfGone(ordered.map { it.uid })
 
         val pinned = ordered.firstOrNull { it.uid == pinnedUid }
         if (pinned != null) {
@@ -75,6 +82,17 @@ internal class IMMeetingGallery {
             pageText = IMMeetingPager.pageLabel(page, total),
             fixedTileCount = IMMeetingPager.TILES_PER_PAGE,
         )
+    }
+
+    /**
+     * 钉住的人走了就自动回画廊，否则主画面会一直盯着一个不在房里的 uid。
+     *
+     * **渲染的最前面也要调一次**：通话页是先按 [pinnedUid] 决定画廊与演讲者视图谁露面，
+     * 再调 [plan]。只在 plan 里清的话，那个人离开的那一帧两者会对不上——
+     * 演讲者视图露着而主画面已经空了，整块黑到下一次渲染。幂等，多调无害。
+     */
+    fun dropPinnedIfGone(present: Collection<String>) {
+        if (pinnedUid.isNotEmpty() && pinnedUid !in present) pinnedUid = ""
     }
 
     /** 翻页。`delta` 取 +1（下一页）/ -1（上一页）。返回页码有没有真的变。 */
