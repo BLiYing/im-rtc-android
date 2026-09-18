@@ -62,6 +62,19 @@ internal data class IMEnvelope(
     }
 
     companion object {
+        /**
+         * 握手时声明的协议版本（协议 §10）。**2 = SDK 2.0.0**：
+         * `room.join.auto_subscribe` 从布尔变成三档枚举。服务端只认自己实现的那一版，
+         * 对不上在握手阶段就回 1006。
+         *
+         * **只许有这一个数。** 它既是 [SysFrames.HELLO] 的字段默认值，
+         * 也是 [com.imrtc.engine.signaling.IMSignalConnection.Config] 的默认值——
+         * 这两处原先各写各的，帧声明升到 2 了而 Config 还留着 1，
+         * 于是**真正发出去的 hello 一直是 1**，真机一连就被 1006 拒掉。
+         * 单测没抓到：向量校的是帧字段声明，不是发送侧那个 Config。
+         */
+        const val PROTOCOL_VERSION = 2L
+
         /** 单帧**上行**上限（协议 §2.6），超了服务端直接以 4400 关连接。 */
         const val MAX_FRAME_BYTES = 65536
 

@@ -1,5 +1,6 @@
 package com.imrtc.engine
 
+import com.imrtc.engine.protocol.IMEnvelope
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.signaling.FakeScheduler
@@ -18,11 +19,27 @@ class SdkVersionTest {
 
     private val transport = FakeTransport()
 
-    private fun helloSdk(config: IMCallEngine.Config): IMJson? {
+    private fun helloField(config: IMCallEngine.Config, field: String): IMJson? {
         val engine = IMCallEngine.forTest(config, EngineLoopTest.RecordingListener(), null, FakeScheduler(), transport)
         engine.login("tk-1")
         transport.open()
-        return transport.sent.first { it.type == IMFrameType.HELLO }.data["sdk"]
+        return transport.sent.first { it.type == IMFrameType.HELLO }.data[field]
+    }
+
+    private fun helloSdk(config: IMCallEngine.Config): IMJson? = helloField(config, "sdk")
+
+    /**
+     * **校真正发出去的那一帧**，不是字段声明的默认值。
+     *
+     * 这两处原先各写各的：帧声明 `SysFrames.HELLO` 升到了 2，而发送侧
+     * `IMSignalConnection.Config.protocolVersion` 还留着 1，于是握手一直报 1，
+     * 真机一连就被 1006 拒掉——**而全套单测是绿的**，因为向量校的正是帧声明那一侧。
+     */
+    @Test
+    fun `握手报的协议版本是真的发出去的那个`() {
+        val version = helloField(IMCallEngine.Config(url = "ws://test/rtc", deviceId = "d-1"), "protocol_version")
+        assertEquals(IMJson.Num(IMEnvelope.PROTOCOL_VERSION), version)
+        assertEquals(2L, IMEnvelope.PROTOCOL_VERSION)
     }
 
     @Test

@@ -45,7 +45,8 @@ internal class IMSignalConnection(
         val url: String,
         val deviceId: String,
         val sdk: String = IMCallEngineVersion.SDK,
-        val protocolVersion: Long = 1,
+        /** 见 [IMEnvelope.PROTOCOL_VERSION]：**别在这里另写一个数**，写岔了握手会被 1006 拒。 */
+        val protocolVersion: Long = IMEnvelope.PROTOCOL_VERSION,
     )
 
     private var config: Config? = null
