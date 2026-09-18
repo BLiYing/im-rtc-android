@@ -7,35 +7,31 @@
 
 ## 当前焦点
 
-**2026-09-18 凌晨：会议房 M2 的 Engine 那一半已做完并提交（server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2 步）。`test.sh` 6 步全绿。**
-- 协议 2：`sys.hello` 的 `protocol_version` 默认值 1 → 2；收帧上限拆成两个数（发仍 `IMEnvelope.MAX_FRAME_BYTES` 64 KiB，收按 `MAX_RECEIVED_FRAME_BYTES` 256 KiB）。
-- `room.join.auto_subscribe` 布尔 → 三档字符串 `all | audio | none`（`IMProtocolEnums.AUTO_SUBSCRIBE_MODES`，兜底 `all`）。
-- **本端唯一一处签名变化**：`joinRoom(roomId, roomToken, autoSubscribe = "all", onResult = null)` 多了一个**可选**参数（iOS / Web 本来就有）。既有 Java 调用靠 `@JvmOverloads` 的两参重载不用改；Kotlin 里传回调要写 `onResult =`。
-- 会议房按页订阅（`statemachine/RoomStateMachinePaging.kt`）：`autoSubscribe == "audio"` 时 `setRemoteLayer` 就是订阅意图——`l/m/h` = 订阅或换层，`none` = 先停包再等 5 s 退订；翻回来只换层不重协商；同时订阅的视频封顶 16 路，满了先退最早翻走的那一条，一条都腾不出来才本地拒绝（**本地拒绝不带帧**）。定时器在 `IMUnsubscribeTimers.kt`，按 `pendingUnsubscribe` **整体对账**。
-- 新测 `statemachine/RoomPagingTest`（12 条）；向量新增两组用例由 `RoomFsmVectorsTest` 跑（现 10 用例 61 步）。
-- UIKit（同一轮，第四段）：**分页画廊 + 钉住 + 只读成员列表**。
-  - `IMMeetingPager.kt` 是纯算术 + 第一页发言人优先（1.5 s 晋升 / 10 s 驻留 / 2 s 限频），`IMMeetingGallery.kt` 持有页码 / 钉住 / 排序记账并算出一个 `Plan`；`IMCallGridView.apply` 只多了一个 `fixedTileCount` 形参，**摆格子的逻辑一行没改**。
-  - `IMCallView` 贴着 600 行，所以格子那一半整块挪进 `IMCallViewGrid.kt`（群通话 + 会议两条路径），会议的小视图与手势在 `IMMeetingViews.kt`（页码胶囊、演讲者视图、左右滑翻页、双击钉住）。
-  - 只读成员列表 `IMMemberListSheet.kt`（`Dialog` 半屏，自己 → 进房顺序 + 麦克风 / 摄像头角标），从标题栏新加的「👥 N」打开（与加人按钮同一个位置、互斥）。
-  - `IMCallKit.joinMeeting` 改发 `autoSubscribe = "audio"`。
-  - 新测 `MeetingPagerTest` 15 条（与 Web / iOS 同一组场景）。
+**2026-09-18：会议房 M2 真机验收进行中（OPPO PKD130 / Android 15）。M2 的 Engine 与 UIKit 两段已在 09-18 凌晨做完（`e55bbbc` / `493883e`，见 server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2、5 步）。今天全是真机才暴露的修复，`test.sh` 6 步全绿。**
 
-**2026-09-17 夜：结束帧 / 迟到帧合成一张表（队列 5 的「迟到帧」那条）**：四份「这个状态怎么结束」合进 `statemachine/IMCallExit.kt`
-（`reduceAct` 退出方法 / `forceEndFrames` / `handleLateFrame` 与 `handleInviteOk` 补发 / `IMRequestFailures` 失败收场集合），
-`CallExitTableTest` 逐条对 `call_fsm.json`，与 iOS `IMCallExit` 同一张表。行为不变。
-**没挪进请求关联层**：`call.connected` 是推送不是应答，关联层看不见；房间机的迟到 `room.join.ok` → `room.leave` 只有一处，不动。
-定时器样板本端不再抽：/simplify 已收成 `IMScheduler` + Kit 注入式小类 + `postResetIfEnded`。
+- **握手报的协议版本一直是 1**（`e8f0110`）：两处真相源（`IMEnvelope` 与帧声明的默认值）不一致，
+  真机连 2.0.0 服务端当场被拒，症状是「接入参数被拒」。统一到 `IMEnvelope.PROTOCOL_VERSION`，
+  `SdkVersionTest` 改成断言 **`transport.sent` 里真的发出去的那一帧**。
+- **退订再重订之后画面定格**（`861dfbc`）：M2 第一次让「退订→重订」成为常规动作，
+  协议 `track_id` 不变但媒体层拿到的是**新的轨道对象**，而 `bindRemoteTracks` 只比渲染器不比轨道，
+  判成「没变」直接跳过 → 新轨道从没 `addSink`，画面停在旧轨道的最后一帧。三端同病。
+  顺带把远端画面的挂载/换绑拆进 `IMRemoteVideoBinding.kt`（适配器贴着 600 行）。
+- **演讲者底部条第一格与最后一格被切**（`0e1b791`）：4 格 × 84dp + 间距 + 边距 = 392dp，
+  而常见手机只有 360dp，`CENTER` 溢出就从两头各切一截。改成 `IMGrid.stripSide` 取小（这台机器 76dp），
+  像素量过：四格都是 152×152、左右边距各 32px。
+- **小格子里名字放不下**（`b134bcd`）：固定件吃掉 54dp，76dp 的格子只剩 22dp，`carol` 都显示成「ca…」。
+  边长 < `IMGrid.COMPACT_TILE_DP`（110，三端同值）自动换**紧凑档**，固定件压到 28dp。
+- **末页不满要从左上排起 + 空白处也能翻页**（`bef9ef3`）。
+- **标题栏改成写房号、点一下复制**（`8c1acff`）：人数只留右上角「👥 N」，标题不再重复同一个数字。
+  拆出 `IMCallViewBanner.kt`（`IMCallView` 加完这几行顶到 604）。
+- **诊断**（`5f83078`）：远端画面绑定 / 解绑时报 `track_id + uid + 渲染器 hash`。
 
-**2026-09-17 夜：「调用结果回给调用方」（2.0.0，server `docs/design/ACTION_RESULT_DESIGN.md`）已提交 `6fac9d7`（未推送），code-review 已过。** `test.sh` 6 步全绿（新增 `ActionResultTest` 16 条）。
-- 发起类方法加可选 `IMResultCallback<T>`（主线程、恰好一次），不传回调失败退回 `onError`；`onError` 加 `forType`；新增公开 `IMRTCError`；`call` 结果值是 callId；`login` 结果是第一次握手的结论。
-- 核心循环拆到 `IMFrameLoop`、两个事件出口拆到 `IMEngineEvents`（门面 512 行）；退出类失败本地收场；destroy 后发起类 2005、清理 / 提示类空操作、`forceEnd` 竞态已修、调度器收不下时当场 2005。
-- Kit 不再在 `onError` 里靠 `joining` 猜归属：拨号 / 加入 / 加人的文案从结果取码（`IMKitResults`）。**真机未验**：joinCall 1202 / 1402 / 1409 三种文案、拨号拿到 callId、通话中断网再挂断。
+**悬着没定位**：翻页把 carol 提到第一页之后，**标着 `bot02` 的格子里放的是 carol 的画面**，
+carol 自己那格是黑的（11:24 截图）。假客户端发合成 RTP、永远解不出画面，所以只能是渲染器绑错人。
+诊断日志已装机，**还没复现抓到**。
 
-**2026-09-17 傍晚：四仓 /simplify 清理做完并推送（本仓 `5ad5bad`…`e11761f`，`test.sh` 6 步全绿；用户已复看，正常）。**
-- **行为修复 `5ad5bad`**：关闭码 4400 原先落进默认分支一直重连，改从 `IMCloseCode.shouldReconnect` 取判据，只报 `onDisconnected(4400, false)`、不抛 `onKickedOut`，对齐 iOS / Web（CLIENT_PARITY 那句「4400 四端都不重连」此前对 Android 不成立，现在成立）。JVM 单测 8 条，真机没造 4400。
-- Demo 通话记录补齐 answered_elsewhere / rejected_elsewhere / room_closed，kicked 改「已被移出」。
-- 行为不变：`applyOutput` 按引用短路 `claimRemoteTracks`；控制按钮 setter 判重、头像底纹按 `avatarKey` 判重；`Wire` 统一取值、`invalidStateOutput` 合并；`View.dp()` 收进 `IMKitTheme`（统一截断）；`scheduleResetIfEnded`；`startCapture(profile)` / `safeRemoveSink` / `hasPermission`；删零调用的 8 个 `IMKitIcon` 与 drawable、`Settled.OFFLINE`、`IMCallOverlay.isAttached`。
-- 09-17 夜五件、下午三条待办、16:35 收进小窗的细节已移进 archive。
+**真机验过**：底部条四格对称、底部条名字全可读、新标题栏。
+**没验**：翻走 >10 秒再翻回（那次被钉住状态吃掉了手势）、25 人、断网恢复。
 
 ## 下一步
 
@@ -85,7 +81,8 @@
 - `onDisconnected(code, willReconnect)`：`willReconnect` 由 `IMSignalConnection` 当场裁决，Kit 直接用 `!willReconnect` 判「已放弃」。
   **关闭码要不要重连只看 `IMCloseCode.shouldReconnect`**（与 `error_codes.json` 的 `close_codes[].reconnect` 一致），特例只有两条：4401 数到 3 次、1000 非自主关闭照常重连。
 
-**体量（都贴着 600）**：`IMCallKit.kt` 595、`IMCallView.kt` 599、`IMWebRTCAdapter.kt` 595、`IMCallViewState.kt` 588、`IMSignalConnection.kt` 574——下次改先拆。
+**体量（都贴着 600）**：`IMCallView.kt` 581、`IMCallKit.kt` 597、`IMSignalConnection.kt` 575、`IMCallViewState.kt` 593、`IMWebRTCAdapter.kt` 572——下次改先拆。
+09-18 已拆出三个：`IMRemoteVideoBinding.kt`（远端画面挂载/换绑）、`IMCallViewGrid.kt`（格子那一半）、`IMCallViewBanner.kt`（顶部橙条）。
 
 ## 关联工程 / 常用命令
 
