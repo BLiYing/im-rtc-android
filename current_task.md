@@ -9,6 +9,12 @@
 
 **2026-09-18：会议房 M2 真机验收进行中（OPPO PKD130 / Android 15）。M2 的 Engine 与 UIKit 两段已在 09-18 凌晨做完（`e55bbbc` / `493883e`，见 server `docs/design/MEETING_ROOM_DESIGN.md` §7 第 2、5 步）。今天全是真机才暴露的修复，`test.sh` 6 步全绿。**
 
+- **补了两条看不见的东西**（未提交，为 09-18 下午那次联调加的）：**下行一个统计都没有**——
+  `IMDownlinkStats` 每 5 s 采 `inbound-rtp`，只在「分辨率 / 解码器 / 在不在出帧」变了时打一行
+  `下行解码实况 uid= 分辨率 解码帧=+n 收包=+n 丢包=+n 码率= 解码器=`。有了它才分得开
+  「包没来 / 来了拼不出帧 / 拼全了解不出来」，房间 41642481 那次 frank 全程黑就是卡在这儿。
+  另加 `IMVideoFitter` 的 `画面缩放判据 owner= view= video= fraction= mode=`（与 iOS 同名字段），
+  FILL/FIT 判错时原先一条错都不报。
 - **握手报的协议版本一直是 1**（`e8f0110`）：两处真相源（`IMEnvelope` 与帧声明的默认值）不一致，
   真机连 2.0.0 服务端当场被拒，症状是「接入参数被拒」。统一到 `IMEnvelope.PROTOCOL_VERSION`，
   `SdkVersionTest` 改成断言 **`transport.sent` 里真的发出去的那一帧**。

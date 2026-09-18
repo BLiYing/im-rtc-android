@@ -90,6 +90,9 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     /** 上行每一层实际编出多少分辨率、被什么限住。见 [IMUplinkStats] 的类注释。 */
     private val uplinkStats = IMUplinkStats(main)
 
+    /** 下行每一路的包到没到、解没解出帧。见 [IMDownlinkStats] 的类注释。 */
+    private val downlinkStats = IMDownlinkStats(main, ownerOf = { trackId -> trackOwners[trackId] })
+
     /** 帧尺寸 → 裁切还是留边。见 [IMVideoFitter]。 */
     private val fitter = IMVideoFitter(main) { renderers[it] }
 
@@ -178,6 +181,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         running = true
         audio.start()
         peers.start(iceServers)
+        // 下行采样从建 PC 起：轨道还没上来时报告里就是空的，不会打出任何一行。
+        peers.connection("sub")?.let { downlinkStats.start(it) }
         // **不能无条件传 false**：本端预览可能早就把摄像头开起来了（拨出中就看得见自己），
         // 这里再把前台服务降级成「只有麦克风」，Android 14 起就是「正在用摄像头却没有 camera 类型」，
         // 后台一挂就抛 SecurityException。
@@ -200,6 +205,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         }
         running = false
         uplinkStats.stop()
+        downlinkStats.stop()
         stopCapture()
         // 先摘轨道再 release：反了会崩在 native 层。
         // 渲染器的释放也归主线程（`release` 与 `init` 要在同一条线程上成对）。
