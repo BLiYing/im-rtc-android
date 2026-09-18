@@ -159,6 +159,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         // 单击画面空白处：显示 / 隐藏控制条（视频版式才生效）。
         stage.setOnClickListener { if (layout == IMCallViewState.Layout.VIDEO) chrome.set(!chrome.visible) }
 
+
         controlsScrim.background = IMKitTheme.controlsScrim()
         addView(controlsScrim, LayoutParams(LayoutParams.MATCH_PARENT, dp(160), Gravity.BOTTOM))
         controlsScrim.visibility = GONE

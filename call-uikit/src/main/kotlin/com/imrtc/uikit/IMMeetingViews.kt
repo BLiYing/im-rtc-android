@@ -196,6 +196,15 @@ internal fun IMCallView.installMeetingGestures() {
     )
     pageSwipe = detector
     grid.setOnTouchListener { _, event -> detector.onTouchEvent(event) }
+    /*
+     **格子之外那一圈也要能翻页。** 九宫格是 WRAP_CONTENT + CENTER，
+     剩下的留白属于舞台；手指落在那里滑动，识别器根本收不到事件（2026-09-18 真机）。
+     **返回 false**：不消费，舞台上那个「单击显示/隐藏控制条」照常工作。
+    */
+    stage.setOnTouchListener { _, event ->
+        detector.onTouchEvent(event)
+        false
+    }
 }
 
 /**

@@ -42,12 +42,43 @@ internal class IMCallGridView(context: Context) : GridLayout(context) {
         alignmentMode = ALIGN_BOUNDS
     }
 
+    /**
+     * 分页时把整块撑到「满一页」那么大。
+     *
+     * GridLayout 只按在场的行列算测量结果，末页不满就会缩水，再被 `Gravity.CENTER`
+     * 摆到屏幕正中——而设计要求的是**格子位置固定、从左上往下排**（§4.1）：
+     * 左滑一页格子还在原地，只是换了人。撑满之后前几格自然落在第一行。
+     */
+    override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+        super.onMeasure(widthSpec, heightSpec)
+        if (reservedRows <= 0 || cellWidth <= 0 || cellHeight <= 0) return
+        // 每格四周各留 gap/2 的外边距，所以一格实际占 cell + gap。
+        val wantedWidth = reservedColumns * (cellWidth + reservedGap)
+        val wantedHeight = reservedRows * (cellHeight + reservedGap)
+        setMeasuredDimension(
+            maxOf(measuredWidth, wantedWidth),
+            maxOf(measuredHeight, wantedHeight),
+        )
+    }
+
     /** 当前摆着的那批格子，按加入顺序。 */
     var tiles: List<View> = emptyList()
         private set
 
     private var cellWidth = -1
     private var cellHeight = -1
+
+    /**
+     * 分页时**整块要占满一页的大小**，哪怕这一页没坐满（[onMeasure]）。
+     *
+     * 本视图是 `WRAP_CONTENT` + `Gravity.CENTER` 挂在舞台上的，而 GridLayout 的
+     * 测量高度只按**在场的行**算：最后一页只有 3 个人时它缩成一行，然后被整块居中——
+     * 看起来就是「三个人浮在屏幕中间」，而不是设计要求的「从左上往下排」（§4.1）。
+     * 0 = 不预留（群通话，本来就坐满）。
+     */
+    private var reservedColumns = 0
+    private var reservedRows = 0
+    private var reservedGap = 0
 
     /**
      * 摆一批格子。
@@ -76,6 +107,10 @@ internal class IMCallGridView(context: Context) : GridLayout(context) {
         val (columns, rows) =
             if (fixedTileCount > 0) IMGrid.fixedDimensions(fixedTileCount)
             else IMGrid.dimensions(wanted.size, aspect)
+        // 分页时整块恒占满一页，末页不满也从左上排起（见 reservedRows）。
+        reservedColumns = if (fixedTileCount > 0) columns else 0
+        reservedRows = if (fixedTileCount > 0) rows else 0
+        reservedGap = gap
         val wantedWidth: Int
         val wantedHeight: Int
         when {
