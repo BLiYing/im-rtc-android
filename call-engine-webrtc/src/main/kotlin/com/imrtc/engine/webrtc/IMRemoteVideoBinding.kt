@@ -1,5 +1,6 @@
 package com.imrtc.engine.webrtc
 
+import com.imrtc.engine.log.IMRTCLog
 import org.webrtc.VideoTrack
 
 /*
@@ -24,14 +25,22 @@ internal fun IMWebRTCAdapter.bindRemoteTracks() {
         // 轨道与渲染器**两样都要比**，摘的也是上一次那条轨道（见 attachedTracks）。
         if (boundRenderer === renderer && boundTrack === track) continue
         if (boundRenderer != null) boundTrack?.safeRemoveSink(boundRenderer)
+        val owner = trackOwners[trackId] ?: ""
         if (renderer == null) {
             attached.remove(trackId)
             attachedTracks.remove(trackId)
+            IMRTCLog.i("media", "远端画面已解绑：track_id=$trackId uid=$owner")
             continue
         }
         runCatching { track.addSink(renderer) }
         attached[trackId] = renderer
         attachedTracks[trackId] = track
+        // **画面串格子只能从这里查**：渲染器是哪块、归属是谁，日志里没有就只能靠猜
+        // （2026-09-18 真机：carol 的画面出现在 bot02 的格子里）。
+        IMRTCLog.i(
+            "media",
+            "远端画面已绑定：track_id=$trackId uid=$owner renderer=${System.identityHashCode(renderer)}",
+        )
     }
 }
 

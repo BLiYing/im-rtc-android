@@ -256,6 +256,7 @@ object IMCallKit {
         val view = engine?.createVideoView(context.applicationContext) ?: return null
         engine?.attachView(uid, view)
         remoteViews[uid] = view
+        IMRTCLog.i("kit", "远端渲染器已发放 uid=$uid renderer=${System.identityHashCode(view)}")
         return view
     }
 
