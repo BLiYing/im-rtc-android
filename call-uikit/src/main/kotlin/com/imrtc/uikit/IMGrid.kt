@@ -85,6 +85,15 @@ internal object IMGrid {
     }
 
     /**
+     * 小于这个边长（dp）的格子换一档更紧的名字牌（见 `IMVideoTile.applyDensity`）。
+     *
+     * 110 是「常规档放得下一个五六个字母的名字」的下界：常规档的固定件吃掉 54dp，
+     * 12sp 下 `carol` 约 33dp，加起来 87dp——再算上中文名会更宽，留一点余量。
+     * 三端同值（iOS `IMVideoTileView.compactSide`、Web `callMetrics.compactTile`）。
+     */
+    const val COMPACT_TILE_DP = 110
+
+    /**
      * 演讲者视图底部条每格的边长（像素）：**要么是设计值，要么是这块屏放得下的**。
      *
      * 底部条恒 4 格、恒正方形（MEETING_ROOM_DESIGN §4.4），而 4 × 84dp 加上间距与边距

@@ -297,8 +297,48 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
      */
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        val chrome = dp(PLATE_INSET_DP) * 2 + dp(8) * 2 + dp(9) + dp(5)
+        applyDensity(w in 1 until dp(IMGrid.COMPACT_TILE_DP))
+        val chrome = dp(plateInsetDp) * 2 + dp(platePadDp) * 2 + dp(9) + dp(iconGapDp)
         nameText.maxWidth = (w - chrome).coerceAtLeast(dp(24))
+    }
+
+    /** 当前这一档排版是不是紧凑档。`null` = 还没定过，第一次必设。 */
+    private var compact: Boolean? = null
+    private val plateInsetDp get() = if (compact == true) COMPACT_INSET_DP else PLATE_INSET_DP
+    private val platePadDp get() = if (compact == true) 4 else 8
+    private val iconGapDp get() = if (compact == true) 3 else 5
+
+    /**
+     * 小格子换一档更紧的名字牌（演讲者视图底部条、以后更密的版式）。
+     *
+     * 常规档的固定件要吃掉 12×2 + 8×2 + 9（说话图标）+ 5 = **54dp**，
+     * 而底部条的格子只有 76dp——留给名字的 22dp 连 `carol` 都放不下，
+     * 一眼看去每一格都是「ca…」（2026-09-18 真机）。
+     * 紧凑档把固定件压到 28dp，同样的格子能放下 48dp 的名字。
+     *
+     * **只动留白与字号，不动结构**：说话图标照旧永远占位，名字不会随说话左右跳。
+     */
+    private fun applyDensity(wantCompact: Boolean) {
+        if (compact == wantCompact) return
+        compact = wantCompact
+        nameText.textSize = if (wantCompact) 10f else 12f
+        namePlate.setPadding(dp(platePadDp), 0, dp(platePadDp), 0)
+        (speechIcon.layoutParams as? LinearLayout.LayoutParams)?.let {
+            it.leftMargin = dp(iconGapDp)
+            speechIcon.layoutParams = it
+        }
+        (namePlate.layoutParams as? LinearLayout.LayoutParams)?.let {
+            it.height = dp(if (wantCompact) 16 else 20)
+            namePlate.layoutParams = it
+        }
+        (bottomRow.layoutParams as? LayoutParams)?.let {
+            it.setMargins(dp(plateInsetDp), 0, dp(plateInsetDp), dp(plateInsetDp))
+            bottomRow.layoutParams = it
+        }
+        (netPlate.layoutParams as? LayoutParams)?.let {
+            it.setMargins(0, dp(plateInsetDp), dp(plateInsetDp), 0)
+            netPlate.layoutParams = it
+        }
     }
 
     private companion object {
@@ -309,6 +349,9 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
          * 有的机型上直接看不全（真机反馈）。
          */
         const val PLATE_INSET_DP = 12
+
+        /** 紧凑档的留白。圆角在小格子上也小，4 不会被切。 */
+        const val COMPACT_INSET_DP = 4
     }
 }
 
