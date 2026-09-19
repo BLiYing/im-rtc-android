@@ -67,3 +67,12 @@ internal fun resolvedAvatar(resolver: IMProfileResolver?, uid: String): Drawable
     if (uid.isEmpty()) return null
     return resolver?.avatar(uid)
 }
+
+/**
+ * 标题栏那一行：1v1 写对方名字（宿主解析，解析不到才是 uid）；
+ * 群通话 / 会议是人数 / 房号，与宿主无关，原样用 [IMCallViewState.titleText]。
+ */
+internal fun resolvedTitle(resolver: IMProfileResolver?, state: IMCallViewState): String {
+    val oneToOne = !state.isGroup && !state.isMeeting && state.peer.isNotEmpty()
+    return if (oneToOne) resolvedName(resolver, state.peer, state.titleText) else state.titleText
+}

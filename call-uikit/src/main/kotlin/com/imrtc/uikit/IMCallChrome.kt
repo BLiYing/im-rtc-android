@@ -154,6 +154,8 @@ internal class IMTopBanner(context: Context) : TextView(context) {
 internal class IMAudioStage(context: Context) : FrameLayout(context) {
     private val ring = View(context)
     private val avatar = TextView(context)
+    /** 宿主给的头像图，盖在色块上（同 [IMVideoTile]）。 */
+    private val avatarPhoto = android.widget.ImageView(context)
     private val name = TextView(context)
     private val status = TextView(context)
     private val netChip = LinearLayout(context)
@@ -173,6 +175,16 @@ internal class IMAudioStage(context: Context) : FrameLayout(context) {
         avatar.setTypeface(null, android.graphics.Typeface.BOLD)
         avatar.setTextColor(IMKitTheme.primaryText)
         avatar.elevation = dp(12).toFloat()
+        avatarPhoto.scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+        avatarPhoto.visibility = View.GONE
+        avatarPhoto.clipToOutline = true
+        avatarPhoto.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: android.graphics.Outline) {
+                val side = minOf(view.width, view.height)
+                outline.setRoundRect(0, 0, side, side, side / 2f)
+            }
+        }
+        avatarPhoto.elevation = dp(12).toFloat()
         name.textSize = 22f
         name.setTypeface(null, android.graphics.Typeface.BOLD)
         name.setTextColor(IMKitTheme.primaryText)
@@ -196,6 +208,7 @@ internal class IMAudioStage(context: Context) : FrameLayout(context) {
                 FrameLayout(context).apply {
                     addView(ring, LayoutParams(size + dp(22), size + dp(22), Gravity.CENTER))
                     addView(avatar, LayoutParams(size, size, Gravity.CENTER))
+                    addView(avatarPhoto, LayoutParams(size, size, Gravity.CENTER))
                 },
                 LinearLayout.LayoutParams(size + dp(22), size + dp(22)),
             )
@@ -220,8 +233,11 @@ internal class IMAudioStage(context: Context) : FrameLayout(context) {
         isRinging: Boolean,
         networkLevel: Int,
         showsCaption: Boolean = true,
+        photo: android.graphics.drawable.Drawable? = null,
     ) {
         avatar.text = IMAvatar.initial(nameText)
+        avatarPhoto.setImageDrawable(photo)
+        avatarPhoto.visibility = if (photo == null) View.GONE else View.VISIBLE
         val avatarKey = uid.ifEmpty { nameText }
         if (this.avatarKey != avatarKey) {
             this.avatarKey = avatarKey

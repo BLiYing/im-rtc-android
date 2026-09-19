@@ -342,7 +342,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         */
         val bare = state.phase == IMCallViewState.Phase.INCOMING || state.phase == IMCallViewState.Phase.OUTGOING
         header.apply(
-            if (bare) "" else state.titleText, if (bare) "" else state.statusText,
+            if (bare) "" else resolvedTitle(IMCallKit.config.profileResolver, state), if (bare) "" else state.statusText,
             if (state.phase == IMCallViewState.Phase.CONNECTED) peerLevel else 0,
             showsMinimize = state.canMinimize && IMCallKit.config.floatingWindow,
             showsInvite = state.canShowInvite,
@@ -479,8 +479,12 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         val peer = state.members.values.firstOrNull()
         // 来电这一屏显示「谁邀请的你」；其余阶段照旧（1v1 两者本来就是同一个人）。
         val shown = if (state.phase == IMCallViewState.Phase.INCOMING) state.incomingFromUid else state.peer
+        // 名字与头像交给宿主解析（没配 resolver 时原样是 uid，行为不变）。
+        val resolver = IMCallKit.config.profileResolver
+        val fallbackName = shown.ifEmpty { peer?.uid ?: "通话中" }
         audioStage.apply(
-            shown, shown.ifEmpty { peer?.uid ?: "通话中" }, state.statusText,
+            shown, resolvedName(resolver, shown, fallbackName), state.statusText,
+            photo = resolvedAvatar(resolver, shown),
             isRinging = state.phase == IMCallViewState.Phase.OUTGOING,
             networkLevel = peer?.networkLevel ?: 0,
             // 接通之后名字与时长归标题栏，中间只留头像——两处各走各的计时是重复也是打架。

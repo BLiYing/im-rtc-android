@@ -76,4 +76,19 @@ class ProfileResolverTest {
     fun `没有头像时返回 null，调用方退化成首字母色块`() {
         assertNull(resolvedAvatar(resolver(emptyMap()), "u1"))
     }
+
+    @Test
+    fun `1v1 标题栏写宿主给的名字，解析不到才是 uid`() {
+        val state = IMCallViewState(peer = "4820571639")
+        assertEquals("明子", resolvedTitle(resolver(mapOf("4820571639" to "明子")), state))
+        assertEquals("4820571639", resolvedTitle(resolver(emptyMap()), state))
+        assertEquals("4820571639", resolvedTitle(null, state))
+    }
+
+    @Test
+    fun `群通话与会议标题与宿主无关`() {
+        val r = resolver(mapOf("4820571639" to "明子"))
+        assertEquals("群通话 · 1 人", resolvedTitle(r, IMCallViewState(peer = "4820571639", isGroup = true)))
+        assertEquals("会议 r1", resolvedTitle(r, IMCallViewState(peer = "4820571639", isMeeting = true, roomId = "r1")))
+    }
 }

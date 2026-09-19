@@ -3,6 +3,7 @@ package com.imrtc.uikit
 import android.graphics.Outline
 import android.view.ViewOutlineProvider
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.content.Context
 import android.view.Gravity
@@ -51,7 +52,9 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
         avatar.setTypeface(null, android.graphics.Typeface.BOLD)
         avatar.setTextColor(IMKitTheme.primaryText)
         avatar.gravity = Gravity.CENTER
-        addView(avatar, LayoutParams(dp(38), dp(38)))
+        // 头像与图**必须叠在同一格里**：直接加进水平排布会变成左右并排两个头像。
+        val avatarBox = FrameLayout(context)
+        avatarBox.addView(avatar, FrameLayout.LayoutParams(dp(38), dp(38)))
 
         avatarPhoto.scaleType = ImageView.ScaleType.CENTER_CROP
         avatarPhoto.visibility = GONE
@@ -63,7 +66,8 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
             }
         }
         // 加在 avatar 之后，层级才在它上面。
-        addView(avatarPhoto, LayoutParams(dp(38), dp(38)))
+        avatarBox.addView(avatarPhoto, FrameLayout.LayoutParams(dp(38), dp(38)))
+        addView(avatarBox, LayoutParams(dp(38), dp(38)))
 
         title.textSize = 16f
         title.setTypeface(null, android.graphics.Typeface.BOLD)

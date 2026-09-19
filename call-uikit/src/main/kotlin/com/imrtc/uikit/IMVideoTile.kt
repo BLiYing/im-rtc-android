@@ -259,7 +259,8 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
         }
         // 有图就盖上去（居中裁切 + 圆形裁剪都由 avatarPhoto 负责）；没有就露出下面的色块。
         avatarPhoto.setImageDrawable(photo)
-        avatarPhoto.visibility = if (photo == null) GONE else VISIBLE
+        // 有画面时连头像图一起收起：只收色块会让宿主给的头像一直盖在视频正中。
+        avatarPhoto.visibility = if (photo == null || hasVideo) GONE else VISIBLE
         // 没画面时露出头像。**用 visibility 不改层级**：层级一动，媒体层挂着的渲染器会跟着重来。
         avatar.visibility = if (hasVideo) GONE else VISIBLE
         videoHost.visibility = if (hasVideo) VISIBLE else INVISIBLE
