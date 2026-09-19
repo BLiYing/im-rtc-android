@@ -98,7 +98,7 @@ class NetworkChangeReconnectTest {
         connection.onNetworkChanged()
         assertEquals("第二次紧跟着来，不许当场再连", afterFirst, transport.connectCount)
 
-        scheduler.advance(IMReconnectTimer.NETWORK_RECONNECT_MIN_GAP_MS - 1)
+        scheduler.advance(IMReconnectTimer.IMMEDIATE_RECONNECT_MIN_GAP_MS - 1)
         assertEquals(afterFirst, transport.connectCount)
         scheduler.advance(1)
         assertEquals("满 2 秒该连", afterFirst + 1, transport.connectCount)

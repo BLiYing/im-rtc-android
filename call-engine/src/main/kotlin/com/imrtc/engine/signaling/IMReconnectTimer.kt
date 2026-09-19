@@ -13,8 +13,11 @@ import com.imrtc.engine.log.IMRTCLog
  * - [reconnectNow]：回前台，正等着的那次不等了，退避归零立刻开。
  * - [reconnectForNetwork]：系统默认网络换了（2026-09-18 20:45 真机 OPPO：Wi-Fi 重连换 IP，
  *   退避正在 30 秒那一档空等，服务端的 30 秒恢复窗口先到期，通话被结束）。
- *   退避归零立刻开，但两次之间至少隔 [NETWORK_RECONNECT_MIN_GAP_MS]——网络来回跳时
- *   不刷出重连风暴。
+ *   退避归零立刻开。
+ *
+ * 后两种「立刻开」**共用一道间隔**：两次之间至少隔 [IMMEDIATE_RECONNECT_MIN_GAP_MS]——
+ * 网络来回跳、或连着切前后台时不刷出重连风暴。回前台原先不走这道闸（iOS / Web / 桌面一直走），
+ * 2026-09-18 评审补上。
  *
  * [networkChangePending]：网络变化那一刻正在连、或探测判定旧连接已死要断，
  * 这一次的失败**不走退避**，由 [schedule] 转成 [reconnectForNetwork]。
@@ -26,7 +29,7 @@ internal class IMReconnectTimer(
 
     private val backoff = IMBackoff()
     private var timer: IMScheduler.Cancellable? = null
-    private var lastNetworkReconnectMs = Long.MIN_VALUE / 2
+    private var lastImmediateReconnectMs = Long.MIN_VALUE / 2
 
     /** 见类注释。连上（握手成功）、`start`、`stop` 时由调用方清掉。 */
     var networkChangePending = false
@@ -60,21 +63,23 @@ internal class IMReconnectTimer(
     /** 回前台：正等着的那次不等了。没在等就什么都不做。 */
     fun reconnectNow(rule: String) {
         if (timer == null) return
-        cancel()
-        backoff.reset()
-        IMRTCLog.i("signal", "0ms 后重连（attempt=${backoff.attempts}，规则=$rule）")
-        open()
+        reconnectImmediately(rule)
     }
 
-    /** 网络变化：清零退避、立刻开；离上一次不足 [NETWORK_RECONNECT_MIN_GAP_MS] 就补足间隔。 */
+    /** 网络变化：清零退避、立刻开。 */
     fun reconnectForNetwork() {
         networkChangePending = false
+        reconnectImmediately("网络变化立即重连")
+    }
+
+    /** 清零退避、立刻开；离上一次「立刻开」不足 [IMMEDIATE_RECONNECT_MIN_GAP_MS] 就补足间隔。 */
+    private fun reconnectImmediately(rule: String) {
         cancel()
         backoff.reset()
-        val wait = (lastNetworkReconnectMs + NETWORK_RECONNECT_MIN_GAP_MS - scheduler.nowMs()).coerceAtLeast(0L)
-        IMRTCLog.i("signal", "${wait}ms 后重连（attempt=${backoff.attempts}，规则=网络变化立即重连）")
+        val wait = (lastImmediateReconnectMs + IMMEDIATE_RECONNECT_MIN_GAP_MS - scheduler.nowMs()).coerceAtLeast(0L)
+        IMRTCLog.i("signal", "${wait}ms 后重连（attempt=${backoff.attempts}，规则=$rule）")
         val go = {
-            lastNetworkReconnectMs = scheduler.nowMs()
+            lastImmediateReconnectMs = scheduler.nowMs()
             open()
         }
         if (wait == 0L) go() else arm(wait, go)
@@ -88,7 +93,7 @@ internal class IMReconnectTimer(
     }
 
     companion object {
-        /** 因网络变化立刻重连，两次之间至少隔这么久。 */
-        const val NETWORK_RECONNECT_MIN_GAP_MS = 2_000L
+        /** 回前台 / 网络变化「立刻重连」，两次之间至少隔这么久（与 iOS / Web / 桌面同值）。 */
+        const val IMMEDIATE_RECONNECT_MIN_GAP_MS = 2_000L
     }
 }

@@ -632,6 +632,26 @@ class SignalConnectionTest {
     }
 
     @Test
+    fun `连着切前后台：两次回前台重连之间至少隔2秒`() {
+        connection.setForeground(false)
+        connection.start(config, "tk-1")
+        transport.failure(RuntimeException("no network"))
+        connection.setForeground(true)
+        val afterFirst = transport.connectCount
+
+        // 这一次又没连上，退避排了下一次；紧接着又切了一轮前后台。
+        transport.failure(RuntimeException("no network"))
+        connection.setForeground(false)
+        connection.setForeground(true)
+        assertEquals("紧跟着的第二次回前台不许当场再连", afterFirst, transport.connectCount)
+
+        scheduler.advance(IMReconnectTimer.IMMEDIATE_RECONNECT_MIN_GAP_MS - 1)
+        assertEquals(afterFirst, transport.connectCount)
+        scheduler.advance(1)
+        assertEquals("满 2 秒该连", afterFirst + 1, transport.connectCount)
+    }
+
+    @Test
     fun `前台运行中的通话被切到后台：照样按后台节奏走（前台服务托着通话不影响这条判定）`() {
         // 对应任务规则第 6 条的确认项：通话中按 Home 键、App 本身进后台（即使前台服务
         // 还在跑），IMSignalConnection 这一层只看 setForeground 喂的信号，不知道也不
