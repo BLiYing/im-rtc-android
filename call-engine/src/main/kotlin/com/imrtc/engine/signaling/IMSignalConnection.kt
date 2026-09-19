@@ -361,7 +361,7 @@ internal class IMSignalConnection(
     private fun closeAndReconnect(code: Int, reason: String) {
         // **必须是 1001，不能是 1000**：协议里 1000 是 logout，服务端收到就当场结束会话、移出房间，
         // 随后的重连只能「恢复失败，开新会话」，心跳超时 / 网络变化判死那两条路上的通话必死
-        // （2026-09-19 真机）。这里是「这条连接死了、马上回来」，iOS / Web / 桌面一直用 1001。
+        // （2026-09-19 真机）。这里是「这条连接死了、马上回来」，iOS / 桌面一直用 1001（浏览器不许发 1001，Web 不带码关）。
         transport.close(IMCloseCode.GOING_AWAY.code, reason)
         // 就地收场，并把这一代闩上——transport 随后一定还会回一次 onClosed/onFailure，
         // 那一条必须被 [handleClosed] 的代际判断挡掉（见 [generation]）。
