@@ -13,16 +13,13 @@ internal object IMJoinCallState {
      * 已经在一场里时 Engine 只会本地回一个 2005、不会有 `onCallEnd`；而加入流程第一步就把界面切成
      * 「接通中…」——放行的话，正在进行的那通电话的界面被盖掉、再也收不回来（2026-09-15 代码审查，三端同一个坑）。
      */
-    fun allowedFrom(phase: IMCallViewState.Phase): Boolean =
-        phase == IMCallViewState.Phase.IDLE || phase == IMCallViewState.Phase.ENDED
+    fun allowedFrom(phase: IMCallViewState.Phase): Boolean = IMBusyGuard.allows(phase)
 
     /** [IMCallKit.joinCall] 的实现：守门 → 进「接通中…」→ 麦克风权限门 → 发 `call.join`。 */
     fun start(callId: String) {
         val instance = IMCallKit.engine ?: return
-        if (!allowedFrom(IMCallKit.state.phase)) {
-            IMCallKit.hint("正在通话中，无法加入")
-            return
-        }
+        // Toast 而不是 hint：通话收成小窗时 hint 看不见（见 [IMBusyGuard]）。
+        if (IMBusyGuard.blocks("正在通话中，无法加入")) return
         IMCallKit.update(IMCallViewReducer.joining(IMCallKit.state, callId))
         // 与接听同一道权限门，但只要麦克风：加入之前不知道这通是不是视频，摄像头等用户在通话里再开。
         IMCallKit.ensurePermissions(IMPermissionGate.devicesFor("audio", withCamera = false)) { outcome ->

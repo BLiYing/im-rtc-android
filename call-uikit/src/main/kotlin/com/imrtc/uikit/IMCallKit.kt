@@ -29,7 +29,7 @@ object IMCallKit {
 
     @Volatile
     internal var engine: IMCallEngine? = null
-    private var appContext: Context? = null
+    internal var appContext: Context? = null
 
     /** Kit 的可配项。宿主可以随时改，下一次形态切换就读到新值。 */
     @JvmStatic
@@ -165,7 +165,7 @@ object IMCallKit {
         userData: String,
         dispatch: (IMCallEngine) -> Unit,
     ) {
-        val instance = engine ?: return
+        val instance = IMBusyGuard.freeEngine() ?: return
         update(IMCallViewReducer.outgoing(state, calleeIds, mediaType, isGroup, chatGroupId, userData))
         ensurePermissions(IMPermissionGate.devicesForPlacing(mediaType, isGroup)) { outcome ->
             when (outcome) {
@@ -201,7 +201,7 @@ object IMCallKit {
     /** 进会议房（不走振铃）。同样先过权限门。 */
     @JvmStatic
     fun joinMeeting(roomId: String, roomToken: String) {
-        val instance = engine ?: return
+        val instance = IMBusyGuard.freeEngine() ?: return
         ensurePermissions(IMPermissionGate.devicesFor("video", withCamera = true)) { outcome ->
             if (outcome == IMPermissionGate.Outcome.MIC_BLOCKED || outcome == IMPermissionGate.Outcome.CANCELLED) return@ensurePermissions
             update(IMCallViewReducer.meeting(state, roomId))
