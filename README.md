@@ -102,6 +102,24 @@ private fun deviceId(context: Context): String {
 - **别拿 `Build.MODEL` 本身当 `device_id`**：同一账号下两台同型号手机会撞号，
   症状同上。上面那段加了随机后缀就是为了这个。
 
+## 没有后台时联调
+
+宿主还没有后端、想先把通话跑通？可以用 server 管理员发的**调试密钥**（`kid` 以 `dbg-` 开头）在本机自己签接入票：
+
+```kotlin
+// 只在 debug 构建里调用；库拿不到宿主的 BuildConfig，所以由宿主自己包一层
+if (BuildConfig.DEBUG) {
+    val token = IMDebugTokenGenerator.generateDebugToken(
+        appId = "10000001", keyId = "dbg-1", secret = "<调试密钥>", uid = "alice",
+    )
+}
+```
+
+- **仅联调用。上线必须换成宿主后端调 `POST /v1/tokens` 换票**——secret 进了客户端包就等于公开。
+- 每次调用会打一条 WARN 日志（走 `IMRTCLog`，装了 sink 才看得到）。
+- 入参不合规（uid 空 / 含空白 / 超 64 字节，appId 或 secret 为空，keyId 不以 `dbg-` 开头）抛 `IllegalArgumentException`；`ttlSec` 缺省 = 12 小时，钳到 60 到 2592000 秒（30 天）。
+- 规则见 server `docs/design/DEBUG_KEY_DESIGN.md` §4，一致性向量 `docs/conformance/debug_token.json`。
+
 ## 为什么是 Kotlin 独立实现，而不是共享桌面端的 C++ 核心
 
 **2026-09-05 拍板。** Android 官方 libwebrtc 绑定本来就是 Java（`org.webrtc`）：
