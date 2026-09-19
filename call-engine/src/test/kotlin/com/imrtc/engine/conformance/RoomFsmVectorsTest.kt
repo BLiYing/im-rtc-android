@@ -161,7 +161,9 @@ class RoomFsmVectorsTest {
             val type = recv.optString("type") ?: error("$where 的 recv 缺 type")
             return IMMachineInput.Recv(type, recv.optObj("data")?.fields ?: emptyMap())
         }
-        step.optString("internal")?.let { return IMMachineInput.Internal(it) }
+        // args 可选（`publish_failed` 的 cid、`publish_deferred` 的整条 room.publish data），
+        // 缺省空对象——对齐 iOS `FSMVector.swift` 同一处改动。
+        step.optString("internal")?.let { return IMMachineInput.Internal(it, step.optObj("args")?.fields ?: emptyMap()) }
         error("$where：这一步既没有 act 也没有 recv 或 internal")
     }
 

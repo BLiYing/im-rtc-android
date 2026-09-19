@@ -187,7 +187,8 @@ internal object IMRoomMachine {
                 }
 
             /*
-             `room.publish` 被拒（或没送到）：把那条 `publishing` 摘掉（静默失败审计 §A）。
+             `room.publish` 被服务端拒绝：把那条 `publishing` 摘掉（静默失败审计 §A）。
+             没送到（超时 / 断线 / 未登录）不走这里，走 `publish_deferred`（见 [deferPublish]）。
 
              不摘的话它永远停在 `publishing`：`publish.ok` 不会来，pub offer 永远产不出，
              对方全程听不见看不见。**通话里走不到这里**——`IMCallEngine.onRequestFailed`
@@ -195,6 +196,26 @@ internal object IMRoomMachine {
              没有通话的会议房。错误本身在 `onRequestFailed` 里已经抛过一次，这里不重复抛。
             */
             "publish_failed" -> dropFailedPublish(ctx, Wire.str(args, "cid"))
+
+            /*
+             `room.publish` **没等到应答**（2003 network_unreachable / 2004 signaling_timeout /
+             2007 not_logged_in）时把这一路挂起来等重连，而不是当成被拒丢掉。
+
+             与 `publish_failed` 的分别只有一条，但这条是根本的：**服务端拒了**是个答复，
+             重试救不回来（房间没了、重复发布），该收场；**超时/断线**根本不是答复，
+             它只说明「这一问没能送到」，而连接回来之后同一问多半就成了。
+
+             2026-09-18 真机撞的正是后者：`room.publish` 超时 → 整通电话被本端判成
+             `reason=error` 收场，而 9 秒后连接就回来了、会话也在恢复窗口内 resume 成功——
+             本来能接着打的一通，被自己判了死刑。**不分通话还是会议房**：`IMRequestFailures`
+             那张表对这三个码不看 `ctx.call.state`，一律发这一条。
+
+             摘掉 `publishing` 之后把同一个意图塞回 `buffered`：[resume] 回到 JOINED 时
+             [replayBuffered] 会原路重走一遍（**走 reduceAct，不是补发旧帧**，状态与帧
+             永远一致）。重连一直不成功的话，连接层的恢复窗口倒计时照样会把通话收场，
+             这里只是不抢在它前面下手。
+            */
+            "publish_deferred" -> deferPublish(ctx, args)
 
             /*
              `room.subscribe` 被拒：把那条 `subscribing` 连同层记账一起摘掉。
@@ -220,6 +241,25 @@ internal object IMRoomMachine {
     private fun dropFailedPublish(ctx: IMRoomContext, cid: String): IMMachineOutput<IMRoomContext> {
         if (ctx.publish[cid] != IMPublishState.PUBLISHING) return out(ctx)
         return out(ctx.copy(publish = ctx.publish - cid))
+    }
+
+    /**
+     * `publish_deferred`：摘掉 `publishing`，把同一个发布意图（`args` 原样，即那条
+     * `room.publish` 帧的 data：cid/kind/source/simulcast）追加进 `buffered`。
+     *
+     * **只认 `publishing`**：已经 `published`、正在 `unpublishing`，或这个 cid 根本不在表里
+     * （迟到的超时——比如重连已经把它顶掉重发过一轮），什么都不做——不能把一条已经成功的
+     * 发布摘掉，也不能把它排进重放队列，否则恢复后会重复发布，被服务端拒成 1302。
+     */
+    private fun deferPublish(ctx: IMRoomContext, args: Map<String, IMJson>): IMMachineOutput<IMRoomContext> {
+        val cid = Wire.str(args, "cid")
+        if (ctx.publish[cid] != IMPublishState.PUBLISHING) return out(ctx)
+        return out(
+            ctx.copy(
+                publish = ctx.publish - cid,
+                buffered = ctx.buffered + IMBufferedIntent("publish", args),
+            ),
+        )
     }
 
     /**

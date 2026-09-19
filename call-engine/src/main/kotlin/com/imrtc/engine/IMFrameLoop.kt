@@ -221,6 +221,7 @@ internal class IMFrameLoop(
         IMRequestFailures.handle(
             ctx,
             frame,
+            code,
             input = { input(it) },
             forceEnd = { reason -> forceEndSync(reason) },
             snapshot = { ctx },

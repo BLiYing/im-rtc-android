@@ -1,6 +1,7 @@
 package com.imrtc.engine
 
 import com.imrtc.engine.media.IMMediaAdapter
+import com.imrtc.engine.protocol.IMEnvelope
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.signaling.FakeScheduler
@@ -457,12 +458,26 @@ class EngineLoopTest {
      * **重连恢复不是新进房**。`resumed=true` 时房间机把 reconnecting 推回 joined，
      * 若把它也当成刚进房，每恢复一次就重复发一整套 audio+video——
      * 多两条 `room.publish`，真机上还会在旧 capturer 没停的情况下再开一个摄像头采集。
+     *
+     * **这里验的是已经发布成功的 track**（两条 `room.publish` 都先落地 `.ok`）——
+     * 服务端那边的发布关系还在，恢复不该再补。**没等到应答的那一支是另一件事**
+     * （挂起 → 恢复后原样补发，不算重复），见下面两条「没等到应答」的测试。
      */
     @Test
-    fun `重连恢复不该重复发布本端 Track`() {
+    fun `重连恢复不该重复发布已经成功的本端 Track`() {
         loginAndConnect()
         joinConferenceRoom()
         assertEquals(listOf("audio", "video"), media.published)
+        for (req in transport.sent.filter { it.type == IMFrameType.ROOM_PUBLISH }) {
+            transport.deliver(
+                req.type + IMEnvelope.OK_SUFFIX,
+                req.reqId,
+                mapOf(
+                    "cid" to (req.data["cid"] ?: IMJson.Str("")),
+                    "track_id" to IMJson.Str("t-${req.data.text("kind")}"),
+                ),
+            )
+        }
         val publishesAfterJoin = transport.countOf(IMFrameType.ROOM_PUBLISH)
 
         transport.closed(1006, "network")
@@ -475,7 +490,7 @@ class EngineLoopTest {
 
         assertEquals("恢复不是新进房，不该再发一套", listOf("audio", "video"), media.published)
         assertEquals(
-            "恢复的前提就是服务端那边的发布关系还在，一条 room.publish 都不该补",
+            "恢复的前提就是服务端那边的发布关系还在，已经成功的发布不该再补一条",
             publishesAfterJoin,
             transport.countOf(IMFrameType.ROOM_PUBLISH),
         )
@@ -770,6 +785,94 @@ class EngineLoopTest {
         engine.leaveRoom()
         assertTrue("还在房里，leave 应该正常发出", transport.lastOf(IMFrameType.ROOM_LEAVE) != null)
         assertEquals("不该多出本地拒绝的 2005", errorsBefore, listener.errors.size)
+    }
+
+    /*
+     2026-09-18 真机撞车：`room.publish` 请求超时不是服务端的答复，整通电话却被上面这张表
+     直接判成 `reason=error` 收场，而 **9 秒后连接就在恢复窗口内 resume 成功了**——本来能
+     接着打的一通被自己判了死刑。修复后：`IMRequestFailures` 对「没等到应答」的三个码
+     （2003/2004/2007，这里用 `transport.closed` 触发的正是 2003 network_unreachable）
+     一律发 `publish_deferred`，不看 `ctx.call.state`；`RoomStateMachine` 把那条 publishing
+     摘掉、塞回 buffered；恢复（resumed=true）后 `replayBuffered` 原样补发。
+     对照 iOS `ActionResultTests.assertPublishReplayedAfterResume`。
+
+     **在修复之前跑这两条会失败**：通话那条会看到 `listener.callEnds` 多出一条 `error:0`
+     （被当场 forceEnd 了）；会议房那条不会收场，但补发的 `room.publish` 永远不会出现——
+     `publish_failed` 把那条 `publishing` 直接摘掉、不进 `buffered`，恢复后无人重放。
+    */
+
+    @Test
+    fun `通话中 room publish 没等到应答：挂起等重连，恢复后原样补发，通话不收场`() {
+        loginAndConnect()
+        engine.call(listOf("bob"), "video")
+        transport.replyOk(
+            IMFrameType.CALL_INVITE,
+            mapOf("call_id" to IMJson.Str("call-1"), "room_id" to IMJson.Str("r-1")),
+        )
+        transport.deliver(
+            IMFrameType.CALL_CONNECTED,
+            "",
+            mapOf(
+                "call_id" to IMJson.Str("call-1"),
+                "room_id" to IMJson.Str("r-1"),
+                "room_token" to IMJson.Str("tk-room"),
+                "media_type" to IMJson.Str("video"),
+                "connected_at_ms" to IMJson.Num(1_000),
+                "accepted_by" to IMJson.Str("bob"),
+            ),
+        )
+        transport.replyOk(
+            IMFrameType.ROOM_JOIN,
+            mapOf("room_id" to IMJson.Str("r-1"), "participant_id" to IMJson.Str("p-1")),
+        )
+        val publishesBeforeDrop = transport.countOf(IMFrameType.ROOM_PUBLISH)
+        assertEquals("进房自动发布 audio+video，都还没等到 ok", 2, publishesBeforeDrop)
+
+        // 这两条 room.publish 还没等到应答，连接先断了：failAll 打的是 2003 network_unreachable，
+        // 不是服务端的拒绝，不该当场判死这通电话。
+        transport.closed(1006, "network")
+        assertEquals("没等到应答不算被拒，不该判死这通电话", emptyList<String>(), listener.callEnds)
+
+        scheduler.advance(5_000)
+        transport.open()
+        transport.replyOk(
+            IMFrameType.HELLO,
+            mapOf("session_id" to IMJson.Str("s-2"), "resumed" to IMJson.Bool(true)),
+        )
+
+        assertEquals(
+            "恢复窗口内 resume 成功，挂起的两条发布要原样补发",
+            publishesBeforeDrop * 2,
+            transport.countOf(IMFrameType.ROOM_PUBLISH),
+        )
+        assertEquals("通话没有被判死刑", emptyList<String>(), listener.callEnds)
+        assertFalse("媒体不该被停", media.stopped)
+    }
+
+    @Test
+    fun `会议房 room publish 没等到应答：挂起等重连，恢复后原样补发，房间不离开`() {
+        loginAndConnect()
+        joinConferenceRoom()
+        val publishesBeforeDrop = transport.countOf(IMFrameType.ROOM_PUBLISH)
+        assertEquals("进房自动发布 audio+video，都还没等到 ok", 2, publishesBeforeDrop)
+
+        transport.closed(1006, "network")
+        assertEquals("没等到应答不该被当成离房", emptyList<String>(), listener.roomLeaves)
+
+        scheduler.advance(5_000)
+        transport.open()
+        transport.replyOk(
+            IMFrameType.HELLO,
+            mapOf("session_id" to IMJson.Str("s-2"), "resumed" to IMJson.Bool(true)),
+        )
+
+        assertEquals(
+            "恢复窗口内 resume 成功，挂起的两条发布要原样补发",
+            publishesBeforeDrop * 2,
+            transport.countOf(IMFrameType.ROOM_PUBLISH),
+        )
+        assertEquals("没有被判成离房", emptyList<String>(), listener.roomLeaves)
+        assertFalse("媒体不该被停", media.stopped)
     }
 
     // ── 记录用的假实现 ────────────────────────────────────────────────

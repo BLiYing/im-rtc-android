@@ -45,12 +45,17 @@ internal object IMEngineMachine {
     /**
      * **只归房间机**的内部事件。
      *
-     * 前四条是帧循环把「房间帧没送到」翻译过来的回滚；最后一条是会议房翻页退订的五秒
-     * 迟滞到点（`RoomStateMachinePaging.kt`）。**不显式路由的话它们会落到通话机去，被静默丢掉**——
-     * 症状分别是「房间永远停在 joining」和「翻走的人五秒后没退订，订阅位一直占着」。
+     * 前几条是帧循环把「房间帧没送到 / 没等到应答」翻译过来的回滚；最后一条是会议房翻页退订
+     * 的五秒迟滞到点（`RoomStateMachinePaging.kt`）。**不显式路由的话它们会落到通话机去，被
+     * 静默丢掉**——症状分别是「房间永远停在 joining」和「翻走的人五秒后没退订，订阅位一直占着」。
+     *
+     * `publish_deferred`（发布没等到应答、挂起等重连）同样只归房间机——**iOS 上 2026-09-18
+     * 漏登记过一次**：帧循环发出了它、房间机也认它，唯独这张表没登记，路由落到通话机被静默
+     * 丢掉，于是整条「挂起 → 恢复后补发」在通话和会议里都从没生效过，那一路永远停在
+     * `publishing`。房间机的单测直接调 reduce，测不出这个漏登记——这里是唯一能测出来的地方。
      */
     private val ROOM_INTERNALS = setOf(
-        "join_failed", "leave_failed", "publish_failed", "subscribe_failed",
+        "join_failed", "leave_failed", "publish_failed", "publish_deferred", "subscribe_failed",
         "unsubscribe_hysteresis_elapsed",
     )
 

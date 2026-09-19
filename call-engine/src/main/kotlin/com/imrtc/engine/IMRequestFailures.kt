@@ -1,6 +1,7 @@
 package com.imrtc.engine
 
 import com.imrtc.engine.log.IMRTCLog
+import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMFrameType
 import com.imrtc.engine.protocol.IMJson
 import com.imrtc.engine.statemachine.IMCallExit
@@ -24,12 +25,22 @@ import com.imrtc.engine.statemachine.IMRoomState
  * 永远停在 `publishing`——`publish.ok` 不来，pub offer 永不产出，上行从未协商。
  * 界面显示已接通、计时器在走、按钮显示没静音，**对方全程听不见看不见，零提示**。
  * 2026-09-16 拍板（四端一致，参考 Web 的 `frameLoop.ts` `rollback` 表）：
- * 1. **通话里被拒，直接结束本端通话**（reason=error）：留在通话里只报错也不够——
- *    Kit 并不展示这类错误，而服务端会拒的几种情形（房间已不在、同一路重复发布、
- *    请求超时）重试都救不回来。走 forceEnd 是因为它不排队、不等服务端、callEnd 只抛一次。
- * 2. **没有通话（会议房）**，只摘掉那一条 `publishing`，不收场、不额外抛回调、不离房。
+ * 1. **通话里被服务端拒了，直接结束本端通话**（reason=error）：留在通话里只报错也不够——
+ *    Kit 并不展示这类错误，而服务端会拒的几种情形（房间已不在、同一路重复发布）
+ *    重试都救不回来。走 forceEnd 是因为它不排队、不等服务端、callEnd 只抛一次。
+ * 2. **没有通话（会议房）且被服务端拒了**，只摘掉那一条 `publishing`，不收场、不额外抛回调、不离房。
  * `room.subscribe` 被拒**从不收场**，只摘 `subscribing` 那条记账——最常见的 1301
  * （`track_not_found`）是订阅与对方 `track_unpublished` 赛跑输了，通话本身没事。
+ *
+ * **`room.publish` 没等到应答不算被拒（2026-09-18 改，四端一致）。** 原先这张表把「服务端
+ * 真拒了」与「这一问根本没送到」混为一谈，真机打了脸：18:18:39 `room.publish` 请求超时，
+ * 整通电话被本端判成 `reason=error` 收场，而 **9 秒后连接就回来了、会话也在恢复窗口内
+ * resume 成功**——本来能接着打的一通被自己判了死刑。[UNANSWERED_CODES] 那三个码
+ * （2003 network_unreachable / 2004 signaling_timeout / 2007 not_logged_in）都只说明
+ * 本端此刻与服务端不通，**不是服务端的答复**；连接回来之后同一问多半就成了。**不分通话
+ * 还是会议房**，一律发 internal `publish_deferred`，把这一路挂起来等重连
+ * （见 `RoomStateMachine.kt` 的 `deferPublish`），恢复之后原样补发。真连不回来的话
+ * 连接层的恢复窗口倒计时照样会把通话收场，不需要这里抢着下手。
  *
  * **退出类被拒也要本地收场**（2.0.0，ACTION_RESULT_DESIGN D2）：用户按的是「结束」，服务端拒了
  * （最常见的是通话已经结束 1402 / 1401）、超时或根本没发出去，都不该让界面停在通话里。
@@ -41,7 +52,20 @@ import com.imrtc.engine.statemachine.IMRoomState
 internal object IMRequestFailures {
 
     /**
+     * 「这一问没能送到 / 没等到回话」的那几个码——**不是服务端的答复**。
+     *
+     * 与它们相对的是服务端真回了一个 `err`（1xxx）：那才叫被拒，重试救不回来。
+     * 这三个都只说明本端与服务端此刻不通，而连接回来之后同一问多半就成了，
+     * 所以 `room.publish` 走 `publish_deferred` 挂起等重连，而不是把通话判死刑。
+     */
+    private val UNANSWERED_CODES = setOf(
+        IMErrorCode.NETWORK_UNREACHABLE, IMErrorCode.SIGNALING_TIMEOUT, IMErrorCode.NOT_LOGGED_IN,
+    )
+
+    /**
      * @param ctx 状态机此刻的快照，只用来判断「有没有通话」，不在这里改。
+     * @param frame 那条被拒 / 没送到的请求帧。
+     * @param code 请求失败的错误码；`null` 是「连认都认不出的码」，一律按被拒处理。
      * @param input 门面唯一的状态机入口（`IMCallEngine.input`）。
      * @param forceEnd 门面的强制收场（`IMForceEnd.run`），带上覆盖的结束原因。
      * @param snapshot 状态机此刻的快照（回滚之后再看一眼用）。
@@ -50,6 +74,7 @@ internal object IMRequestFailures {
     fun handle(
         ctx: IMEngineContext,
         frame: IMOutgoingFrame,
+        code: IMErrorCode?,
         input: (IMMachineInput) -> Unit,
         forceEnd: (IMCallEndReason) -> Unit,
         snapshot: () -> IMEngineContext,
@@ -70,7 +95,11 @@ internal object IMRequestFailures {
             }
             in IMCallExit.allFrameTypes -> endLocally()
             IMFrameType.ROOM_PUBLISH -> {
-                if (ctx.call.state != IMCallState.IDLE) {
+                if (code != null && code in UNANSWERED_CODES) {
+                    // 没等到应答：挂起等重连，通话与会议房同一条路，不分。
+                    IMRTCLog.w("engine", "发布没等到应答，挂起等重连 call_id=${ctx.call.callId} code=${code.code}")
+                    input(IMMachineInput.Internal("publish_deferred", frame.data))
+                } else if (ctx.call.state != IMCallState.IDLE) {
                     IMRTCLog.w("engine", "发布被拒，结束本端通话 call_id=${ctx.call.callId}")
                     forceEnd(IMCallEndReason.ERROR)
                 } else {
