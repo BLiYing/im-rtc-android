@@ -44,6 +44,30 @@ internal fun IMWebRTCAdapter.bindRemoteTracks() {
     }
 }
 
+/**
+ * retiredTrackIds 算出这次认领之后**已经下线**的 track_id：上一份归属表里有、这一份没有。
+ *
+ * 还没认领过的轨道（`onRemoteTrack` 先到、归属后到）不在上一份表里，不会被误摘。
+ */
+internal fun retiredTrackIds(before: Map<String, String>, after: Map<String, String>): Set<String> =
+    before.keys - after.keys
+
+/**
+ * retireRemoteTracks 把下线的轨道摘干净：sink、挂载记账、轨道本身都不留。
+ *
+ * 不摘的话它会一直留到整通挂断：对方掉线重连或重推拿到新 track_id 时（uid 不变），
+ * [bindRemoteTracks] 遍历到旧那条仍能按旧归属找到同一个渲染器，新旧两条轨道同时往里推帧。
+ */
+internal fun IMWebRTCAdapter.retireRemoteTracks(trackIds: Set<String>) {
+    for (trackId in trackIds) {
+        val renderer = attached.remove(trackId)
+        val track = attachedTracks.remove(trackId) ?: remoteVideo[trackId]
+        if (renderer != null) track?.safeRemoveSink(renderer)
+        remoteVideo.remove(trackId)
+        IMRTCLog.i("media", "远端轨道已下线：track_id=$trackId")
+    }
+}
+
 /** 卸掉某个 uid 的渲染器：先把挂在它上面的轨道摘干净，再 release（反了会崩在 native 层）。 */
 internal fun IMWebRTCAdapter.detachRenderer(uid: String) {
     val previous = renderers.remove(uid) ?: return

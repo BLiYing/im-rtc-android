@@ -156,7 +156,12 @@ class IMWebRTCAdapter @JvmOverloads constructor(
      */
     internal val remoteVideo = LinkedHashMap<String, VideoTrack>()
 
-    /** 归属表：track_id → uid，由信令层通过 [claimRemoteTracks] 灌进来。 */
+    /**
+     * 归属表：track_id → uid，由信令层通过 [claimRemoteTracks] 灌进来。
+     *
+     * **每次整表替换，不是合并**：Engine 给的就是房里此刻的全部轨道。原先 `putAll` 只加不删，
+     * 同一个人重推换了 track_id 之后，旧 id 仍指着他，新旧两条轨道挂到同一个渲染器上。
+     */
     internal val trackOwners = LinkedHashMap<String, String>()
 
     /** 已经挂上去的：track_id → 渲染器。摘 sink 要拿它，重复挂也靠它判。 */
@@ -332,6 +337,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     override fun awaitFirstVideoFrame(uid: String) = onMain { firstFrames.arm(uid, renderers[uid]) }
 
     override fun claimRemoteTracks(owners: Map<String, String>) = onMain {
+        retireRemoteTracks(retiredTrackIds(trackOwners, owners))
+        trackOwners.clear()
         trackOwners.putAll(owners)
         bindRemoteTracks()
     }
