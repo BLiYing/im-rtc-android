@@ -127,9 +127,15 @@ internal object IMGrid {
      */
     fun hiddenCountText(hidden: Int): String = if (hidden > 0) "还有 $hidden 人未显示" else ""
 
-    /** 悬浮球上的字：接通了走时长，拨出中 / 接通中是「…」（与 iOS 同）——`00:00` 看着像已经接通。 */
-    fun bubbleText(state: IMCallViewState): String =
-        if (state.phase == IMCallViewState.Phase.CONNECTED) formatDuration(state.durationSec) else "…"
+    /**
+     * 悬浮球上的字：接通了走时长，拨出中 / 接通中是「…」（与 iOS 同）——`00:00` 看着像已经接通。
+     * 球只有 56dp 宽，一小时以上只放时分（`1h05m`，同为 5 个字符），不放秒。
+     */
+    fun bubbleText(state: IMCallViewState): String {
+        if (state.phase != IMCallViewState.Phase.CONNECTED) return "…"
+        val sec = state.durationSec
+        return if (sec >= 3600) "%dh%02dm".format(sec / 3600, (sec % 3600) / 60) else formatDuration(sec)
+    }
 
     /** 通话时长格式化：一小时以内 `mm:ss`，超过就 `h:mm:ss`。 */
     fun formatDuration(seconds: Long): String {

@@ -214,6 +214,9 @@ class CallViewStateTest {
         assertTrue(IMCallViewReducer.minimize(connected).isMinimized)
         assertFalse(IMCallViewReducer.expand(IMCallViewReducer.minimize(connected)).isMinimized)
         assertEquals("00:00", IMGrid.bubbleText(connected))
+        // 一小时以上小窗只放时分，不放秒。
+        assertEquals("1h05m", IMGrid.bubbleText(connected.copy(durationSec = 3930)))
+        assertEquals("59:59", IMGrid.bubbleText(connected.copy(durationSec = 3599)))
 
         // 拨出中收起后被拒：退出小窗，结束原因要看得见。
         val rejected = IMCallViewReducer.ended(IMCallViewReducer.minimize(outgoing), "rejected")

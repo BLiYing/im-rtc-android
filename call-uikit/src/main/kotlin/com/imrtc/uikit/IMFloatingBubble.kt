@@ -70,10 +70,17 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
             orientation = android.widget.LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             addView(icon, android.widget.LinearLayout.LayoutParams(dp(18), dp(18)))
-            duration.textSize = 11f
+            duration.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, VOICE_TEXT_DP)
+            duration.maxLines = 1
+            duration.includeFontPadding = false
             duration.gravity = Gravity.CENTER
             duration.setTextColor(IMKitTheme.primaryText)
-            addView(duration)
+            /*
+             **必须显式 WRAP_CONTENT。** 不给参数时垂直 LinearLayout 默认给子 view 宽度 MATCH_PARENT，
+             而 match_parent 的子 view 不参与父容器的宽度测量——列宽只由 18dp 的图标决定，
+             `00:00` 被挤在 18dp 里折行，配上 maxLines=1 就只剩「00:」（2026-09-19 真机）。
+            */
+            addView(duration, android.widget.LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         }
         body.addView(column, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
 
@@ -92,6 +99,22 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
     fun render(state: IMCallViewState) {
         icon.setImageResource((if (state.mediaType == "video") IMKitIcon.VIDEO else IMKitIcon.PHONE).resId)
         duration.text = IMGrid.bubbleText(state)
+        fitDuration()
+    }
+
+    /**
+     * 时长字号：**固定 dp、不跟系统字号走**，超过一小时（`h:mm:ss`）再缩一档。
+     *
+     * 球是固定 56dp 的圆、又被 `clipToOutline` 裁过，字放大或变长都会让两头被圆弧切掉
+     * （「时间没显示全」）。用 sp 时系统字号调到 1.3 倍就切；`1:00:00` 比 `00:00` 宽近一半，本来就贴边。
+     */
+    private fun fitDuration() {
+        val long = (duration.text?.length ?: 0) > 5
+        val size = when {
+            isVideo -> if (long) VIDEO_TEXT_LONG_DP else VIDEO_TEXT_DP
+            else -> if (long) VOICE_TEXT_LONG_DP else VOICE_TEXT_DP
+        }
+        duration.setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, size)
     }
 
     /**
@@ -121,7 +144,7 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
             else LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER)
             duration.background = if (video) IMKitTheme.roundedDrawable(IMKitTheme.scrim, dp(5)) else null
             duration.setPadding(if (video) dp(5) else 0, 0, if (video) dp(5) else 0, 0)
-            duration.textSize = if (video) 10f else 11f
+            fitDuration()
         }
         videoHost.visibility = if (video) VISIBLE else GONE
         if (view != null) {
@@ -206,6 +229,12 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
 
         /** 球体与挂断之间的间隙。 */
         private const val HANGUP_GAP_DP = 4
+
+        /** 时长字号（dp）。圆内可用宽约 46dp：`00:00` 用 11，`1:00:00` 用 8.5。 */
+        private const val VOICE_TEXT_DP = 11f
+        private const val VOICE_TEXT_LONG_DP = 8.5f
+        private const val VIDEO_TEXT_DP = 10f
+        private const val VIDEO_TEXT_LONG_DP = 9f
 
         /** 初始位置：右上角靠下一点，避开状态栏与常见的顶部导航。 */
         fun initialParams(context: Context): FrameLayout.LayoutParams {
