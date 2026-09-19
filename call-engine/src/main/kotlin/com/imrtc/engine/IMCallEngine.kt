@@ -144,6 +144,7 @@ class IMCallEngine private constructor(
                 return@post
             }
             loop.loginResult = result
+            callHistory.token = token
             connection.start(IMSignalConnection.Config(config.url, config.deviceId, config.sdk), token)
         }
 
@@ -154,6 +155,29 @@ class IMCallEngine private constructor(
      */
     val uid: String get() = connection.uid
 
+    private val callHistory = IMCallHistoryClient(config.url, dispatcher)
+
+    /**
+     * 查自己的通话记录，按发起时间倒序，**游标翻页**。
+     *
+     * @param limit 每页条数，夹在 1..200，默认 20。
+     * @param cursor 首页不传；下一页传上一页 [IMCallHistoryPage.nextCursor]。
+     *
+     * **必须已登录**（用登录那枚票），否则 `2007`；票被拒 `1101`；网络不通 `2003`。结果在主线程回来。
+     * 服务端只返回本人参与过的通话，所以没有 `uid` 参数。宿主也可以不用它，自己拿 `onCallEnd` 存。
+     */
+    fun fetchCallHistory(
+        limit: Int = IMCallHistory.DEFAULT_LIMIT,
+        cursor: Long? = null,
+        onResult: IMResultCallback<IMCallHistoryPage>,
+    ) {
+        if (destroyed) {
+            dispatcher.onMainThread { onResult.onResult(null, IMRTCError.invalidState(DESTROYED)) }
+            return
+        }
+        callHistory.fetch(limit, cursor, onResult)
+    }
+
     /**
      * 换票，对应协议 §1.5 的「4401 → 换新票再来」。
      *
@@ -163,6 +187,7 @@ class IMCallEngine private constructor(
     @JvmOverloads
     fun updateToken(token: String, expiresAtMs: Long = 0L) {
         if (destroyed) return
+        callHistory.token = token
         scheduler.post { connection.updateToken(token, expiresAtMs) }
     }
 
@@ -197,6 +222,7 @@ class IMCallEngine private constructor(
     }
 
     private fun teardown() {
+        callHistory.token = ""
         media?.stop()
         loop.reset()
         connection.stop()

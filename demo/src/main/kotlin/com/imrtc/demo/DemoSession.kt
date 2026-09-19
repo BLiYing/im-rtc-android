@@ -64,8 +64,6 @@ internal object DemoSession {
     // `Build.MODEL` 是平台类型（`String!`），个别刷机 ROM 上 `ro.product.model` 是空的。
     val deviceId: String by lazy { "android-" + sanitizeDeviceId(Build.MODEL.orEmpty()) }
 
-    var records: List<DemoRecord> = emptyList()
-        private set
     var connectionText = "未登录"
         private set
 
@@ -187,7 +185,6 @@ internal object DemoSession {
         applicationContext = context.applicationContext
         prefs = applicationContext.getSharedPreferences("im-rtc-demo", Context.MODE_PRIVATE)
         form = DemoFormPrefs(prefs)
-        records = DemoRecordStore.load(prefs)
         groupPick = prefs.getString(KEY_GROUP, "alice,carol").orEmpty()
             .split(",").map { it.trim() }.filter { it.isNotEmpty() }
         videoProfile = IMVideoProfile.PRESETS
@@ -358,26 +355,10 @@ internal object DemoSession {
         DemoLogSink.detachRemote()
     }
 
-    // ── 拨号：记下这通电话是打给谁的 ──────────────────────────────────
-
-    /** 主叫拨号时记下对方是谁——`onCallBegin` 的载荷里没有 callee。 */
-    private var pending: Meta? = null
-
-    private data class Meta(
-        val peer: String,
-        val mediaType: String,
-        val isGroup: Boolean,
-        val role: String,
-    )
+    // ── 拨号 ─────────────────────────────────────────────────────────
 
     fun placeCall(peers: List<String>, mediaType: String, isGroup: Boolean) {
         if (engine == null) return
-        pending = Meta(
-            peer = if (isGroup) "群通话 · ${peers.size + 1} 人" else peers.joinToString("、"),
-            mediaType = mediaType,
-            isGroup = isGroup,
-            role = "caller",
-        )
         // 经 Kit 拨出：它先过权限门（说明卡 → 系统框 → 被拒分支）再发 invite，
         // 拿不到麦克风就不去响别人的铃（交互稿 §01）。拨出侧的界面也由它拉起来。
         // 群通话带上一个演示用的 chatGroupId——`DemoInviteProvider` 靠它决定「添加成员」列谁
@@ -391,8 +372,7 @@ internal object DemoSession {
 
     fun joinMeeting(roomId: String, roomToken: String) {
         if (engine == null) return
-        // 会议房不产生 call，也就不会有 onCallEnd——记录页看不到它是对的。
-        pending = null
+        // 会议房不产生 call，记录页看不到它是对的。
         IMCallKit.joinMeeting(roomId, roomToken)
     }
 
@@ -406,17 +386,10 @@ internal object DemoSession {
      */
     fun joinCall(callId: String) {
         if (engine == null || callId.isEmpty()) return
-        pending = null
         IMCallKit.joinCall(callId)
     }
 
-    fun clearRecords() {
-        records = emptyList()
-        DemoRecordStore.save(prefs, records)
-        notifyChanged()
-    }
-
-    // ── 回调 → 连接态 + 通话记录 ──────────────────────────────────────
+    // ── 回调 → 连接态 ──────────────────────────────────────
 
     /**
      * 宿主的回调落点。**按登录世代造，一个 Engine 一个**。
@@ -499,53 +472,9 @@ internal object DemoSession {
             IMRTCLog.w("demo", "错误 $code $name for=$forType $message")
         }
 
-        override fun onCallReceived(
-            callId: String,
-            caller: String,
-            inviter: String,
-            calleeIds: List<String>,
-            mediaType: String,
-            isGroup: Boolean,
-            chatGroupId: String,
-            userData: String,
-        ) {
-            if (stale) return
-            pending = Meta(caller, mediaType, isGroup, "callee")
-        }
-
-        override fun onCallBegin(
-            callId: String,
-            roomId: String,
-            mediaType: String,
-            isGroup: Boolean,
-            role: String,
-            caller: String,
-            chatGroupId: String,
-            userData: String,
-        ) {
-            if (stale) return
-            // 主叫这边 onCallReceived 不会来；正常路径上 placeCall 已经填好了 pending，
-            // 但多端登录时这通电话可能是**在别的设备上发起、这台设备接进来的**（joinCall）。
-            if (pending == null) pending = Meta(caller, mediaType, isGroup, role)
-        }
-
         override fun onCallEnd(callId: String, reason: IMCallEndReason, durationSec: Long, endedBy: String) {
             if (stale) return
-            val meta = pending ?: Meta("", "audio", false, "caller")
-            records = listOf(
-                DemoRecord(
-                    callId = callId,
-                    peer = meta.peer,
-                    mediaType = meta.mediaType,
-                    isGroup = meta.isGroup,
-                    role = meta.role,
-                    reason = reason.wire,
-                    durationSec = durationSec,
-                    endedAtMs = System.currentTimeMillis(),
-                ),
-            ) + records
-            pending = null
-            DemoRecordStore.save(prefs, records)
+            // 通话记录页从服务端拉（`fetchCallHistory`），这里只通知它刷新。
             notifyChanged()
         }
     }

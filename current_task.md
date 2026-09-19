@@ -7,6 +7,8 @@
 
 ## 当前焦点
 
+- **09-19 新增 `IMCallEngine.fetchCallHistory(limit, cursor, onResult)`**（`IMCallHistory.kt`，`GET /v1/calls`，游标翻页，只返回本人，结果回主线程）：`CallHistoryTest` + `ActionResultTest` 两条新用例过、全量单测过；Demo 通话记录页改成调它（滚到底加载下一页，标题栏 ↻ 刷新），`DemoRecords.kt` 与本地拼记录已删。**未真机验**；依赖服务端 `requireBearer` 不再核对设备号（同日已修）。
+
 **2026-09-19：三处修完，真机已验（PKD130 × Chrome，`delay` + `silence` 故障注入），已推送。**
 - **判死重连关旧连接改用 1001**（`78ca689`）：心跳超时、网络变化探测判死都走 `closeAndReconnect`，一直带着 1000——协议里 1000 是 logout，服务端收到就结束会话、移出房间，随后的重连只能「恢复失败，开新会话」。
   **这两条路上的通话从 09-05 起就没恢复成功过。** 从服务端日志抓到；iOS / Web / 桌面一直是 1001（Web 实为不带码关，浏览器不许发 1001，见 `b255505`）。

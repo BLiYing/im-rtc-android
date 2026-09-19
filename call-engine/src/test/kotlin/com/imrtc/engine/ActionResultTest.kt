@@ -376,6 +376,23 @@ class ActionResultTest {
         assertEquals(2005, results.single().second?.code)
     }
 
+    // ── 通话记录：没登录 / 销毁后走结果回调，不发请求 ──────────────────
+
+    @Test
+    fun `fetchCallHistory 没登录以 2007 结束`() {
+        var error: IMRTCError? = null
+        engine.fetchCallHistory { _, e -> error = e }
+        assertEquals(2007, error?.code)
+    }
+
+    @Test
+    fun `fetchCallHistory 销毁后以 2005 结束`() {
+        engine.destroy()
+        var error: IMRTCError? = null
+        engine.fetchCallHistory { _, e -> error = e }
+        assertEquals(2005, error?.code)
+    }
+
     // ── 替身 ─────────────────────────────────────────────────────
 
     private class Recorder : IMCallEngineListener {
