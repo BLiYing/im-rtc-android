@@ -94,8 +94,12 @@ internal class FakeTransport : IMTransport {
         sent += IMEnvelope.decode(text)
     }
 
+    /** 每次 close 带的关闭码，按先后。1000 在协议里是 logout，服务端会当场结束会话。 */
+    val closeCodes = mutableListOf<Int>()
+
     override fun close(code: Int, reason: String) {
         closeCount++
+        closeCodes += code
     }
 
     // ── 测试驱动 ──────────────────────────────────────────────────────

@@ -135,6 +135,21 @@ class StaleSocketCloseTest {
         assertEquals("应该排上重连", 2, transport.connectCount)
     }
 
+    /**
+     * 判死之后自己关掉的那条 socket **不能带 1000**：协议里 1000 是 logout，服务端收到就当场结束会话、
+     * 移出房间，随后的重连只能「恢复失败，开新会话」，通话必死（2026-09-19 真机，服务端日志
+     * 「客户端主动关闭，会话已结束」）。iOS / Web / 桌面一直用 1001。
+     */
+    @Test
+    fun `心跳超时断开用 1001，不许用 1000`() {
+        connection.start(config, "tk-1")
+        handshake("s-1")
+
+        scheduler.advance(15_000L * 3)
+
+        assertEquals(listOf(IMCloseCode.GOING_AWAY.code), transport.closeCodes)
+    }
+
     /** logout 之后迟到的关闭事件同样不许再抛回调、更不许重连。 */
     @Test
     fun `logout 之后迟到的关闭事件不许再抛回调`() {
