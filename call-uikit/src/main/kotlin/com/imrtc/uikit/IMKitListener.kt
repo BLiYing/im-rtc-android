@@ -70,6 +70,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         caller: String,
         inviter: String,
         calleeIds: List<String>,
+        joinedIds: List<String>,
         mediaType: String,
         isGroup: Boolean,
         chatGroupId: String,
@@ -82,9 +83,10 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
                 state, callId, caller, others, mediaType, isGroup, chatGroupId, userData,
                 selfUid = IMCallKit.engine?.uid.orEmpty(),
                 inviter = inviter,
+                joinedIds = joinedIds.filter { it != IMCallKit.engine?.uid },
             ),
         )
-        host.onCallReceived(callId, caller, inviter, calleeIds, mediaType, isGroup, chatGroupId, userData)
+        host.onCallReceived(callId, caller, inviter, calleeIds, joinedIds, mediaType, isGroup, chatGroupId, userData)
     }
 
     /** 通话中有人打进来，服务端已经替我们回了忙线——**只提示，不动当前通话**。 */
@@ -229,7 +231,8 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         host.onFirstVideoFrame(uid, trackId)
     }
 
-    override fun onRoomJoined(roomId: String) {
+    override fun onRoomJoined(roomId: String, memberIds: List<String>) {
+        IMCallKit.update(IMCallViewReducer.roomSnapshot(state, memberIds))
         IMCallKit.update(IMCallViewReducer.connected(state))
         IMCallKit.startTimer()
         // Kit 自己拨出 / 接听时，关摄像头的意图进房之前就给过 Engine（`IMCallKit.syncCameraIntent`），视频根本没发。
@@ -245,7 +248,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         */
         IMCallKit.engine?.setSpeakerOn(state.speakerOn)
         IMCallKit.onLocalMediaStarted()
-        host.onRoomJoined(roomId)
+        host.onRoomJoined(roomId, memberIds)
     }
 
     override fun onRoomLeft(roomId: String) {

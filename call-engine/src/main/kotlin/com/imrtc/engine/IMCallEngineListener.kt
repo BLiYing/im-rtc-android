@@ -67,6 +67,9 @@ interface IMCallEngineListener {
      * `calleeIds` 是**这通电话邀了谁**（不含主叫，含自己）。群通话的界面靠它把还没接的人
      * 先摆成占位格——否则主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
      *
+     * `joinedIds` 是**此刻已经在通话里的人**（不含自己；发起人没离场就在里面）。展开页据此把他们摆成
+     * 正常格子，`calleeIds` 里不在 `joinedIds` 的才是「呼叫中…」。旧服务端不带 = 空列表，回落成只有 `caller`。
+     *
      * `caller` 恒为**这通电话的发起人**；`inviter` 是**把你加进来的那个人**。首次邀请两者相同，
      * 群通话中途 `inviteMore` 加人时 `inviter` 是发那条加人请求的人（来电界面该显示他）。
      * 旧服务端不带 `inviter` 时 Engine 已回落成 `caller`，宿主不用自己兜底。
@@ -81,6 +84,7 @@ interface IMCallEngineListener {
         caller: String,
         inviter: String,
         calleeIds: List<String>,
+        joinedIds: List<String>,
         mediaType: String,
         isGroup: Boolean,
         chatGroupId: String,
@@ -182,7 +186,11 @@ interface IMCallEngineListener {
 
     // ── 房间（会议） ──────────────────────────────────────────────────
 
-    fun onRoomJoined(roomId: String) {}
+    /**
+     * 进房成功（会议与通话都抛）。`memberIds` 是进房这一刻房里已有的人（快照，不含自己），之后进出的人走
+     * [onUserEnter] / [onUserLeave]。**响铃阶段就摆好的成员名单要拿它对账**：那段时间不在房里，别人离场收不到通知。
+     */
+    fun onRoomJoined(roomId: String, memberIds: List<String>) {}
 
     fun onRoomLeft(roomId: String) {}
 

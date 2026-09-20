@@ -82,6 +82,7 @@ final class JavaApiCheck {
                     String caller,
                     String inviter,
                     List<String> calleeIds,
+                    List<String> joinedIds,
                     String mediaType,
                     boolean isGroup,
                     String chatGroupId,

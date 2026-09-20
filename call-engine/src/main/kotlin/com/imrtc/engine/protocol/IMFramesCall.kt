@@ -62,6 +62,8 @@ internal object CallFrames {
         // 旧服务端不带它，回落到 caller（在状态机里做）。
         "inviter" to IMFieldKind.Str(),
         "callee_ids" to IMFieldKind.StrArray,
+        // 此刻已在通话里的人（不含收件人）。必须列在这里，解码只认表里的字段。
+        "joined_ids" to IMFieldKind.StrArray,
         "media_type" to IMFieldKind.Enumeration(E.MEDIA_TYPES, fallback = "audio"),
         "is_group" to IMFieldKind.Flag(),
         "timeout_sec" to IMFieldKind.Num(

@@ -104,7 +104,7 @@ internal class IMInvitePicker(
         root.addView(goButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { setMargins(dp(14), dp(8), dp(14), 0) })
 
         refreshChrome()
-        dialog.setOnDismissListener { cancelTimers() }
+        dialog.setOnDismissListener { cancelTimers(); avatarLoader.shutdown() }
         dialog.setContentView(root)
         dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         dialog.window?.setGravity(Gravity.BOTTOM)
@@ -327,7 +327,7 @@ internal class IMInvitePicker(
             when (val row = rows()[position]) {
                 is Row.LoadingMore -> textRow(convertView, "加载中…")
                 is Row.PageError -> textRow(convertView, "${row.message} · 点击重试")
-                is Row.Typed -> candidateCell(convertView, "邀请 ${row.uid}", row.uid, sub = "", checked = row.uid in picked, blocked = false)
+                is Row.Typed -> candidateCell(convertView, "邀请 ${row.uid}", row.uid, sub = "", checked = row.uid in picked, blocked = false, avatarUrl = null)
                 is Row.Item -> candidateCell(
                     convertView,
                     row.candidate.name,
@@ -335,6 +335,7 @@ internal class IMInvitePicker(
                     sub = if (row.blocked) row.reason else row.candidate.subtitle.orEmpty().ifEmpty { row.reason },
                     checked = row.blocked || row.candidate.uid in picked,
                     blocked = row.blocked || !row.candidate.selectable,
+                    avatarUrl = row.candidate.avatarUrl,
                 )
             }
 
@@ -350,13 +351,30 @@ internal class IMInvitePicker(
             return view
         }
 
-        private fun candidateCell(convertView: View?, name: String, uid: String, sub: String, checked: Boolean, blocked: Boolean): View {
+        private fun candidateCell(convertView: View?, name: String, uid: String, sub: String, checked: Boolean, blocked: Boolean, avatarUrl: String?): View {
             val cell = (convertView as? LinearLayout)?.takeIf { it.tag == TAG_CANDIDATE_ROW } ?: LinearLayout(activity).apply {
                 tag = TAG_CANDIDATE_ROW
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(14), dp(8), dp(14), dp(8))
-                addView(TextView(activity).apply { gravity = Gravity.CENTER; textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD); setTextColor(IMKitTheme.primaryText) }, LinearLayout.LayoutParams(dp(32), dp(32)))
+                // 头像：首字母圆 + 盖在上面的宿主头像图（图回来前 / 取不到时露出首字母）。
+                addView(
+                    FrameLayout(activity).apply {
+                        addView(TextView(activity).apply { gravity = Gravity.CENTER; textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD); setTextColor(IMKitTheme.primaryText) }, FrameLayout.LayoutParams(dp(32), dp(32)))
+                        addView(
+                            android.widget.ImageView(activity).apply {
+                                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                                visibility = View.GONE
+                                clipToOutline = true
+                                outlineProvider = object : android.view.ViewOutlineProvider() {
+                                    override fun getOutline(view: View, outline: android.graphics.Outline) = outline.setOval(0, 0, view.width, view.height)
+                                }
+                            },
+                            FrameLayout.LayoutParams(dp(32), dp(32)),
+                        )
+                    },
+                    LinearLayout.LayoutParams(dp(32), dp(32)),
+                )
                 addView(
                     LinearLayout(activity).apply {
                         orientation = LinearLayout.VERTICAL
@@ -367,11 +385,25 @@ internal class IMInvitePicker(
                 )
                 addView(TextView(activity).apply { gravity = Gravity.CENTER; textSize = 11f }, LinearLayout.LayoutParams(dp(20), dp(20)))
             }
-            val avatar = cell.getChildAt(0) as TextView
+            val avatarBox = cell.getChildAt(0) as FrameLayout
+            val avatar = avatarBox.getChildAt(0) as TextView
+            val photo = avatarBox.getChildAt(1) as android.widget.ImageView
             val texts = cell.getChildAt(1) as LinearLayout
             val check = cell.getChildAt(2) as TextView
             avatar.text = IMAvatar.initial(name)
             avatar.background = IMKitTheme.avatarDrawable(uid)
+            // 列表行会复用：图回来时这一行必须还是同一个头像地址才换上去。
+            photo.setImageDrawable(null)
+            photo.visibility = View.GONE
+            photo.tag = avatarUrl
+            if (!avatarUrl.isNullOrEmpty()) {
+                avatarLoader.load(avatarUrl) { bitmap ->
+                    if (photo.tag == avatarUrl) {
+                        photo.setImageBitmap(bitmap)
+                        photo.visibility = View.VISIBLE
+                    }
+                }
+            }
             (texts.getChildAt(0) as TextView).text = name
             (texts.getChildAt(1) as TextView).apply { text = sub; visibility = if (sub.isEmpty()) View.GONE else View.VISIBLE }
             check.text = if (checked) "✓" else ""
@@ -385,6 +417,35 @@ internal class IMInvitePicker(
             cell.alpha = if (blocked) 0.45f else 1f
             return cell
         }
+    }
+
+    /** 只活在这一次打开里：关掉选人页就丢，下次重新取（宿主换头像后不会一直拿旧图）。 */
+    private val avatarLoader = AvatarLoader()
+
+    /**
+     * 选人页的头像加载：内存缓存只按 URL 存、不落盘，网络请求禁用本地 HTTP 缓存，
+     * 所以每次打开选人页都重新取。取不到就不回调，界面保持首字母。回调在主线程。
+     */
+    private class AvatarLoader {
+        private val cache = android.util.LruCache<String, android.graphics.Bitmap>(64)
+        private val main = Handler(Looper.getMainLooper())
+        private val pool = java.util.concurrent.Executors.newFixedThreadPool(3)
+
+        fun load(url: String, done: (android.graphics.Bitmap) -> Unit) {
+            cache.get(url)?.let { done(it); return }
+            pool.execute {
+                val bitmap = runCatching {
+                    val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    conn.useCaches = false
+                    conn.connectTimeout = 8_000
+                    conn.readTimeout = 8_000
+                    try { conn.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) } } finally { conn.disconnect() }
+                }.getOrNull() ?: return@execute
+                main.post { cache.put(url, bitmap); done(bitmap) }
+            }
+        }
+
+        fun shutdown() = pool.shutdownNow()
     }
 
     /** [IMInvitePicker] 不是 View（持有 [Activity] 不是继承它），用 Context 版。 */

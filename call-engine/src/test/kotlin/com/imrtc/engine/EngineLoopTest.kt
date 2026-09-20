@@ -901,6 +901,7 @@ class EngineLoopTest {
             caller: String,
             inviter: String,
             calleeIds: List<String>,
+            joinedIds: List<String>,
             mediaType: String,
             isGroup: Boolean,
             chatGroupId: String,
@@ -927,7 +928,7 @@ class EngineLoopTest {
             callEnds += "${reason.wire}:$durationSec"
         }
         override fun onUserAccept(uid: String) { userAccepts += uid }
-        override fun onRoomJoined(roomId: String) { roomJoins += roomId }
+        override fun onRoomJoined(roomId: String, memberIds: List<String>) { roomJoins += roomId }
         override fun onRoomLeft(roomId: String) { roomLeaves += roomId }
         override fun onError(code: Int, name: String, message: String, forType: String) { errors += code }
     }

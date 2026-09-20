@@ -193,6 +193,8 @@ private fun handleIncoming(ctx: IMCallContext, data: Map<String, IMJson>): IMMac
                     // **原样带上**：群通话里被叫要靠它把还没接的人摆成占位格，
                     // 不然主叫那边是四格、被叫这边只有两格，同一通电话两种样子。
                     "callee_ids" to arr(Wire.strList(data, "callee_ids")),
+                    // 此刻已在通话里的人；旧服务端不带 = 空，Kit 回落成「只有 caller 在通话里」。
+                    "joined_ids" to arr(Wire.strList(data, "joined_ids")),
                     "media_type" to s(mediaType),
                     "is_group" to b(next.isGroup),
                     // 宿主自己的群号 / opaque 数据，原样透传（HOST_INTEGRATION_DESIGN §3.2）。

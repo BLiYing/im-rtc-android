@@ -118,7 +118,11 @@ internal fun reduceRoomRecv(
 
 /** 用快照把房间一次性搭起来：先成员，再他们的 Track。 */
 private fun handleJoinOk(ctx: IMRoomContext, data: Map<String, IMJson>): IMMachineOutput<IMRoomContext> {
-    val emit = mutableListOf(IMEmittedEvent("onRoomJoined", mapOf("room_id" to s(Wire.str(data, "room_id")))))
+    // uids = 进房这一刻房里已有的人（快照）。界面靠它对账：响铃阶段不在房里的人，中途离场收不到 onUserLeave。
+    val present = Wire.objects(data, "participants").map { s(Wire.str(it, "uid")) }
+    val emit = mutableListOf(
+        IMEmittedEvent("onRoomJoined", mapOf("room_id" to s(Wire.str(data, "room_id")), "uids" to IMJson.Arr(present))),
+    )
     var next = ctx.copy(
         state = IMRoomState.JOINED,
         // **这一笔账只在这里记**：它是「服务端真的受理了我们」的唯一证据，

@@ -376,4 +376,27 @@ class CameraDefaultTest {
         assertEquals(listOf("bob", "carol"), incoming.members.keys.toList())
         assertEquals("alice", incoming.caller)
     }
+
+    @Test
+    fun `来电展开页：已在通话里的人是正常格子，只有还在响铃的是占位格`() {
+        // alice 发起、bob 已接听、carol 响铃；self=dave 被 bob 拉进来。
+        val state = IMCallViewReducer.incoming(
+            IMCallViewState(), "c", "alice", listOf("bob", "carol"), "audio", true,
+            selfUid = "dave", inviter = "bob", joinedIds = listOf("alice", "bob"),
+        )
+        assertEquals(mapOf("alice" to true, "bob" to true, "carol" to false), state.members.mapValues { it.value.accepted })
+        // 旧服务端不带 joined_ids：回落成只有发起人在通话里。
+        val old = IMCallViewReducer.incoming(IMCallViewState(), "c", "alice", listOf("bob"), "audio", true)
+        assertEquals(mapOf("alice" to true, "bob" to false), old.members.mapValues { it.value.accepted })
+    }
+
+    @Test
+    fun `进房快照：响铃阶段离场的人格子要收掉，还在响铃的留着`() {
+        var state = IMCallViewReducer.incoming(
+            IMCallViewState(), "c", "alice", listOf("bob", "carol"), "audio", true, joinedIds = listOf("alice", "bob"),
+        )
+        state = IMCallViewReducer.begin(state, "c", "r", "audio", "callee", isGroup = true)
+        state = IMCallViewReducer.roomSnapshot(state, listOf("alice"))
+        assertEquals(listOf("alice", "carol"), state.members.keys.toList())
+    }
 }

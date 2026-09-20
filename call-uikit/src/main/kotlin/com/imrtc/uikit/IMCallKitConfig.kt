@@ -11,7 +11,7 @@ class IMInviteCandidate
 constructor(
     val uid: String,
     name: String = "",
-    /** 头像 URL，可空——Kit 目前只按首字母画占位圆，不下载图片。 */
+    /** 头像 URL，可空。选人页会下载它（只在这一次打开里缓存，下次重新取）；没有或取不到时画首字母圆。 */
     val avatarUrl: String? = null,
     /** 名字下面那行小字（部门、备注之类），可空。 */
     val subtitle: String? = null,

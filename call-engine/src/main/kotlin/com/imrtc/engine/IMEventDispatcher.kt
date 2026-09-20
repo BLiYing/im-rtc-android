@@ -48,6 +48,7 @@ internal class IMEventDispatcher(
                     args.str("caller"),
                     args.str("inviter"),
                     args.strs("callee_ids"),
+                    args.strs("joined_ids"),
                     args.str("media_type"),
                     args.flag("is_group"),
                     args.str("chat_group_id"),
@@ -111,7 +112,7 @@ internal class IMEventDispatcher(
                 onMain { listener.onNetworkQuality(entries) }
             }
 
-            "onRoomJoined" -> onMain { listener.onRoomJoined(args.str("room_id")) }
+            "onRoomJoined" -> onMain { listener.onRoomJoined(args.str("room_id"), args.strs("uids")) }
             "onRoomLeft" -> onMain { listener.onRoomLeft(args.str("room_id")) }
             "onRoomClosed" -> onMain {
                 listener.onRoomClosed(args.str("room_id"), args.str("reason"))
