@@ -57,8 +57,10 @@ class IMCallActivity : Activity() {
             override fun hasLocalVideo(): Boolean = IMCallKit.hasLocalVideo()
         }
         setContentView(view)
-        IMCallKit.observe(observer)
+        // 先展开、再 observe：observe 会立刻按当前状态渲染一次，小窗状态下 render 会 finish 自己，
+        // 通知拉起的这个实例就成了「创建又关掉」，再由形态切换重新拉一个。
         returnFromNotification(intent)
+        IMCallKit.observe(observer)
     }
 
     /** singleTask：通话页还活着时，点通知走的是这里，不是 onCreate。 */
