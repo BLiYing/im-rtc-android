@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -56,6 +57,7 @@ class IMCallForegroundService : Service() {
             .setContentText("点按返回通话")
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setOngoing(true)
+            .apply { returnToCallIntent()?.let { setContentIntent(it) } }
             .build()
 
         val types = IMForegroundTypes.granted(this, withCamera)
@@ -76,6 +78,31 @@ class IMCallForegroundService : Service() {
         IMRTCLog.i("service", "前台服务已启动（mic=${types.microphone} camera=${types.camera}）")
     }
 
+    /**
+     * 点通知回到通话。**原先只写了「点按返回通话」，却没有 contentIntent，点了什么都不会发生**
+     * （2026-09-20 真机：通话页丢了之后，通知是唯一显眼的入口，而它是死的）。
+     *
+     * Engine 不依赖 UIKit，拿不到 `IMCallActivity` 这个类，只能按类名字面量指过去；
+     * 宿主没带 UIKit（自己画界面）时解析不到，退回宿主的启动页——总比一个死通知强。
+     */
+    private fun returnToCallIntent(): PendingIntent? {
+        val call = Intent().setClassName(packageName, CALL_ACTIVITY_CLASS)
+            .putExtra(EXTRA_RETURN_TO_CALL, true)
+        val target = if (call.resolveActivity(packageManager) != null) {
+            call
+        } else {
+            packageManager.getLaunchIntentForPackage(packageName)
+        }
+        if (target == null) {
+            IMRTCLog.w("service", "通知没有可跳的页面（UIKit 不在、也没有启动页），点了不会有反应")
+            return null
+        }
+        return PendingIntent.getActivity(
+            this, 0, target,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java)
@@ -91,6 +118,10 @@ class IMCallForegroundService : Service() {
         private const val CHANNEL_ID = "im_rtc_call"
         private const val NOTIFICATION_ID = 4231
         private const val EXTRA_WITH_CAMERA = "with_camera"
+
+        /** UIKit 的通话页与它认的「回到通话」标记。**两处字面量必须与 `IMCallActivity` 一致**（那边有同样的提醒）。 */
+        private const val CALL_ACTIVITY_CLASS = "com.imrtc.uikit.IMCallActivity"
+        private const val EXTRA_RETURN_TO_CALL = "imrtc_return_to_call"
 
         @JvmStatic
         fun start(context: Context, withCamera: Boolean) {

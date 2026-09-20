@@ -101,8 +101,8 @@ object IMCallKit {
             // 读属性不读参数：stop() 之后 Kit 的 engine 置空，这里就不该再去碰那个旧实例。
             this.engine?.let { backgroundCamera.onForegroundChanged(it, state, foreground) }
         }
-        // 宿主页面回到前台就按当前状态再挑一次形态，见 [IMActivityTracker.onHostResumed]。
-        IMActivityTracker.onHostResumed = { presentation.apply(state, appContext) }
+        // 宿主页面回到前台就按当前状态再挑一次形态（全屏形态下顺带补拉丢了的通话页，见 [IMPresentRules]）。
+        IMActivityTracker.onHostResumed = { presentation.apply(state, appContext, hostResumed = true) }
         networkWatcher.start(context.applicationContext)
     }
 

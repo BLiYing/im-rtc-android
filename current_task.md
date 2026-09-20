@@ -7,6 +7,11 @@
 
 ## 当前焦点
 
+- **09-20 已改、未 commit、未真机验：通话页全屏 + 后台久了回来「界面丢了通话还在」**（真机复现，宿主 im-android 20:46~21:31，进程 / 信令 / 媒体全活、服务端认为人还在房里，对端一直显示他在）。
+  根因：`IMCallPresentation.apply` 只在形态变化那一次拉通话页，形态已是 fullscreen 就不再拉。修法：宿主页回前台且通话未结束就补拉（判据 `IMPresentRules`，`PresentRulesTest` 7 条）；
+  前台服务通知补 `contentIntent`（原先写着「点按返回通话」却是死的）；`IMCallActivity` 补生命周期日志（tag `kit`，`通话页 onCreate/onStop/onDestroy isFinishing=…`）。
+  已 `publishToMavenLocal`，im-android `settings.gradle.kts` 暂切 mavenLocal（**联调完要切回 JitPack**）。真机验法：通话中保持全屏 → Home → 久等（或开发者选项「不保留活动」）→ 回来应自动回到通话页；下拉通知点「通话中」也应回去。
+
 - **09-19 新增 `IMCallEngine.fetchCallHistory(limit, cursor, onResult)`**（`IMCallHistory.kt`，`GET /v1/calls`，游标翻页，只返回本人，结果回主线程）：`CallHistoryTest` + `ActionResultTest` 两条新用例过、全量单测过；Demo 通话记录页改成调它（滚到底加载下一页，标题栏 ↻ 刷新），`DemoRecords.kt` 与本地拼记录已删。**未真机验**；依赖服务端 `requireBearer` 不再核对设备号（同日已修）。
 
 **2026-09-19：三处修完，真机已验（PKD130 × Chrome，`delay` + `silence` 故障注入），已推送。**

@@ -1,10 +1,12 @@
 package com.imrtc.uikit
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
+import com.imrtc.engine.log.IMRTCLog
 
 /**
  * 通话全屏页。**独立 Activity，不入宿主导航栈**——任何界面都能被来电覆盖。
@@ -33,6 +35,7 @@ class IMCallActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        logLifecycle("onCreate", "savedState=${savedInstanceState != null}")
         goFullScreen()
         keepScreenOn()
         view = IMCallView(this)
@@ -55,11 +58,46 @@ class IMCallActivity : Activity() {
         }
         setContentView(view)
         IMCallKit.observe(observer)
+        returnFromNotification(intent)
+    }
+
+    /** singleTask：通话页还活着时，点通知走的是这里，不是 onCreate。 */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        logLifecycle("onNewIntent", "")
+        returnFromNotification(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        logLifecycle("onStart", "")
+    }
+
+    override fun onStop() {
+        logLifecycle("onStop", "isFinishing=$isFinishing")
+        super.onStop()
     }
 
     override fun onDestroy() {
+        // **界面丢了但通话还在**要靠这一行对时间：isFinishing=false 就是系统收走的，不是 Kit 自己关的。
+        logLifecycle("onDestroy", "isFinishing=$isFinishing changingConfig=$isChangingConfigurations")
         IMCallKit.forget(observer)
         super.onDestroy()
+    }
+
+    /**
+     * 前台服务通知（「点按返回通话」）拉起来的：通话若已收成小窗，就展开——用户点的是「回到通话」，
+     * 不是「看一眼再收回去」。展开会走 [IMCallPresentation]，形态变成全屏，通话页保持不动。
+     */
+    private fun returnFromNotification(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_RETURN_TO_CALL, false) != true) return
+        logLifecycle("returnToCall", "phase=${IMCallKit.state.phase} minimized=${IMCallKit.state.isMinimized}")
+        if (IMCallKit.state.isMinimized) IMCallKit.expand()
+    }
+
+    private fun logLifecycle(event: String, detail: String) {
+        IMRTCLog.i("kit", "通话页 $event ${IMCallKit.state.phase} $detail".trim())
     }
 
     /**
@@ -139,5 +177,13 @@ class IMCallActivity : Activity() {
             return
         }
         view.render(state)
+    }
+
+    companion object {
+        /**
+         * 前台服务通知带来的「回到通话」标记。**字面量与 `IMCallForegroundService` 里那份必须一致**
+         * （Engine 不依赖 UIKit，只能各写一份）。
+         */
+        internal const val EXTRA_RETURN_TO_CALL = "imrtc_return_to_call"
     }
 }

@@ -3,6 +3,7 @@ package com.imrtc.uikit
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import com.imrtc.engine.log.IMRTCLog
 
 /**
@@ -19,14 +20,23 @@ internal class IMCallPresentation(private val overlay: IMCallOverlay) {
     var bannerExpanded = false
     private var mode = Mode.HIDDEN
 
+    /** 上一次 [present] 的时刻（elapsedRealtime），给 [IMPresentRules] 限连环拉起。 */
+    private var lastPresentAt = 0L
+
     /** Kit 停掉时回到初始。 */
     fun reset() {
         mode = Mode.HIDDEN
         bannerExpanded = false
+        lastPresentAt = 0L
     }
 
-    /** 按当前状态决定用哪种形态，并把上一种收掉。**每次状态更新都会走一遍**，所以它必须便宜且幂等。 */
-    fun apply(current: IMCallViewState, context: Context?) {
+    /**
+     * 按当前状态决定用哪种形态，并把上一种收掉。**每次状态更新都会走一遍**，所以它必须便宜且幂等。
+     *
+     * @param hostResumed 这一次是不是因为「宿主页面回到前台」触发的（[IMActivityTracker.onHostResumed]）。
+     *   只有这一路才可能发现「形态是全屏、通话页却不在前台」，见 [IMPresentRules]。
+     */
+    fun apply(current: IMCallViewState, context: Context?, hostResumed: Boolean = false) {
         if (current.phase == IMCallViewState.Phase.IDLE) bannerExpanded = false
         val host = IMActivityTracker.foreground()
         val wanted = desiredMode(current, host)
@@ -34,7 +44,10 @@ internal class IMCallPresentation(private val overlay: IMCallOverlay) {
         mode = wanted
         when (wanted) {
             Mode.HIDDEN -> if (changed) overlay.detach()
-            Mode.FULLSCREEN -> { overlay.detach(); if (changed) present(context) }
+            Mode.FULLSCREEN -> {
+                overlay.detach()
+                if (changed || lostFullscreen(current, host, hostResumed)) present(context)
+            }
             Mode.BANNER -> mountBanner(host, current)
             Mode.BUBBLE -> mountBubble(host, current)
         }
@@ -83,8 +96,25 @@ internal class IMCallPresentation(private val overlay: IMCallOverlay) {
         }
     }
 
+    /**
+     * 形态没变、还是全屏，但宿主页面回到了前台：通话页被系统收走了（或压根没回到前台），补拉一次。
+     * 留一条日志：这是「界面丢了但通话还在」的唯一现场，下次再出问题要靠它对时间。
+     */
+    private fun lostFullscreen(current: IMCallViewState, host: Activity?, hostResumed: Boolean): Boolean {
+        val sinceLast = SystemClock.elapsedRealtime() - lastPresentAt
+        val lost = IMPresentRules.shouldRepresent(
+            phase = current.phase,
+            hostResumed = hostResumed,
+            hostVisible = host != null && host !is IMPermissionActivity,
+            sinceLastPresentMs = sinceLast,
+        )
+        if (lost) IMRTCLog.w("kit", "宿主回到前台但通话页不在，重新拉起通话页（phase=${current.phase} host=${host?.javaClass?.simpleName}）")
+        return lost
+    }
+
     private fun present(context: Context?) {
         context ?: return
+        lastPresentAt = SystemClock.elapsedRealtime()
         context.startActivity(Intent(context, IMCallActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
