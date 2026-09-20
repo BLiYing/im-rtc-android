@@ -26,5 +26,12 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:noHistory="true" />
+
+        <!-- 进程启动时装 IMActivityTracker，见 IMKitInitProvider。不提供数据，仅为赶在首个 Activity 之前注册生命周期回调。 -->
+        <provider
+            android:name=".IMKitInitProvider"
+            android:authorities="${applicationId}.imrtc-kit-init"
+            android:exported="false"
+            android:initOrder="100" />
     </application>
 </manifest>
