@@ -44,8 +44,8 @@ class SdkVersionTest {
 
     @Test
     fun `版本常量是 端斜杠三段式 且不超协议上限`() {
-        assertEquals("1.0.0", IMCallEngineVersion.VERSION)
-        assertEquals("android/1.0.0", IMCallEngineVersion.SDK)
+        assertEquals("2.0.0", IMCallEngineVersion.VERSION)
+        assertEquals("android/2.0.0", IMCallEngineVersion.SDK)
         assertTrue(IMCallEngineVersion.SDK.matches(Regex("""android/\d+\.\d+\.\d+""")))
         assertTrue(IMCallEngineVersion.SDK.toByteArray(Charsets.UTF_8).size <= 64)
     }

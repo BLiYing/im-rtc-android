@@ -18,8 +18,8 @@ dependencyResolutionManagement {
 }
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.BLiYing.im-rtc-android:call-uikit:1.0.0")          // 整套 UI（已带上 call-engine）
-    implementation("com.github.BLiYing.im-rtc-android:call-engine-webrtc:1.0.0")  // 媒体实现，要真通话就得引
+    implementation("com.github.BLiYing.im-rtc-android:call-uikit:2.0.0")          // 整套 UI（已带上 call-engine）
+    implementation("com.github.BLiYing.im-rtc-android:call-engine-webrtc:2.0.0")  // 媒体实现，要真通话就得引
 }
 ```
 
