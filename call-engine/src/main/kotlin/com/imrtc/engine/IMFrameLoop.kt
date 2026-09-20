@@ -120,7 +120,7 @@ internal class IMFrameLoop(
         unsubscribeTimers.sync(output.state.room.pendingUnsubscribe)
 
         for (frame in output.send) sendFrame(frame, result)
-        dispatcher.dispatchAll(output.emit)
+        dispatcher.dispatchAll(IMCallSummaries.append(before.call, output.emit) { connection().uid })
         for (uid in videoTurnedOn(output.emit)) media?.awaitFirstVideoFrame(uid)
         mediaDriver.drive(before, output.state)
         // **排在 drive 之后**：新进房那一步正是在它里面发布轨道的，

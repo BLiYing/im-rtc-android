@@ -1,6 +1,7 @@
 package com.imrtc.uikit
 
 import com.imrtc.engine.IMCallEndReason
+import com.imrtc.engine.IMCallSummary
 import com.imrtc.engine.IMKickedOutReason
 import com.imrtc.engine.IMCallEngineListener
 import com.imrtc.engine.IMNetworkQuality
@@ -123,6 +124,11 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
             IMCallKit.scheduleResetIfEnded(hold)
         }
         host.onCallEnd(callId, reason, durationSec, endedBy)
+    }
+
+    /** Kit 不认识它：只往宿主转（通话记录要用，宿主装的 listener 被 Kit 包了一层，不转就永远收不到）。 */
+    override fun onCallSummary(summary: IMCallSummary) {
+        host.onCallSummary(summary)
     }
 
     // 四个便利事件只在 1v1 抛，随后必有 onCallEnd——所以这里只做提示，不改阶段。

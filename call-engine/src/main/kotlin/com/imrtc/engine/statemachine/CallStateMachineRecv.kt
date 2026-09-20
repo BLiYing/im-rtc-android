@@ -180,6 +180,7 @@ private fun handleIncoming(ctx: IMCallContext, data: Map<String, IMJson>): IMMac
         caller = caller,
         chatGroupId = chatGroupId,
         userData = userData,
+        peerId = if (Wire.flag(data, "is_group")) "" else caller,
     )
     return IMCallMachine.out(
         next,

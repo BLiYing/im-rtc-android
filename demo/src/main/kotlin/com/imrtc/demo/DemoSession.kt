@@ -1,6 +1,7 @@
 package com.imrtc.demo
 
 import com.imrtc.engine.IMCallEndReason
+import com.imrtc.engine.IMCallSummary
 import com.imrtc.engine.IMKickedOutReason
 import android.content.Context
 import android.content.SharedPreferences
@@ -470,6 +471,12 @@ internal object DemoSession {
         override fun onError(code: Int, name: String, message: String, forType: String) {
             if (stale) return
             IMRTCLog.w("demo", "错误 $code $name for=$forType $message")
+        }
+
+        override fun onCallSummary(summary: IMCallSummary) {
+            if (stale) return
+            // 通话记录消息由宿主 IM 层按 role == caller 发；Demo 没有 IM，只留一行日志。
+            IMRTCLog.i("demo", "callSummary $summary")
         }
 
         override fun onCallEnd(callId: String, reason: IMCallEndReason, durationSec: Long, endedBy: String) {

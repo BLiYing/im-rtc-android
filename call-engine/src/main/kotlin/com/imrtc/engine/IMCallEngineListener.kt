@@ -119,6 +119,13 @@ interface IMCallEngineListener {
      */
     fun onCallEnd(callId: String, reason: IMCallEndReason, durationSec: Long, endedBy: String) {}
 
+    /**
+     * 这通电话的事实一次给齐（通话记录设计 §4）。**紧跟 [onCallEnd]、每通拿到 call_id 的电话恰好一次**；
+     * 未接通、被拒、`*_elsewhere` 也来（看 [IMCallSummary.reason]）。宿主要发通话记录消息的话，
+     * 只在 `summary.role == "caller"` 时发，不用自己比对 uid。本地就地拒掉 / 发不出去的 `call()` 不触发。
+     */
+    fun onCallSummary(summary: IMCallSummary) {}
+
     /** 未接通的四种裁决之一，**只在 1v1 抛**，随后必有 [onCallEnd]。 */
     fun onCallCancelled(uid: String) {}
 

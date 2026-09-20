@@ -10,6 +10,7 @@ import com.imrtc.engine.IMCallEndReason;
 import com.imrtc.engine.IMCallEngine;
 import com.imrtc.engine.IMCallEngineListener;
 import com.imrtc.engine.IMCallEngineVersion;
+import com.imrtc.engine.IMCallSummary;
 import com.imrtc.engine.IMCallOptions;
 import com.imrtc.engine.IMKickedOutReason;
 import com.imrtc.engine.IMNetworkQuality;
@@ -53,6 +54,12 @@ final class JavaApiCheck {
         // 版本号是 const val：Java 侧直接是静态常量，不用 INSTANCE。
         String sdkVersion = IMCallEngineVersion.VERSION + " " + IMCallEngineVersion.SDK;
         IMCallEngineListener listener = new IMCallEngineListener() {
+            @Override
+            public void onCallSummary(IMCallSummary summary) {
+                // 通话记录用（2026-09-20）：紧跟 onCallEnd；宿主只在 "caller".equals(summary.getRole()) 时发记录消息。
+                String peer = summary.getPeer();
+            }
+
             @Override
             public void onCallEnd(String callId, IMCallEndReason reason, long durationSec, String endedBy) {
                 // 只覆盖关心的那几个：其余回调有默认实现（-Xjvm-default=all）。

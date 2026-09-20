@@ -75,6 +75,23 @@ internal class IMEventDispatcher(
                     args.str("ended_by"),
                 )
             }
+            "onCallSummary" -> onMain {
+                listener.onCallSummary(
+                    IMCallSummary(
+                        callId = args.str("call_id"),
+                        reason = IMCallEndReason.from(args.str("reason")),
+                        durationSec = args.num("duration_sec"),
+                        endedBy = args.str("ended_by"),
+                        mediaType = args.str("media_type"),
+                        isGroup = args.flag("is_group"),
+                        chatGroupId = args.str("chat_group_id"),
+                        caller = args.str("caller"),
+                        role = args.str("role"),
+                        peer = args.str("peer"),
+                        userData = args.str("user_data"),
+                    ),
+                )
+            }
             "onCallCancelled" -> onMain { listener.onCallCancelled(args.str("by")) }
             "onCallRejected" -> onMain { listener.onCallRejected(args.str("uid")) }
             "onCallBusy" -> onMain { listener.onCallBusy(args.str("uid")) }

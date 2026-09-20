@@ -64,6 +64,8 @@ internal data class IMCallContext(
     val chatGroupId: String = "",
     /** 同 [chatGroupId]，记的是 `user_data`。 */
     val userData: String = "",
+    /** 1v1 的对端 uid（主叫 = 被叫，被叫 = 主叫）；群通话为空。只为 `onCallSummary` 记下，状态机不据它做决定。 */
+    val peerId: String = "",
     /**
      * 拨出中、`call.invite.ok` 还没回来（手里没有 call_id）时按了取消。
      *
@@ -166,6 +168,7 @@ internal object IMCallMachine {
                 isGroup = isGroup,
                 chatGroupId = chatGroupId,
                 userData = userData,
+                peerId = if (isGroup) "" else calleeIds.firstOrNull().orEmpty(),
             ),
             send = listOf(IMOutgoingFrame(IMFrameType.CALL_INVITE, data)),
         )
