@@ -483,6 +483,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
                 events?.onMediaError(2002, "device not found")
                 return null
             }
+        // 每通新采集都从前置起：上一通翻到后置的话，这个标志还是 false，本端预览会少一次镜像（2026-09-21）。
+        frontCamera = enumerator.isFrontFacing(name)
         val cameraEvents = IMCameraEvents { reason -> events?.onMediaError(2002, "camera unavailable: $reason") }
         val videoCapturer = enumerator.createCapturer(name, cameraEvents) ?: run {
             // 摄像头被别的 App 占着 / HAL 打不开最常见的就是这一支，原先连日志都没有。

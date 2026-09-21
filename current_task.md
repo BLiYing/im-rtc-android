@@ -37,6 +37,7 @@
 3. 待办：静默失败清单 `../im-rtc-server/docs/ops/silent-failure/android.md`。
 
 ## 已知坑 / 限制
+- **`frontCamera` 标志每通新采集要重设**（09-21，对齐 iOS 后置挂断问题）：Android 新采集总是选前置，画面一直是对的，但标志只在翻转回调里改，翻后置挂断后下一通本地预览少一次镜像；现按所选设备设置。
 
 **发布**
 - 下次发版：改 `IMRTC_VERSION` 与 `IMCallEngineVersion.VERSION`（不等时 `SdkVersionTest` 红）→ 推 tag（与版本同号、不带 v）→ 请求一次 pom 触发构建。**JitPack 会缓存失败**：失败要在 JitPack 页面删记录再试。
