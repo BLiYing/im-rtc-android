@@ -149,6 +149,14 @@ internal object IMMessages {
         "perm.retry" to "再试一次",
         "perm.notNow" to "不了",
         "perm.settings" to "去设置",
+        "a11y.copyRoomHint" to "点两下复制房间号",
+        "hint.inviteNoPermission" to "没有权限添加成员",
+        "pip.peerLabel" to "对方画面",
+        "pip.hint" to "轻点两下互换，轻点两下并按住可移动",
+        "invite.loadFailedMsg" to "加载失败：{message}",
+        "perm.cam.missingBodyOs" to "摄像头可能被其他应用占用。",
+        "perm.mic.blockedBodyIos" to "到「设置 › 隐私 › 麦克风」里打开后重试。",
+        "perm.mic.missingBodyOs" to "请检查麦克风是否被其他应用占用。",
     )
 
     val en: Map<String, String> = mapOf(
@@ -296,6 +304,14 @@ internal object IMMessages {
         "perm.retry" to "Try again",
         "perm.notNow" to "Not now",
         "perm.settings" to "Settings",
+        "a11y.copyRoomHint" to "Double-tap to copy room ID",
+        "hint.inviteNoPermission" to "You don't have permission to add people",
+        "pip.peerLabel" to "Remote video",
+        "pip.hint" to "Double-tap to swap, double-tap and hold to move",
+        "invite.loadFailedMsg" to "Failed to load: {message}",
+        "perm.cam.missingBodyOs" to "The camera may be in use by another app.",
+        "perm.mic.blockedBodyIos" to "Turn it on in Settings › Privacy › Microphone, then try again.",
+        "perm.mic.missingBodyOs" to "Check that the microphone isn't in use by another app.",
     )
 
 }
