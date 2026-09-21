@@ -40,6 +40,21 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
             if (!dragging) snap(animated = true)
         }
 
+    /**
+     控制条占掉的那一条（px，从屏幕底边往上量，含下边距与手势条 inset）。**小窗的容器要把它扣掉**。
+
+     iOS 的 `stage` 下沿钉在 `controlsStack.topAnchor`，Web 的控制条是 flex 兄弟节点：两端的小窗容器本来就在按钮上方，
+     下面两个角天然不会压住按钮。Android 的控制条直接挂在根布局上（为了视频画面铺满），`stage` 一直延到屏幕底边，
+     只靠 [IMPipLayout.LIFT] 那 88dp 避让——而 1v1 视频的控制条是两排按钮，远不止 88dp，四角贴边就压在按钮上（2026-09-21 真机）。
+     写同一个值不重摆。
+    */
+    var bottomReservePx = 0
+        set(value) {
+            if (field == value) return
+            field = value
+            if (!dragging) snap(animated = false)
+        }
+
     private val density = resources.displayMetrics.density
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private val main = Handler(Looper.getMainLooper())
@@ -108,15 +123,19 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
 
     private val container: ViewGroup? get() = parent as? ViewGroup
 
+    /** 容器高度（dp），已扣掉控制条那一条。小窗所有位置算术都按它来，与 iOS 的 `stage.bounds` 同一个形状。 */
+    private fun containerHeightDp(c: ViewGroup): Double =
+        maxOf(c.height - bottomReservePx, 0) / density.toDouble()
+
     private fun sizeDp(): IMPipLayout.Size {
         val c = container ?: return IMPipLayout.LANDSCAPE
-        return IMPipLayout.sizeFor(c.width / density.toDouble(), c.height / density.toDouble())
+        return IMPipLayout.sizeFor(c.width / density.toDouble(), containerHeightDp(c))
     }
 
     private fun restOrigin(corner: IMPipLayout.Corner): IMPipLayout.Point {
         val c = container ?: return IMPipLayout.Point(0.0, 0.0)
         return IMPipLayout.origin(
-            corner, sizeDp(), c.width / density.toDouble(), c.height / density.toDouble(),
+            corner, sizeDp(), c.width / density.toDouble(), containerHeightDp(c),
             if (liftsForControls) IMPipLayout.LIFT else 0.0,
         )
     }
@@ -181,7 +200,7 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
                 val size = sizeDp()
                 val origin = IMPipLayout.clamp(
                     IMPipLayout.Point(((startX + dx) / density).toDouble(), ((startY + dy) / density).toDouble()),
-                    size, c.width / density.toDouble(), c.height / density.toDouble(),
+                    size, c.width / density.toDouble(), containerHeightDp(c),
                 )
                 x = (origin.x * density).toFloat()
                 y = (origin.y * density).toFloat()
@@ -193,7 +212,7 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
                     // 松手吸附到**最近的角**（按小窗中心算），不是最近的边。
                     corner = IMPipLayout.nearestCorner(
                         IMPipLayout.Point(((x + width / 2f) / density).toDouble(), ((y + height / 2f) / density).toDouble()),
-                        c.width / density.toDouble(), c.height / density.toDouble(),
+                        c.width / density.toDouble(), containerHeightDp(c),
                     )
                     dragging = false
                     hideGhosts()

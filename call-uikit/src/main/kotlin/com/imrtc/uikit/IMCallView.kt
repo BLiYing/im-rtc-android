@@ -268,6 +268,9 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         super.onLayout(changed, left, top, right, bottom)
         // 控制条的高度会随按钮组变（来电两颗 / 通话中两排），所以每轮都要对一次，不只是 changed。
         applyStageInsets()
+        // 小窗的容器要在控制条上沿之内（与 iOS 的 stage 一致）：视频版式 stage 铺满屏幕，
+        // 不告诉小窗的话四角贴边会压在按钮上。含控制条自己的下边距与手势条 inset。
+        pip.bottomReservePx = if (controls.visibility == VISIBLE) (height - controls.top).coerceAtLeast(0) else 0
         if (!changed) return
         pip.layoutInContainer()
         // 第一轮 render 时 stage 还没量出来，格子边长只能按默认形状估。这里补摆一次。
