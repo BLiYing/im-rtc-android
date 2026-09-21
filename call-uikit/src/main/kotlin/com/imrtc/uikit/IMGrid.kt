@@ -125,7 +125,7 @@ internal object IMGrid {
      * 「还有 N 人未显示」胶囊的文案（MEETING_ROOM_DESIGN §4.5，会议房 M1 止血）；没人被截掉时是空串。
      * 会议房原先超过 9 人时多出来的人**无声消失**（2026-09-09 真机）。与 Web `hiddenCountText`、iOS 同一句。
      */
-    fun hiddenCountText(hidden: Int): String = if (hidden > 0) "还有 $hidden 人未显示" else ""
+    fun hiddenCountText(hidden: Int): String = if (hidden > 0) IMText.t("grid.hidden", "n" to hidden) else ""
 
     /**
      * 悬浮球上的字：接通了走时长，拨出中 / 接通中是「…」（与 iOS 同）——`00:00` 看着像已经接通。

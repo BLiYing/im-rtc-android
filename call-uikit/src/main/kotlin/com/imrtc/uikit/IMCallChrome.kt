@@ -31,13 +31,13 @@ internal fun IMCallKit.copyRoomId(context: Context) {
     val roomId = state.roomId
     if (!state.isMeeting || roomId.isEmpty()) return
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-    clipboard.setPrimaryClip(ClipData.newPlainText("房间号", roomId))
-    hint("已复制房间号 $roomId")
+    clipboard.setPrimaryClip(ClipData.newPlainText(IMText.t("label.room"), roomId))
+    hint(IMText.t("hint.roomIdCopied", "room" to roomId))
 }
 
 internal class IMCallHeader(context: Context) : FrameLayout(context) {
-    val minimizeButton = roundButton(IMKitIcon.PIP, "收进小窗")
-    val inviteButton = roundButton(IMKitIcon.PERSON_ADD, "添加成员")
+    val minimizeButton = roundButton(IMKitIcon.PIP, IMText.t("header.minimize"))
+    val inviteButton = roundButton(IMKitIcon.PERSON_ADD, IMText.t("header.invite"))
     /**
      * 成员列表入口（MEETING_ROOM_DESIGN §4.6 的「👥 N」）。**只有会议房给**。
      *
@@ -85,7 +85,7 @@ internal class IMCallHeader(context: Context) : FrameLayout(context) {
         membersButton.setTextColor(IMKitTheme.primaryText)
         membersButton.gravity = Gravity.CENTER
         membersButton.background = IMKitTheme.circleDrawable(IMKitTheme.controlOff)
-        membersButton.contentDescription = "成员列表"
+        membersButton.contentDescription = IMText.t("header.members")
         membersButton.visibility = View.GONE
         addView(
             membersButton,
@@ -106,7 +106,7 @@ internal class IMCallHeader(context: Context) : FrameLayout(context) {
     ) {
         title.text = titleText
         title.isClickable = titleIsCopyable
-        title.contentDescription = if (titleIsCopyable) "$titleText，点一下复制房间号" else null
+        title.contentDescription = if (titleIsCopyable) IMText.t("header.copyRoom", "title" to titleText) else null
         subtitle.text = subtitleText
         bars.level = networkLevel
         bars.visibility = if (networkLevel > 0) View.VISIBLE else View.GONE

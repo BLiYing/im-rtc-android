@@ -17,6 +17,8 @@ internal const val KEY_VERBOSE = "verbose_log"
 internal const val KEY_BANNER = "banner_first"
 internal const val KEY_FLOATING = "floating_window"
 internal const val KEY_RING_MUTED = "ringtone_muted"
+internal const val KEY_LANGUAGE = "language"
+internal const val LANGUAGE_AUTO = "auto"
 internal const val KEY_RECORDS = "records"
 
 /**

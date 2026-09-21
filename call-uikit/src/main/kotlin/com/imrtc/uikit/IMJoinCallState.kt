@@ -19,7 +19,7 @@ internal object IMJoinCallState {
     fun start(callId: String) {
         val instance = IMCallKit.engine ?: return
         // Toast 而不是 hint：通话收成小窗时 hint 看不见（见 [IMBusyGuard]）。
-        if (IMBusyGuard.blocks("正在通话中，无法加入")) return
+        if (IMBusyGuard.blocks(IMText.t("busy.joinBlocked"))) return
         IMCallKit.update(IMCallViewReducer.joining(IMCallKit.state, callId))
         // 与接听同一道权限门，但只要麦克风：加入之前不知道这通是不是视频，摄像头等用户在通话里再开。
         IMCallKit.ensurePermissions(IMPermissionGate.devicesFor("audio", withCamera = false)) { outcome ->

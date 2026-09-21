@@ -16,6 +16,7 @@ import com.imrtc.engine.media.IMVideoProfile
 import com.imrtc.engine.webrtc.IMWebRTCAdapter
 import com.imrtc.uikit.IMCallKit
 import com.imrtc.uikit.IMCallKitConfig
+import com.imrtc.uikit.IMLocale
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.concurrent.thread
@@ -171,6 +172,22 @@ internal object DemoSession {
             notifyChanged()
         }
 
+    /**
+     * 界面语言的选择：`auto`（跟随系统）/ `zh-CN` / `en`。存本地，重启还在；
+     * 立即写进 [IMCallKitConfig.locale]，下一条文案就用新语言。
+     */
+    var language: String = LANGUAGE_AUTO
+        set(value) {
+            field = value
+            kitConfig.locale = when (value) {
+                "zh-CN" -> IMLocale.ZH_CN
+                "en" -> IMLocale.EN
+                else -> IMLocale.system()
+            }
+            prefs.edit().putString(KEY_LANGUAGE, value).apply()
+            notifyChanged()
+        }
+
     /** 群呼名单。**登录后要把自己剔掉**——带着自己发出去服务端会以 1004 拒掉整通电话。 */
     var groupPick: List<String> = listOf("alice", "carol")
         private set
@@ -195,6 +212,7 @@ internal object DemoSession {
         bannerFirst = prefs.getBoolean(KEY_BANNER, true)
         floatingWindow = prefs.getBoolean(KEY_FLOATING, true)
         ringtoneMuted = prefs.getBoolean(KEY_RING_MUTED, false)
+        language = prefs.getString(KEY_LANGUAGE, LANGUAGE_AUTO).orEmpty().ifEmpty { LANGUAGE_AUTO }
         DemoLogSink.install()
     }
 

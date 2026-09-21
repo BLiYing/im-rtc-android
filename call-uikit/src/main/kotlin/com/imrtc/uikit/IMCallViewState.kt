@@ -192,10 +192,10 @@ internal data class IMCallViewState(
      */
     val titleText: String
         get() = when {
-            isMeeting -> if (roomId.isEmpty()) "会议" else "会议 $roomId"
-            isGroup -> "群通话 · ${members.size + 1} 人"
+            isMeeting -> if (roomId.isEmpty()) IMText.t("call.meeting") else IMText.t("call.meetingRoom", "room" to roomId)
+            isGroup -> IMText.t("call.group", "n" to (members.size + 1))
             peer.isNotEmpty() -> peer
-            else -> "通话"
+            else -> IMText.t("call.default")
         }
 
     /**
@@ -215,15 +215,15 @@ internal data class IMCallViewState(
             hint.isNotEmpty() -> hint
             phase == Phase.IDLE -> ""
             phase == Phase.INCOMING -> when {
-                isGroup -> "邀请你加入群通话"
-                mediaType == "video" -> "邀请你视频通话"
-                else -> "邀请你语音通话"
+                isGroup -> IMText.t("incoming.group")
+                mediaType == "video" -> IMText.t("incoming.video")
+                else -> IMText.t("incoming.audio")
             }
-            phase == Phase.OUTGOING -> "正在呼叫…"
-            phase == Phase.CONNECTING -> if (isMeeting) "正在进入会议…" else "接通中…"
+            phase == Phase.OUTGOING -> IMText.t("call.status.calling")
+            phase == Phase.CONNECTING -> IMText.t(if (isMeeting) "call.status.enteringMeeting" else "call.status.connecting")
             phase == Phase.CONNECTED -> IMGrid.formatDuration(durationSec)
             // **ENDED 是界面的展示状态，不是通话状态机的状态**——状态机里没有 ended，那是个事件。
-            else -> if (isMeeting) "已离开会议" else endReasonText(endReason, role, durationSec)
+            else -> if (isMeeting) IMText.t("end.meetingLeft") else endReasonText(endReason, role, durationSec)
         }
 
     companion object {
@@ -242,34 +242,34 @@ internal data class IMCallViewState(
         }
         /** 结束原因的人话（规范 §08），与 iOS 的 `imEndReasonText` / Web 的 `endReasonText` 逐字对齐。 */
         fun endReasonText(reason: String, role: String, durationSec: Long): String = when (reason) {
-            "hangup" -> if (durationSec > 0) "通话结束 · ${IMGrid.formatDuration(durationSec)}" else "通话结束"
-            "cancel" -> if (role == "caller") "已取消" else "对方已取消"
-            "reject" -> if (role == "caller") "对方已拒接" else "已拒接"
-            "busy" -> "对方忙线中"
-            "no_answer" -> if (role == "caller") "对方无人接听" else "未接来电"
-            "offline" -> "对方当前不在线"
-            "answered_elsewhere" -> "已在其他设备接听"
-            "rejected_elsewhere" -> "已在其他设备拒绝"
-            "network" -> "网络中断"
-            "room_closed" -> "房间已解散"
-            "kicked" -> "已被移出"
-            else -> "已结束"
+            "hangup" -> if (durationSec > 0) IMText.t("end.hangupDuration", "duration" to IMGrid.formatDuration(durationSec)) else IMText.t("end.hangup")
+            "cancel" -> IMText.t(if (role == "caller") "end.cancelCaller" else "end.cancelCallee")
+            "reject" -> IMText.t(if (role == "caller") "end.rejectCaller" else "end.rejectCallee")
+            "busy" -> IMText.t("end.busy")
+            "no_answer" -> IMText.t(if (role == "caller") "end.noAnswerCaller" else "end.noAnswerCallee")
+            "offline" -> IMText.t("end.offline")
+            "answered_elsewhere" -> IMText.t("end.answeredElsewhere")
+            "rejected_elsewhere" -> IMText.t("end.rejectedElsewhere")
+            "network" -> IMText.t("end.network")
+            "room_closed" -> IMText.t("end.roomClosed")
+            "kicked" -> IMText.t("end.kicked")
+            else -> IMText.t("end.default")
         }
 
         /** 占位格上终局的人话。 */
         fun settledText(settled: Settled): String = when (settled) {
             Settled.NONE -> ""
-            Settled.REJECTED -> "已拒绝"
-            Settled.NO_ANSWER -> "未接听"
+            Settled.REJECTED -> IMText.t("tile.rejected")
+            Settled.NO_ANSWER -> IMText.t("tile.noAnswer")
         }
 
         /** 网络质量的人话（协议 §3.5 的表）。 */
         fun networkText(level: Int): String = when {
             level <= 0 -> ""
-            level <= 2 -> "网络良好"
-            level <= 4 -> "网络一般"
-            level == 5 -> "网络很差"
-            else -> "正在重连…"
+            level <= 2 -> IMText.t("net.good")
+            level <= 4 -> IMText.t("net.fair")
+            level == 5 -> IMText.t("net.poor")
+            else -> IMText.t("net.reconnecting")
         }
 
         /** 三根柱子亮几根：1~2 三根、3~4 两根、5~6 一根；0 不画。 */

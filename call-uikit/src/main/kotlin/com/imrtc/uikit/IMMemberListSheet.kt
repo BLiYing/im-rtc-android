@@ -67,7 +67,7 @@ internal object IMMemberListSheet {
         val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         column.addView(
             TextView(context).apply {
-                text = "成员（${state.members.size + 1}）"
+                text = IMText.t("members.title", "n" to (state.members.size + 1))
                 textSize = 16f
                 setTypeface(null, android.graphics.Typeface.BOLD)
                 setTextColor(IMKitTheme.primaryText)
@@ -77,7 +77,7 @@ internal object IMMemberListSheet {
 
         val list = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         // 自己恒在第一行，与画廊「自己占第一格」同一条规则。
-        list.addView(row(context, "我", null, state.micOn, state.cameraOn))
+        list.addView(row(context, IMText.t("self"), null, state.micOn, state.cameraOn))
         for (member in state.members.values) {
             list.addView(
                 row(
@@ -128,9 +128,9 @@ internal object IMMemberListSheet {
             },
         )
         addView(statusIcon(context, if (micOn) IMKitIcon.MIC else IMKitIcon.MIC_SLASH, micOn,
-                           if (micOn) "麦克风开" else "麦克风关"))
+                           IMText.t(if (micOn) "members.micOn" else "members.micOff")))
         addView(statusIcon(context, if (cameraOn) IMKitIcon.VIDEO else IMKitIcon.VIDEO_SLASH, cameraOn,
-                           if (cameraOn) "摄像头开" else "摄像头关"))
+                           IMText.t(if (cameraOn) "members.camOn" else "members.camOff")))
     }
 
     /**

@@ -60,7 +60,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
             // 09-17 真机：置成「无权限」之后这通电话里再也开不回来，而占用它的相机早就退了。
             2002 -> if (state.mediaType == "video") {
                 if (state.cameraOn && !state.cameraBlocked) IMCallKit.toggleCamera()
-                IMCallKit.hint("摄像头被占用或不可用，已关闭")
+                IMCallKit.hint(IMText.t("hint.cameraBusy"))
             }
         }
         host.onError(code, name, message, forType)
@@ -92,7 +92,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
 
     /** 通话中有人打进来，服务端已经替我们回了忙线——**只提示，不动当前通话**。 */
     override fun onCallMissed(callId: String, caller: String, reason: String) {
-        IMCallKit.hint("$caller 来电，已自动回复忙线")
+        IMCallKit.hint(IMText.t("hint.missedBusy", "uid" to caller))
         host.onCallMissed(callId, caller, reason)
     }
 
@@ -133,9 +133,9 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
 
     // 四个便利事件只在 1v1 抛，随后必有 onCallEnd——所以这里只做提示，不改阶段。
     override fun onCallCancelled(uid: String) = host.onCallCancelled(uid)
-    override fun onCallRejected(uid: String) { IMCallKit.hint("$uid 已拒接"); host.onCallRejected(uid) }
-    override fun onCallBusy(uid: String) { IMCallKit.hint("$uid 忙线中"); host.onCallBusy(uid) }
-    override fun onCallNoAnswer(uid: String) { IMCallKit.hint("$uid 无应答"); host.onCallNoAnswer(uid) }
+    override fun onCallRejected(uid: String) { IMCallKit.hint(IMText.t("hint.peerRejected", "uid" to uid)); host.onCallRejected(uid) }
+    override fun onCallBusy(uid: String) { IMCallKit.hint(IMText.t("hint.peerBusy", "uid" to uid)); host.onCallBusy(uid) }
+    override fun onCallNoAnswer(uid: String) { IMCallKit.hint(IMText.t("hint.peerNoAnswer", "uid" to uid)); host.onCallNoAnswer(uid) }
     /** 他设备处理了：来电页会随后收到 onCallEnd 而静默消失，这里**不弹提示**（交互稿 §06）。 */
     override fun onHandledOnOtherDevice(callId: String, action: String) = host.onHandledOnOtherDevice(callId, action)
 

@@ -15,7 +15,7 @@ import android.widget.Toast
  */
 internal object IMBusyGuard {
 
-    const val MESSAGE = "你正在通话中，请先结束当前通话"
+    val MESSAGE: String get() = IMText.t("busy.notice")
 
     /** 只有界面空闲、或停在上一通的结束画面时，才能开始新的一场。 */
     fun allows(phase: IMCallViewState.Phase): Boolean =

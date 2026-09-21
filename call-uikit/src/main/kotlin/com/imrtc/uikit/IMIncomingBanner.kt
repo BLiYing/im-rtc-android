@@ -36,9 +36,9 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
     private val avatarPhoto = ImageView(context)
     private val title = TextView(context)
     private val subtitle = TextView(context)
-    private val cameraButton = roundButton(IMKitTheme.controlOff, IMKitTheme.primaryText, IMKitIcon.VIDEO, "关摄像头")
-    private val acceptButton = roundButton(IMKitTheme.answer, IMKitTheme.answerIcon, IMKitIcon.PHONE, "接听")
-    private val rejectButton = roundButton(IMKitTheme.hangup, IMKitTheme.primaryText, IMKitIcon.XMARK, "拒绝")
+    private val cameraButton = roundButton(IMKitTheme.controlOff, IMKitTheme.primaryText, IMKitIcon.VIDEO, IMText.t("ctl.cameraOff"))
+    private val acceptButton = roundButton(IMKitTheme.answer, IMKitTheme.answerIcon, IMKitIcon.PHONE, IMText.t("ctl.accept"))
+    private val rejectButton = roundButton(IMKitTheme.hangup, IMKitTheme.primaryText, IMKitIcon.XMARK, IMText.t("ctl.reject"))
 
     init {
         orientation = HORIZONTAL
@@ -91,7 +91,7 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
 
         // 点两个按钮之外的地方 = 展开全屏。
         setOnClickListener { onExpand?.invoke() }
-        contentDescription = "来电，点击展开"
+        contentDescription = IMText.t("incoming.bannerAria")
     }
 
     fun render(state: IMCallViewState) {
@@ -126,7 +126,7 @@ internal class IMIncomingBanner(context: Context) : LinearLayout(context) {
         // 语音来电没有摄像头可关。
         cameraButton.visibility = if (state.showsCameraButton) VISIBLE else GONE
         cameraButton.setImageResource((if (state.cameraOn) IMKitIcon.VIDEO else IMKitIcon.VIDEO_SLASH).resId)
-        cameraButton.contentDescription = if (state.cameraOn) "关摄像头" else "开摄像头"
+        cameraButton.contentDescription = IMText.t(if (state.cameraOn) "ctl.cameraOff" else "ctl.cameraOn")
     }
 
     private fun roundButton(color: Int, tint: Int, icon: IMKitIcon, label: String) = ImageButton(context).apply {

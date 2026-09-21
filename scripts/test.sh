@@ -75,6 +75,9 @@ fi
 # ── 5. 编译 ─────────────────────────────────────────────────────────────
 # assembleDebug 会把四个模块连同 Demo APK 一起编出来——「模块能一起编成 App」
 # 这条路在骨架阶段就走通，别等任务五才发现构建配错了。
+step "4b" "多语言文案表与生成物一致"
+python3 scripts/gen-i18n.py --check || exit 1
+
 step 5 "编译（四模块 + Demo APK）"
 ./gradlew --console=plain assembleDebug
 

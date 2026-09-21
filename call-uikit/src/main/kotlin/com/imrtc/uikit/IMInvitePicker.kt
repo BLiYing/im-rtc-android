@@ -118,7 +118,7 @@ internal class IMInvitePicker(
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(14), 0, dp(14), dp(8))
-        addView(TextView(activity).apply { text = "添加成员"; textSize = 15f; setTypeface(null, android.graphics.Typeface.BOLD); setTextColor(IMKitTheme.primaryText) })
+        addView(TextView(activity).apply { text = IMText.t("invite.title"); textSize = 15f; setTypeface(null, android.graphics.Typeface.BOLD); setTextColor(IMKitTheme.primaryText) })
         slotsLabel.textSize = 11f
         slotsLabel.setTextColor(IMKitTheme.secondaryText)
         addView(slotsLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(8) })
@@ -127,7 +127,7 @@ internal class IMInvitePicker(
                 setImageResource(IMKitIcon.XMARK.resId)
                 setColorFilter(IMKitTheme.primaryText)
                 background = IMKitTheme.circleDrawable(IMKitTheme.controlOff)
-                contentDescription = "关闭"
+                contentDescription = IMText.t("invite.close")
                 setOnClickListener { dialog.dismiss() }
             },
             LinearLayout.LayoutParams(dp(32), dp(32)),
@@ -135,7 +135,7 @@ internal class IMInvitePicker(
     }
 
     private fun searchBox() = EditText(activity).apply {
-        hint = "搜索联系人"
+        hint = IMText.t("invite.search")
         textSize = 13f
         setTextColor(IMKitTheme.primaryText)
         setHintTextColor(IMKitTheme.secondaryText)
@@ -195,7 +195,7 @@ internal class IMInvitePicker(
                     }
                 },
             )
-        }.onFailure { onFailed(gen, reset, it.message ?: "加载失败") }
+        }.onFailure { onFailed(gen, reset, it.message ?: IMText.t("invite.loadFailed")) }
     }
 
     private fun maybeLoadMore() {
@@ -215,7 +215,7 @@ internal class IMInvitePicker(
         if (gen != generation) return
         if (loadingMore) {
             loadingMore = false
-            pageError = "加载超时"
+            pageError = IMText.t("invite.loadTimeout")
         } else {
             status = Status.ERROR
         }
@@ -260,11 +260,11 @@ internal class IMInvitePicker(
         val result = ArrayList<Row>()
         // 已选但这一页里搜不到的（换搜索词的间隙）：补在最前面，免得勾了又看不见。
         picked.filter { p -> items.none { it.uid == p } }.forEach { uid ->
-            result += Row.Item(IMInviteCandidate(uid), blocked = uid in ctx.participantUids, reason = "已在通话中")
+            result += Row.Item(IMInviteCandidate(uid), blocked = uid in ctx.participantUids, reason = IMText.t("invite.already"))
         }
         items.forEach { c ->
             val blocked = c.uid in ctx.participantUids
-            result += Row.Item(c, blocked = blocked, reason = if (blocked) "已在通话中" else c.unselectableReason.orEmpty())
+            result += Row.Item(c, blocked = blocked, reason = if (blocked) IMText.t("invite.already") else c.unselectableReason.orEmpty())
         }
         // uid 输入框：仅在允许、且这一页（含搜索）确实什么都没有时才出现（§3.4：只出现在空态里）。
         if (allowManualInput && items.isEmpty() && q.isNotEmpty() && q !in ctx.participantUids) {
@@ -294,16 +294,16 @@ internal class IMInvitePicker(
         centerMessage.visibility = if (status == Status.LOADED) View.GONE else View.VISIBLE
         list.visibility = if (status == Status.LOADED) View.VISIBLE else View.GONE
         centerMessage.text = when (status) {
-            Status.LOADING -> "加载中…"
-            Status.ERROR -> "加载失败，点击重试"
+            Status.LOADING -> IMText.t("invite.loading")
+            Status.ERROR -> IMText.t("invite.loadFailedRetry")
             Status.LOADED -> ""
         }
         adapter.notifyDataSetChanged()
     }
 
     private fun refreshChrome() {
-        slotsLabel.text = "还能加 ${maxOf(slotsLeft - picked.size, 0)} 人"
-        goButton.text = if (picked.isEmpty()) "邀请" else "邀请 ${picked.size} 人"
+        slotsLabel.text = IMText.t("invite.slotsLeft", "n" to maxOf(slotsLeft - picked.size, 0))
+        goButton.text = if (picked.isEmpty()) IMText.t("invite.action") else IMText.t("invite.actionN", "n" to picked.size)
         goButton.background = IMKitTheme.roundedDrawable(if (picked.isEmpty()) IMKitTheme.controlOff else IMKitTheme.answer, dp(12))
         goButton.setTextColor(if (picked.isEmpty()) IMKitTheme.secondaryText else IMKitTheme.answerIcon)
     }
@@ -325,9 +325,9 @@ internal class IMInvitePicker(
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
             when (val row = rows()[position]) {
-                is Row.LoadingMore -> textRow(convertView, "加载中…")
-                is Row.PageError -> textRow(convertView, "${row.message} · 点击重试")
-                is Row.Typed -> candidateCell(convertView, "邀请 ${row.uid}", row.uid, sub = "", checked = row.uid in picked, blocked = false, avatarUrl = null)
+                is Row.LoadingMore -> textRow(convertView, IMText.t("invite.loading"))
+                is Row.PageError -> textRow(convertView, IMText.t("invite.pageError", "message" to row.message))
+                is Row.Typed -> candidateCell(convertView, IMText.t("invite.uid", "uid" to row.uid), row.uid, sub = "", checked = row.uid in picked, blocked = false, avatarUrl = null)
                 is Row.Item -> candidateCell(
                     convertView,
                     row.candidate.name,

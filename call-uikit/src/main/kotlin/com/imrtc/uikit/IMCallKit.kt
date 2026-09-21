@@ -94,7 +94,7 @@ object IMCallKit {
     fun start(context: Context, engine: IMCallEngine, config: IMCallKitConfig = IMCallKitConfig()) {
         this.appContext = context.applicationContext
         this.engine = engine
-        this.config = config
+        this.config = config.also(IMText::sync)
         if (asker == null) asker = IMPermissionActivity.asker(context.applicationContext)
         (context.applicationContext as? Application)?.let { IMActivityTracker.install(it) }
         IMActivityTracker.onForegroundChanged = { foreground ->
@@ -412,7 +412,7 @@ object IMCallKit {
      * 不能像麦克风那样把整通电话取消掉。
      */
     internal fun toggleCamera() {
-        if (state.cameraBlocked) { hint("没有摄像头权限"); return }
+        if (state.cameraBlocked) { hint(IMText.t("hint.cameraDenied")); return }
         if (state.cameraOn) { turnCameraOff(); return }
         if (cameraGranted()) { openCameraNow(); return }
         if (!IMPermissionGate.asksCameraOnToggle(state.phase)) {

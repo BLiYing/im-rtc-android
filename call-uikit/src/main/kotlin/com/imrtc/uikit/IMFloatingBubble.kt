@@ -87,13 +87,13 @@ internal class IMFloatingBubble(context: Context) : FrameLayout(context) {
         hangup.setImageResource(IMKitIcon.PHONE_DOWN.resId)
         hangup.setColorFilter(IMKitTheme.primaryText)
         hangup.background = IMKitTheme.circleDrawable(IMKitTheme.hangup)
-        hangup.contentDescription = "挂断"
+        hangup.contentDescription = IMText.t("ctl.hangup")
         hangup.setPadding(dp(6), dp(6), dp(6), dp(6))
         hangup.scaleType = ImageView.ScaleType.FIT_CENTER
         hangup.elevation = dp(10).toFloat()
         hangup.setOnClickListener { onHangup?.invoke() }
         addView(hangup, LayoutParams(dp(HANGUP_DP), dp(HANGUP_DP), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-        contentDescription = "通话中，点击展开"
+        contentDescription = IMText.t("mini.expand")
     }
 
     fun render(state: IMCallViewState) {

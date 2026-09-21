@@ -77,20 +77,20 @@ internal object IMPermissionGate {
 
     /** 说明卡：说清**用来做什么**，不说「请授权」。 */
     fun explanation(device: Device): Copy = when (device) {
-        Device.MICROPHONE -> Copy("需要用到麦克风", "通话时对方要听见你的声音。接下来系统会问你要不要允许。")
-        Device.CAMERA -> Copy("需要用到摄像头", "视频通话时对方要看见你。接下来系统会问你要不要允许。")
+        Device.MICROPHONE -> Copy(IMText.t("perm.mic.explainTitle"), IMText.t("perm.mic.explainBodyOs"))
+        Device.CAMERA -> Copy(IMText.t("perm.cam.explainTitle"), IMText.t("perm.cam.explainBodyOs"))
     }
 
     /** 第一次拒绝后的「再试一次」（Android 独有的那一屏）。 */
     fun secondChance(device: Device): Copy = when (device) {
-        Device.MICROPHONE -> Copy("没有麦克风就没法通话", "再试一次？这次请选「允许」。")
-        Device.CAMERA -> Copy("没有摄像头就看不到你", "再试一次？不允许的话会用语音继续通话。")
+        Device.MICROPHONE -> Copy(IMText.t("perm.mic.retryTitle"), IMText.t("perm.mic.retryBody"))
+        Device.CAMERA -> Copy(IMText.t("perm.cam.retryTitle"), IMText.t("perm.cam.retryBody"))
     }
 
     /** 永久被拒：麦克风走不下去；摄像头降级为语音继续。 */
     fun blocked(device: Device): Copy = when (device) {
-        Device.MICROPHONE -> Copy("没有麦克风权限，无法通话", "到「设置 › 应用 › 权限」里打开麦克风后重试。")
-        Device.CAMERA -> Copy("没有摄像头权限，已用语音继续通话", "要开视频，请到系统设置里打开摄像头权限。")
+        Device.MICROPHONE -> Copy(IMText.t("perm.mic.deniedTitle"), IMText.t("perm.mic.blockedBodyOs"))
+        Device.CAMERA -> Copy(IMText.t("perm.cam.deniedTitle"), IMText.t("perm.cam.blockedBodyOs"))
     }
 
     /**

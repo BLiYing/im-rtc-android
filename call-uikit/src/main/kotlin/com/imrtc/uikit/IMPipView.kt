@@ -82,7 +82,7 @@ internal class IMPipView(context: Context) : FrameLayout(context) {
             setStroke((1.5f * density).toInt(), 0x8CFFFFFF.toInt())
         }
         elevation = dp(10).toFloat()
-        contentDescription = "本端画面。轻点互换，长按可移动"
+        contentDescription = IMText.t("pip.self")
     }
 
     /**

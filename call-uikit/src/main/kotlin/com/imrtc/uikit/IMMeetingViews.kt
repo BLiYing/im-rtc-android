@@ -105,7 +105,7 @@ internal class IMSpeakerStage(context: Context) : FrameLayout(context) {
             },
         )
 
-        unpinButton.text = "📌 取消钉住"
+        unpinButton.text = IMText.t("meeting.unpinLabel")
         unpinButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         unpinButton.setTextColor(IMKitTheme.primaryText)
         unpinButton.setPadding(dp(10), dp(4), dp(10), dp(4))
@@ -113,7 +113,7 @@ internal class IMSpeakerStage(context: Context) : FrameLayout(context) {
             cornerRadius = dp(14).toFloat()
             setColor(0x99000000.toInt())
         }
-        unpinButton.contentDescription = "取消钉住"
+        unpinButton.contentDescription = IMText.t("meeting.unpin")
         unpinButton.setOnClickListener { onUnpin?.invoke() }
         addView(
             unpinButton,

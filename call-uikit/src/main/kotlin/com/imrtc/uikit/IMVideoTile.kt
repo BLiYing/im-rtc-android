@@ -137,7 +137,7 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
 
         netPlate.background = IMKitTheme.circleDrawable(IMKitTheme.scrim)
         netPlate.addView(netBars, LayoutParams(dp(14), dp(14), Gravity.CENTER))
-        netPlate.contentDescription = "网络不佳"
+        netPlate.contentDescription = IMText.t("tile.networkPoor")
         addView(
             netPlate,
             LayoutParams(dp(24), dp(24), Gravity.TOP or Gravity.END).apply {
@@ -275,16 +275,16 @@ internal class IMVideoTile(context: Context) : FrameLayout(context) {
             showsSpeaking = showsSpeaking,
         )
         namePlate.contentDescription = when {
-            !hasAudio -> "$shown，已静音"
-            isSpeaking && showsSpeaking -> "$shown，正在说话"
-            else -> "$shown，麦克风已开启"
+            !hasAudio -> IMText.t("a11y.muted", "name" to shown)
+            isSpeaking && showsSpeaking -> IMText.t("a11y.speaking", "name" to shown)
+            else -> IMText.t("a11y.micOn", "name" to shown)
         }
         netPlate.visibility = if (IMCallViewState.isNetworkPoor(networkLevel)) VISIBLE else GONE
         netBars.level = networkLevel
         // 邀请中的占位格：整格 55% 不透明 + 顶部一行终局（规范 §06）。
         alpha = if (isRinging) 0.55f else 1f
         ringingLabel.visibility = if (isRinging) VISIBLE else GONE
-        ringingLabel.text = if (settled == IMCallViewState.Settled.NONE) "呼叫中…" else IMCallViewState.settledText(settled)
+        ringingLabel.text = if (settled == IMCallViewState.Settled.NONE) IMText.t("tile.calling") else IMCallViewState.settledText(settled)
     }
 
     /**

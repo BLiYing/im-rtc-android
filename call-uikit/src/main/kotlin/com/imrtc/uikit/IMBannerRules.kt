@@ -22,9 +22,9 @@ package com.imrtc.uikit
  */
 internal object IMBannerRules {
 
-    const val RECONNECTING = "正在重连…"
-    const val LOST = "连接已断开"
-    const val POOR = "对方网络不佳"
+    val RECONNECTING: String get() = IMText.t("banner.reconnecting")
+    val LOST: String get() = IMText.t("banner.lost")
+    val POOR: String get() = IMText.t("banner.peerNetwork")
 
     /**
      * 这一轮渲染橙条该写什么。

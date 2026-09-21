@@ -47,7 +47,7 @@ internal class IMPermissionActivity : Activity() {
         // Android 上「从没问过」与「拒绝过一次」都会让 shouldShowRequestPermissionRationale 为 false / true，
         // 这里用 SharedPreferences 记一下「问过没」。
         if (!askedBefore()) {
-            showCard(IMPermissionGate.explanation(device), "好", "取消") { go -> if (go) request() else finishWith(IMPermissionGate.Result.CANCELLED) }
+            showCard(IMPermissionGate.explanation(device), IMText.t("perm.ok"), IMText.t("perm.cancel")) { go -> if (go) request() else finishWith(IMPermissionGate.Result.CANCELLED) }
         } else {
             request()
         }
@@ -67,7 +67,7 @@ internal class IMPermissionActivity : Activity() {
         // 拒绝一次还能再问（rationale 为 true）：劝一次；第二次拒绝或「不再询问」才进被拒分支。
         if (!retried && shouldShowRequestPermissionRationale(device.permission)) {
             retried = true
-            showCard(IMPermissionGate.secondChance(device), "再试一次", "不了") { again ->
+            showCard(IMPermissionGate.secondChance(device), IMText.t("perm.retry"), IMText.t("perm.notNow")) { again ->
                 if (again) requestPermissions(arrayOf(device.permission), REQUEST_CODE) else finishWith(IMPermissionGate.Result.DENIED)
             }
             return
@@ -75,7 +75,7 @@ internal class IMPermissionActivity : Activity() {
         // **两种设备都给「去设置」**：永久拒了之后只能去系统设置里改，
         // 只写一句「请到设置里打开」而不给按钮，等于让用户自己去翻。iOS 的
         // `offersSettings` 一直是两种都给，这里 2026-09-10 拉齐。
-        showCard(IMPermissionGate.blocked(device), "知道了", "去设置") { primary ->
+        showCard(IMPermissionGate.blocked(device), IMText.t("perm.gotIt"), IMText.t("perm.settings")) { primary ->
             if (!primary) openSettings()
             finishWith(IMPermissionGate.Result.DENIED)
         }

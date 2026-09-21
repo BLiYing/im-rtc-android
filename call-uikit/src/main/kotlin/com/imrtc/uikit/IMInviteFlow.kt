@@ -21,7 +21,7 @@ internal object IMInviteFlow {
 
         if (provider != null) {
             if (!provider.canInvite(ctx)) {
-                IMCallKit.hint("当前不允许添加成员")
+                IMCallKit.hint(IMText.t("hint.inviteNotAllowed"))
                 return
             }
             // 宿主的钩子：**吞掉它可能抛出的异常**——一个第三方 provider 崩溃不该带崩通话页。

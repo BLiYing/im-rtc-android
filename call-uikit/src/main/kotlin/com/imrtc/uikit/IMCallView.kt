@@ -95,15 +95,15 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
      */
     internal var pageSwipe: android.view.GestureDetector? = null
 
-    private val micButton = IMControlButton(context, IMKitIcon.MIC, "静音", IMKitIcon.MIC_SLASH, "已静音")
-    private val cameraButton = IMControlButton(context, IMKitIcon.VIDEO_SLASH, "开摄像头", IMKitIcon.VIDEO, "关摄像头")
-    private val speakerButton = IMControlButton(context, IMKitIcon.SPEAKER, "扬声器")
-    private val switchCameraButton = IMControlButton(context, IMKitIcon.CAMERA_FLIP, "翻转")
+    private val micButton = IMControlButton(context, IMKitIcon.MIC, IMText.t("ctl.mute"), IMKitIcon.MIC_SLASH, IMText.t("ctl.muted"))
+    private val cameraButton = IMControlButton(context, IMKitIcon.VIDEO_SLASH, IMText.t("ctl.cameraOn"), IMKitIcon.VIDEO, IMText.t("ctl.cameraOff"))
+    private val speakerButton = IMControlButton(context, IMKitIcon.SPEAKER, IMText.t("ctl.speaker"))
+    private val switchCameraButton = IMControlButton(context, IMKitIcon.CAMERA_FLIP, IMText.t("ctl.flip"))
     /** 下排左边那个空位：有它挂断才真的在屏幕正中。 */
     private val spacer = View(context)
-    private val hangupButton = IMControlButton(context, IMKitIcon.PHONE_DOWN, "挂断", role = IMControlButton.Role.DANGER)
-    private val answerButton = IMControlButton(context, IMKitIcon.PHONE, "接听", role = IMControlButton.Role.ACCEPT)
-    private val rejectButton = IMControlButton(context, IMKitIcon.XMARK, "拒绝", role = IMControlButton.Role.DANGER)
+    private val hangupButton = IMControlButton(context, IMKitIcon.PHONE_DOWN, IMText.t("ctl.hangup"), role = IMControlButton.Role.DANGER)
+    private val answerButton = IMControlButton(context, IMKitIcon.PHONE, IMText.t("ctl.accept"), role = IMControlButton.Role.ACCEPT)
+    private val rejectButton = IMControlButton(context, IMKitIcon.XMARK, IMText.t("ctl.reject"), role = IMControlButton.Role.DANGER)
 
     internal val main = Handler(Looper.getMainLooper())
     private var layout = IMCallViewState.Layout.AUDIO
@@ -443,13 +443,13 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         micButton.isOn = !state.micOn
         cameraButton.isOn = state.cameraOn
         cameraButton.isDisabledLook = state.cameraBlocked
-        cameraButton.caption = if (state.cameraBlocked) "无权限" else "开摄像头"
+        cameraButton.caption = IMText.t(if (state.cameraBlocked) "ctl.cameraBlocked" else "ctl.cameraOn")
         speakerButton.isOn = state.speakerOn
         // 红按钮的语义按房间类型分叉（规范 §05）：群 / 会议写「离开」，拨出中写「取消」。
         hangupButton.caption = when {
-            state.isGroup || state.isMeeting -> "离开"
-            state.phase == IMCallViewState.Phase.OUTGOING -> "取消"
-            else -> "挂断"
+            state.isGroup || state.isMeeting -> IMText.t("ctl.leave")
+            state.phase == IMCallViewState.Phase.OUTGOING -> IMText.t("ctl.cancel")
+            else -> IMText.t("ctl.hangup")
         }
     }
 
@@ -484,7 +484,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         val shown = if (state.phase == IMCallViewState.Phase.INCOMING) state.incomingFromUid else state.peer
         // 名字与头像交给宿主解析（没配 resolver 时原样是 uid，行为不变）。
         val resolver = IMCallKit.config.profileResolver
-        val fallbackName = shown.ifEmpty { peer?.uid ?: "通话中" }
+        val fallbackName = shown.ifEmpty { peer?.uid ?: IMText.t("call.ongoing") }
         audioStage.apply(
             shown, resolvedName(resolver, shown, fallbackName), state.statusText,
             photo = resolvedAvatar(resolver, shown),
@@ -524,7 +524,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         mountInPip(small)
         pip.visibility = VISIBLE
         pip.liftsForControls = chrome.visible
-        pip.contentDescription = if (state.isSwapped) "对方画面。轻点互换，长按可移动" else "本端画面。轻点互换，长按可移动"
+        pip.contentDescription = IMText.t(if (state.isSwapped) "pip.peer" else "pip.self")
         // 进小窗的报 l、上全屏的报 h（协议 §3.5）。
         actions?.reportLayer(peer.uid, if (state.isSwapped) "l" else "h")
     }
@@ -542,7 +542,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
           **本端那格只表达麦克风开关**（2026-09-09 拍板）：自己在不在说话自己知道，
           那一格跳来跳去纯属多余。showsSpeaking = false 之后它只有开 / 关两态。
         */
-        selfTile.apply("", "我", showVideo, state.micOn, isSpeaking = false, volume = 0,
+        selfTile.apply("", IMText.t("self"), showVideo, state.micOn, isSpeaking = false, volume = 0,
             showsSpeaking = false,
             avatarSizeDp = avatarDp)
     }

@@ -98,4 +98,22 @@ class IMCallKitConfig {
      * 与 [IMRingRules.ringtoneFor] 的判据对齐：它优先于阶段判断——静音时哪怕正在来电也不响。
      */
     var ringtoneMuted: Boolean = false
+
+    /**
+     * 界面语言，默认简体中文（与加多语言之前一致）。支持 [IMLocale.ZH_CN] / [IMLocale.EN]；
+     * 想跟随系统传 `IMLocale.system()`。**已经显示在屏幕上的提示不会回译**，下一条才用新语言。
+     * 与 Web / iOS 的 `locale` 同名同义。
+     */
+    var locale: IMLocale = IMLocale.ZH_CN
+        set(value) {
+            field = value
+            IMText.locale = value
+        }
+
+    /** 按语言覆盖个别文案（只写要改的 key，key 见跨端文案表 `docs/i18n/strings.json`）。 */
+    var messages: Map<IMLocale, Map<String, String>> = emptyMap()
+        set(value) {
+            field = value
+            IMText.overrides = value
+        }
 }

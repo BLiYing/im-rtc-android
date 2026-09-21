@@ -213,7 +213,7 @@ internal object IMCallViewReducer {
     fun userRemove(state: IMCallViewState, uid: String) = state.copy(members = state.members - uid)
 
     /** 服务端说本端不在通话里（1407）：藏掉加人入口。 */
-    fun inviteDenied(state: IMCallViewState) = state.copy(canInvite = false, hint = "你已不在通话中，无法添加成员")
+    fun inviteDenied(state: IMCallViewState) = state.copy(canInvite = false, hint = IMText.t("hint.inviteDenied"))
 
     /**
      * 画面**从无到有**时先挂起（[IMCallViewState.Member.videoPending]），等首帧再揭示。

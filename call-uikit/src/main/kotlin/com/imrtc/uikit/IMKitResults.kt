@@ -24,7 +24,7 @@ internal object IMKitResults {
         if (error == null) return@IMResultCallback
         IMRTCLog.w("kit", "拨号被拒 code=${error.code} ${error.name}")
         when (error.code) {
-            INVITE_DENIED -> IMCallKit.hint("对方暂时无法被邀请")
+            INVITE_DENIED -> IMCallKit.hint(IMText.t("hint.inviteRejected"))
             // 本端界面看着空闲、但同一账号在别的设备上通话：入口守门拦不到，只能靠服务端回 1408。
             ALREADY_IN_CALL -> IMBusyGuard.toast(IMBusyGuard.MESSAGE)
         }
@@ -40,9 +40,9 @@ internal object IMKitResults {
         IMRTCLog.w("kit", "加人被拒 code=${error.code} ${error.name}")
         IMCallKit.revokeLastInvite()
         when (error.code) {
-            ROOM_FULL -> IMCallKit.hint("通话已满员（最多 9 人）")
+            ROOM_FULL -> IMCallKit.hint(IMText.t("hint.roomFull"))
             NOT_CALL_OWNER -> IMCallKit.update(IMCallViewReducer.inviteDenied(IMCallKit.state))
-            INVITE_DENIED -> IMCallKit.hint("对方暂时无法被邀请")
+            INVITE_DENIED -> IMCallKit.hint(IMText.t("hint.inviteRejected"))
         }
     }
 
@@ -57,7 +57,7 @@ internal object IMKitResults {
         if (state.phase == IMCallViewState.Phase.CONNECTING && state.callId == callId) {
             IMCallKit.update(IMCallViewReducer.reset())
         }
-        IMCallKit.hint("无法加入该通话")
+        IMCallKit.hint(IMText.t("hint.joinDenied"))
     }
 
     private const val ROOM_FULL = 1202

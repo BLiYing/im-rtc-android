@@ -22,6 +22,7 @@ import com.imrtc.engine.media.IMVideoProfile
 internal class SettingsScreen(private val activity: Activity) : DemoScreen {
 
     private val profileRows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+    private val languageRows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
 
     override val title = "设置"
     override val titleAction: Pair<String, () -> Unit>? = null
@@ -70,6 +71,13 @@ internal class SettingsScreen(private val activity: Activity) : DemoScreen {
                         ),
                     ),
                     DemoUI.card(
+                        activity, "语言 / Language",
+                        listOf(
+                            languageRows,
+                            DemoUI.note(activity, "切换通话界面的语言，立即生效；已经显示的提示不回译。"),
+                        ),
+                    ),
+                    DemoUI.card(
                         activity, "采集画质（宿主策略，换了要重登）",
                         listOf(profileRows),
                     ),
@@ -87,10 +95,28 @@ internal class SettingsScreen(private val activity: Activity) : DemoScreen {
     }
 
     override fun refresh() {
+        languageRows.removeAllViews()
+        LANGUAGES.forEachIndexed { index, (value, name) ->
+            if (index > 0) languageRows.addView(DemoUI.separator(activity))
+            languageRows.addView(languageRow(value, name))
+        }
         profileRows.removeAllViews()
         IMVideoProfile.PRESETS.forEachIndexed { index, profile ->
             if (index > 0) profileRows.addView(DemoUI.separator(activity))
             profileRows.addView(profileRow(profile))
+        }
+    }
+
+    private fun languageRow(value: String, name: String): View = LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        val pad = DemoUI.dp(activity, 10)
+        setPadding(0, pad, 0, pad)
+        addView(DemoUI.label(activity, name, 16f, DemoUI.LABEL), LinearLayout.LayoutParams(0, DemoUI.WRAP, 1f))
+        addView(DemoUI.label(activity, if (DemoSession.language == value) "✓" else "", 17f, DemoUI.TINT))
+        setOnClickListener {
+            DemoSession.language = value
+            refresh()
         }
     }
 
@@ -159,5 +185,10 @@ internal class SettingsScreen(private val activity: Activity) : DemoScreen {
             DemoUI.label(activity, value, 13f, DemoUI.SECONDARY),
             LinearLayout.LayoutParams(0, DemoUI.WRAP, 1f),
         )
+    }
+
+    private companion object {
+        /** 语言各用自己的名字显示，任何语言的界面里都认得出。 */
+        val LANGUAGES = listOf(LANGUAGE_AUTO to "跟随系统 / Auto", "zh-CN" to "简体中文", "en" to "English")
     }
 }
