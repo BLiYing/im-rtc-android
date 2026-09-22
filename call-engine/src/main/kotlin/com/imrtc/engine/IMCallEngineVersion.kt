@@ -7,7 +7,7 @@ package com.imrtc.engine
  * `const val` 在 Java 侧就是静态常量：`IMCallEngineVersion.VERSION`。
  */
 object IMCallEngineVersion {
-    const val VERSION = "2.0.0"
+    const val VERSION = "2.1.0"
 
     /**
      * 握手 `sdk` 字段的默认值（协议 §1.3：string ≤64，**只进日志与灰度，禁止参与逻辑**）。
