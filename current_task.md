@@ -7,6 +7,8 @@
 
 ## 当前焦点
 
+- **09-22 SDK 2.1.0 已发版**（tag `a735dda`，JitPack 三模块构建成功）：本次内容即下面这些条目——音频路由四选一、多语言、通话记录端到端。协议版本未变（仍为 2）。
+
 - **09-22 音频路由四选一（听筒 / 扬声器 / 有线耳机 / 蓝牙）Android 落地并真机 ✅**（PKD130 × frank iOS 新包，三通、面板来回切、挂断重打、群通话，用户确认双向有声；CLIENT_PARITY v1.65）。
   头两轮「双向无声」是对端 iPhone 装的旧包，安卓本身没问题——**测路由前先确认对端是好的**。角标离边 8 → 11（真机反馈压在圆边上）。
   测法 / 判据 / 坑沉淀在 server `docs/ops/AUDIO_ROUTE_TESTING.md`，盯日志用 server `scripts/audiowatch.sh - android`。
