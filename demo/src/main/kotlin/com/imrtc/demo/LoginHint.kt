@@ -28,11 +28,9 @@ internal object LoginHint {
 
     /** 身份卡上显示的完整文案。[error] 是 [DemoApi] 抛出来的那个。 */
     fun explain(server: String, error: Throwable): String {
-        val head = "登录失败：${error.message ?: error::class.java.simpleName}"
+        val head = dt("demo.login.failedMsg", "msg" to (error.message ?: error::class.java.simpleName))
         if (!isLoopback(server) || !isUnreachable(error)) return head
-        return head + "\n\n" +
-            "${hostOf(server)} 要靠 adb reverse 隧道，拔线 / 重插 / 手机重启都会把它断掉。" +
-            "在 Mac 上重跑：\nadb reverse tcp:8787 tcp:8787"
+        return head + "\n\n" + dt("demo.loginHint.tunnel", "host" to hostOf(server))
     }
 
     /**

@@ -66,8 +66,9 @@ internal object DemoSession {
     // `Build.MODEL` 是平台类型（`String!`），个别刷机 ROM 上 `ro.product.model` 是空的。
     val deviceId: String by lazy { "android-" + sanitizeDeviceId(Build.MODEL.orEmpty()) }
 
-    var connectionText = "未登录"
-        private set
+    /** 连接状态文案；存的是「怎么说」而不是说好的话，切换语言后重画就跟得上。 */
+    private var connectionMake: () -> String = { dt("demo.conn.loggedOut") }
+    val connectionText: String get() = connectionMake()
 
     /**
      * 上一次换票失败的原因，**给身份卡直接显示用**。
@@ -262,7 +263,7 @@ internal object DemoSession {
                 .onFailure { error ->
                     main.post {
                         isLoggingIn = false
-                        connectionText = "登录失败"
+                        connectionMake = { dt("demo.conn.loginFailed") }
                         // **原因就贴在按钮上方显示**，不再只写进拨号页底部那个要滚动才看得见的
                         // label——「登录失败」四个字分不出是地址不通、服务端没起、还是账号不对，
                         // 而这三种要查的地方完全不同。
@@ -290,7 +291,7 @@ internal object DemoSession {
             // **带上说明**：不带的话 logout() 会把 lastLoginError 一并清掉，
             // 于是「票过期 → 换票也失败」最后落在一个什么都不说的登录页上——
             // 正是 lastLoginError 这个字段存在的理由被它自己抹掉了。
-            main.post { logout("登录态过期，重登也失败了") }
+            main.post { logout(dt("demo.conn.reloginFailed")) }
         }
     }
 
@@ -333,7 +334,7 @@ internal object DemoSession {
         instance.login(newToken) { _, error ->
             if (error != null) IMRTCLog.w("demo", "登录没成：${error.code} ${error.name} ${error.message}")
         }
-        connectionText = "连接中…"
+        connectionMake = { dt("demo.conn.connecting") }
         notifyChanged()
     }
 
@@ -354,7 +355,7 @@ internal object DemoSession {
         prefs.edit().putBoolean(KEY_AUTO, false).apply()
         teardownEngine()
         if (note == null) lastLoginError = null
-        connectionText = note ?: "未登录"
+        connectionMake = { note ?: dt("demo.conn.loggedOut") }
         notifyChanged()
     }
 
@@ -425,13 +426,17 @@ internal object DemoSession {
 
         override fun onConnected(sessionId: String, resumed: Boolean) {
             if (stale) return
-            connectionText = "已连接 · " + server.removePrefix("http://").removePrefix("https://")
+            val host = server.removePrefix("http://").removePrefix("https://")
+            connectionMake = { dt("demo.conn.connectedTo", "host" to host) }
             notifyChanged()
         }
 
         override fun onDisconnected(code: Int, willReconnect: Boolean) {
             if (stale) return
-            connectionText = "已断开（$code，${if (willReconnect) "重连中…" else "不再重连"}）"
+            connectionMake = {
+                dt("demo.conn.disconnectedWith", "code" to code,
+                    "how" to dt(if (willReconnect) "demo.conn.willReconnect" else "demo.conn.noReconnect"))
+            }
             notifyChanged()
         }
 
@@ -443,16 +448,16 @@ internal object DemoSession {
             when (reason) {
                 // 账号在别处登录，或被宿主后台吊销（封号 / 注销设备）。换票救不了。
                 // **说明交给 logout(note)**：它是最后落地的那一步，写在这里会被它盖掉。
-                IMKickedOutReason.TAKEN_OVER -> main.post { logout("账号在其它设备登录") }
+                IMKickedOutReason.TAKEN_OVER -> main.post { logout(dt("demo.conn.takenOver")) }
                 // 票不好使：取一枚新票重登即可，不必打扰用户。
                 IMKickedOutReason.AUTH_EXPIRED -> {
-                    connectionText = "登录态过期，正在重新获取…"
+                    connectionMake = { dt("demo.conn.tokenRefreshing") }
                     main.post { relogin() }
                 }
                 // 参数被服务端拒了（device_id 不合规、协议版本不支持、应用被停用）。
                 // **换票和重试都没用**——参数不会因为再来一次而变对，所以既不 relogin
                 // 也不自动重连，只把话说清楚，等人去改配置。
-                IMKickedOutReason.CONFIG_REJECTED -> main.post { logout("接入参数被拒，请看日志") }
+                IMKickedOutReason.CONFIG_REJECTED -> main.post { logout(dt("demo.conn.configRejected")) }
             }
             notifyChanged()
         }

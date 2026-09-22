@@ -32,7 +32,7 @@ class MainActivity : Activity() {
         screens = listOf(DialerScreen(this), HistoryScreen(this), SettingsScreen(this))
         setContentView(buildRoot())
         DemoSession.onChange = { refresh() }
-        showTab(0)
+        showTab(savedInstanceState?.getInt(STATE_TAB) ?: 0)
         // 这里**故意不申请任何权限**：麦克风与摄像头由 Kit 在三个闸口自己要
         // （发起 / 开摄像头 / 接听），而且它的结果有业务语义——麦克风被拒＝取消整通话，
         // 摄像头被拒＝降级语音继续，这判断宿主做不了。Demo 抢在前面要一次，
@@ -41,6 +41,12 @@ class MainActivity : Activity() {
         // POST_NOTIFICATIONS 是唯一留给宿主的一条，见 README「宿主要自己申请的权限」。
         // 上次登录过就自动重登——**杀掉 app 再打开不该回到登录页**。
         DemoSession.autoLogin()
+    }
+
+    /** 切语言会 recreate()，回来要停在设置页而不是跳回拨号。 */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt(STATE_TAB, index)
     }
 
     override fun onDestroy() {
@@ -73,7 +79,7 @@ class MainActivity : Activity() {
     private fun buildTabBar(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         setBackgroundColor(DemoUI.CARD)
-        listOf("🔢" to "拨号", "🕘" to "记录", "⚙" to "设置")
+        listOf("🔢" to dt("demo.tab.dial"), "🕘" to dt("demo.tab.history"), "⚙" to dt("demo.tab.settings"))
             .forEachIndexed { position, (icon, name) ->
                 addView(tabItem(icon, name, position), LinearLayout.LayoutParams(0, DemoUI.WRAP, 1f))
             }
@@ -139,4 +145,7 @@ class MainActivity : Activity() {
         // 标题栏上的动作绑的是当前屏，切屏时才会重建，这里不用动。
     }
 
+    private companion object {
+        const val STATE_TAB = "tab"
+    }
 }

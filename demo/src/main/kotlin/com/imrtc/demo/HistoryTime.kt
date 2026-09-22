@@ -32,11 +32,11 @@ internal fun formatCallTime(
     val yesterday = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
     return when {
         startedAtMs >= nowMs || sameDay(started, now) -> time
-        sameDay(started, yesterday) -> "昨天 $time"
+        sameDay(started, yesterday) -> dt("demo.time.yesterday", "time" to time)
         started.get(Calendar.YEAR) == now.get(Calendar.YEAR) ->
-            "${started.get(Calendar.MONTH) + 1}月${started.get(Calendar.DAY_OF_MONTH)}日 $time"
+            dt("demo.time.sameYear", "month" to started.get(Calendar.MONTH) + 1, "day" to started.get(Calendar.DAY_OF_MONTH), "time" to time)
         else ->
-            "${started.get(Calendar.YEAR)}年${started.get(Calendar.MONTH) + 1}月${started.get(Calendar.DAY_OF_MONTH)}日 $time"
+            dt("demo.time.otherYear", "year" to started.get(Calendar.YEAR), "month" to started.get(Calendar.MONTH) + 1, "day" to started.get(Calendar.DAY_OF_MONTH), "time" to time)
     }
 }
 

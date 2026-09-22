@@ -17,10 +17,10 @@ import kotlin.concurrent.thread
 internal class DialerScreen(private val activity: Activity) : DemoScreen {
 
     private val serverField = DemoUI.field(activity, DemoSession.form.serverHint, DemoSession.form.defaultServer)
-    private val userField = DemoUI.field(activity, "用户 ID", DemoSession.form.defaultUsername)
-    private val calleeField = DemoUI.field(activity, "对方 ID", DemoSession.form.defaultCallee)
-    private val roomField = DemoUI.field(activity, "房间号（留空则新建）", DemoSession.form.defaultRoom)
-    private val callIdField = DemoUI.field(activity, "call_id（从另一台设备的日志里抄）", "")
+    private val userField = DemoUI.field(activity, dt("demo.field.userId"), DemoSession.form.defaultUsername)
+    private val calleeField = DemoUI.field(activity, dt("demo.field.calleeId"), DemoSession.form.defaultCallee)
+    private val roomField = DemoUI.field(activity, dt("demo.field.roomId"), DemoSession.form.defaultRoom)
+    private val callIdField = DemoUI.field(activity, dt("demo.field.callId"), "")
 
     private val statusLabel = DemoUI.label(activity, "", 13f, DemoUI.SECONDARY)
 
@@ -38,23 +38,23 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
     private val groupLabel = DemoUI.label(activity, "", 15f, DemoUI.LABEL)
     private val dot = View(activity)
 
-    private val loginButton = DemoUI.button(activity, "登录") { onLogin() }
-    private val logoutButton = DemoUI.button(activity, "退出") { DemoSession.logout() }
+    private val loginButton = DemoUI.button(activity, dt("demo.login.title")) { onLogin() }
+    private val logoutButton = DemoUI.button(activity, dt("demo.logout")) { DemoSession.logout() }
     private val callButtons: List<Button>
 
-    override val title = "拨号"
+    override val title = dt("demo.tab.dial")
     override val titleAction: Pair<String, () -> Unit>? = null
     override val view: View
 
     init {
-        val audio = DemoUI.button(activity, "📞 语音") { place("audio") }
-        val video = DemoUI.button(activity, "📹 视频") { place("video") }
-        val pick = DemoUI.button(activity, "选人 ›") { onPickGroup() }
-        val group = DemoUI.button(activity, "发起群通话") { onGroupCall() }
-        val join = DemoUI.button(activity, "加入房间") { onJoinMeeting() }
+        val audio = DemoUI.button(activity, dt("demo.dial.audio")) { place("audio") }
+        val video = DemoUI.button(activity, dt("demo.dial.video")) { place("video") }
+        val pick = DemoUI.button(activity, dt("demo.dial.pick")) { onPickGroup() }
+        val group = DemoUI.button(activity, dt("demo.dial.startGroup")) { onGroupCall() }
+        val join = DemoUI.button(activity, dt("demo.dial.joinRoom")) { onJoinMeeting() }
         // M8：主动加入一通进行中的群通话（call.join）。真实宿主靠 webhook / 群横幅知道
         // 「有通话在进行中」，Demo 图简单，直接让人把 call_id 抄过来。
-        val joinCall = DemoUI.button(activity, "加入这通电话") { onJoinCall() }
+        val joinCall = DemoUI.button(activity, dt("demo.dial.joinThisCall")) { onJoinCall() }
         callButtons = listOf(audio, video, pick, group, join, joinCall)
 
         errorLabel.maxLines = 4
@@ -67,7 +67,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
                 activity,
                 listOf(
                     DemoUI.card(
-                        activity, "身份",
+                        activity, dt("demo.identity"),
                         listOf(
                             serverField,
                             DemoUI.note(activity, DemoSession.form.serverNote),
@@ -79,27 +79,27 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
                         ),
                     ),
                     DemoUI.card(
-                        activity, "单人通话",
+                        activity, dt("demo.dial.single"),
                         listOf(calleeField, DemoUI.row(activity, listOf(audio, video))),
                     ),
                     DemoUI.card(
-                        activity, "多人通话（最多 ${ContactPicker.LIMIT} 人）",
+                        activity, dt("demo.dial.groupLimit", "n" to ContactPicker.LIMIT),
                         listOf(groupRow(pick), group),
                     ),
                     DemoUI.card(
-                        activity, "加入进行中的群通话",
+                        activity, dt("demo.dial.joinGroupCall"),
                         listOf(
                             callIdField,
                             joinCall,
-                            DemoUI.note(activity, "对应 call.join（M8）：群里任何人都能凭 call_id 直接加进去，不振铃。"),
+                            DemoUI.note(activity, dt("demo.dial.joinCallNote")),
                         ),
                     ),
                     DemoUI.card(
-                        activity, "会议房间",
+                        activity, dt("demo.dial.meeting"),
                         listOf(
                             roomField,
                             join,
-                            DemoUI.note(activity, "会议不走振铃，直接进房。把房间号发给另一台设备就能双开。"),
+                            DemoUI.note(activity, dt("demo.dial.meetingNote")),
                         ),
                     ),
                     errorLabel,
@@ -123,7 +123,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         // 换票是网络往返，慢的时候按钮看着像没反应，人就会再点一下——而**第二次点击正是
         // 那个「登录反被清空」故障的扳机**（见 DemoSession.login）。按钮自己说话，就没人补刀了。
         val busy = DemoSession.isLoggingIn
-        loginButton.text = if (busy) "登录中…" else "登录"
+        loginButton.text = if (busy) dt("demo.login.busy") else dt("demo.login.title")
         loginButton.isEnabled = !busy
         loginButton.alpha = if (busy) 0.4f else 1f
         logoutButton.visibility = if (loggedIn) View.VISIBLE else View.GONE
@@ -131,9 +131,9 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         userField.isEnabled = !loggedIn
         callButtons.forEach { it.isEnabled = loggedIn; it.alpha = if (loggedIn) 1f else 0.4f }
         groupLabel.text = if (DemoSession.groupPick.isEmpty()) {
-            "👥 （请选人）"
+            dt("demo.dial.pickEmpty")
         } else {
-            "👥 " + DemoSession.groupPick.joinToString("、")
+            "👥 " + DemoSession.groupPick.joinToString(dt("demo.dial.listSep"))
         }
     }
 
@@ -145,7 +145,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         val server = serverField.text.toString().trim()
         val user = userField.text.toString().trim()
         if (server.isEmpty() || user.isEmpty()) {
-            formError = "服务器地址和用户 ID 都要填"
+            formError = dt("demo.dial.err.formNeeded")
             refresh()
             return
         }
@@ -162,7 +162,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         errorLabel.text = ""
         val callee = calleeField.text.toString().trim()
         if (callee.isEmpty()) {
-            errorLabel.text = "先填对方 ID"
+            errorLabel.text = dt("demo.dial.err.needCallee")
             return
         }
         DemoSession.form.rememberCallee(callee)
@@ -178,7 +178,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
     private fun onGroupCall() {
         errorLabel.text = ""
         if (DemoSession.groupPick.isEmpty()) {
-            errorLabel.text = "先选人"
+            errorLabel.text = dt("demo.dial.err.needPick")
             return
         }
         DemoSession.placeCall(DemoSession.groupPick, "video", isGroup = true)
@@ -189,7 +189,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         errorLabel.text = ""
         val callId = callIdField.text.toString().trim()
         if (callId.isEmpty()) {
-            errorLabel.text = "先填 call_id"
+            errorLabel.text = dt("demo.dial.err.needCallId")
             return
         }
         DemoSession.joinCall(callId)
@@ -220,7 +220,7 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
                     DemoSession.joinMeeting(room.roomId, room.roomToken)
                 }
             }.onFailure { error ->
-                activity.runOnUiThread { errorLabel.text = "会议房失败：${error.message}" }
+                activity.runOnUiThread { errorLabel.text = dt("demo.dial.err.meeting", "msg" to error.message.orEmpty()) }
             }
         }
     }

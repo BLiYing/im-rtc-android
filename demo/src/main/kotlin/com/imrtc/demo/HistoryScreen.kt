@@ -7,6 +7,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import com.imrtc.engine.IMCallHistoryRecord
+import com.imrtc.uikit.IMText
 import java.util.Date
 import java.util.Locale
 
@@ -37,7 +38,7 @@ internal class HistoryScreen(private val activity: Activity) : DemoScreen {
     /** 刷新会让还在路上的旧请求作废：应答回来时代数对不上就丢掉。 */
     private var generation = 0
 
-    override val title = "通话记录"
+    override val title = dt("demo.history.title")
     override val titleAction: Pair<String, () -> Unit> = "↻" to { refresh() }
     override val view: View = scroll
 
@@ -62,7 +63,7 @@ internal class HistoryScreen(private val activity: Activity) : DemoScreen {
     private fun load(first: Boolean) {
         val engine = DemoSession.engine
         if (engine == null) {
-            show(emptyList(), "未登录")
+            show(emptyList(), dt("demo.conn.loggedOut"))
             return
         }
         if (loading) return
@@ -75,7 +76,7 @@ internal class HistoryScreen(private val activity: Activity) : DemoScreen {
                 nextCursor = page.nextCursor
                 show(if (first) page.records else records + page.records, null)
             } else {
-                show(if (first) emptyList() else records, "加载失败：${error?.message}\n点右上角 ↻ 重试")
+                show(if (first) emptyList() else records, dt("demo.history.loadFailedAndroid", "msg" to error?.message.orEmpty()))
             }
         }
     }
@@ -97,7 +98,7 @@ internal class HistoryScreen(private val activity: Activity) : DemoScreen {
 
     private fun empty(): View = DemoUI.note(
         activity,
-        message ?: "还没有通话记录。\n（会议房不产生 call，所以不会出现在这里）",
+        message ?: dt("demo.history.emptyAndroid"),
     ).apply {
         val pad = DemoUI.dp(activity, 16)
         setPadding(pad, pad, pad, pad)
@@ -143,32 +144,32 @@ internal class HistoryScreen(private val activity: Activity) : DemoScreen {
     private fun peerText(record: IMCallHistoryRecord, me: String): String {
         if (record.isGroup) {
             val extra = if (record.members.any { it.uid == record.caller }) 0 else 1
-            return "群通话 · ${maxOf(record.members.size, 1) + extra} 人"
+            return dt("demo.history.groupCall", "n" to maxOf(record.members.size, 1) + extra)
         }
-        if (record.caller != me) return record.caller.ifEmpty { "（未知）" }
-        return record.members.firstOrNull { it.uid != me }?.uid ?: "（未知）"
+        if (record.caller != me) return record.caller.ifEmpty { dt("demo.history.unknown") }
+        return record.members.firstOrNull { it.uid != me }?.uid ?: dt("demo.history.unknown")
     }
 
     private fun summary(record: IMCallHistoryRecord, role: String): String {
-        val direction = if (role == "callee") "来电" else "呼出"
+        val direction = if (role == "callee") dt("demo.history.incoming") else dt("demo.history.outgoing")
         // 协议 §2.4 规则 6：表外的值 Engine 已经折成 error 了；即便漏进来也不能把生值显给用户。
-        // 文案对齐 call-uikit 的 IMCallViewState.endReasonText（那个函数是 internal，
-        // Demo 是独立模块摸不到，只能照抄一份；RTC_PROTOCOL.md §6/§7.5 的 reason 表为准）。
+        // 分支照 call-uikit 的 IMCallViewState.endReasonText（那个函数是 internal，Demo 摸不到），
+        // 文案直接取 Kit 的 `end.*` 条目，两处不会各说各的；RTC_PROTOCOL.md §6/§7.5 的 reason 表为准。
         val outcome = when (record.reason) {
             "hangup" -> formatDuration(record.durationSec.toLong())
-            "cancel" -> "已取消"
-            "reject" -> if (role == "callee") "已拒接" else "对方拒接"
-            "busy" -> "对方忙线中"
-            "no_answer", "timeout" -> if (role == "callee") "未接来电" else "无应答"
-            "offline" -> "对方当前不在线"
-            "answered_elsewhere" -> "已在其他设备接听"
-            "rejected_elsewhere" -> "已在其他设备拒绝"
-            "room_closed" -> "房间已解散"
-            "network" -> "网络中断"
+            "cancel" -> IMText.t(if (role == "callee") "end.cancelCallee" else "end.cancelCaller")
+            "reject" -> IMText.t(if (role == "callee") "end.rejectCallee" else "end.rejectCaller")
+            "busy" -> IMText.t("end.busy")
+            "no_answer", "timeout" -> IMText.t(if (role == "callee") "end.noAnswerCallee" else "end.noAnswerCaller")
+            "offline" -> IMText.t("end.offline")
+            "answered_elsewhere" -> IMText.t("end.answeredElsewhere")
+            "rejected_elsewhere" -> IMText.t("end.rejectedElsewhere")
+            "room_closed" -> IMText.t("end.roomClosed")
+            "network" -> IMText.t("end.network")
             // 协议 §7.5：kicked 是「被主持人/管理 API 移出通话」，不是登录态失效（那是连接层
             // 的 IMKickedOutReason，另一件事）——写错了会把用户指向错误的排查方向。
-            "kicked" -> "已被移出"
-            else -> "已结束"
+            "kicked" -> IMText.t("end.kicked")
+            else -> IMText.t("end.default")
         }
         return "$direction · $outcome"
     }

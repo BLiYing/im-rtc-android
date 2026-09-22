@@ -45,16 +45,16 @@ class DemoFormPrefs(private val prefs: SharedPreferences) {
 
     val serverHint: String
         get() = if (isEmulator) {
-            "服务器（模拟器用 10.0.2.2 指向 Mac）"
+            dt("demo.server.hintEmu")
         } else {
-            "http://<Mac 的局域网 IP>:8787"
+            dt("demo.server.hintDevice")
         }
 
     val serverNote: String
         get() = if (isEmulator) {
-            "模拟器里 10.0.2.2 就是宿主机，默认值直接可用。"
+            dt("demo.server.noteEmu")
         } else {
-            "真机请填 Mac 的局域网 IP（启动 dev.sh 时会打印）。127.0.0.1 在手机上指手机自己。"
+            dt("demo.server.noteDevice")
         }
 
     /** 默认 **carol**：Web 默认 alice、iOS 默认 bob，三端错开，联调不用改用户名。 */

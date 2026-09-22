@@ -7,7 +7,8 @@
 
 ## 当前焦点
 
-- **09-21 多语言（zh-CN / en）Android 已做，未真机看过**：`IMCallKitConfig.locale` / `messages`，`IMText.t(key)` 取词，文案表 `IMMessages.gen.kt` 由 `scripts/gen-i18n.py` 从 server `docs/i18n/strings.json` 生成；Demo 设置页「语言 / Language」。`test.sh` 6 步绿。Demo 各页自己的文案未进表。设计见 server `docs/design/I18N_DESIGN.md`。
+- **09-22 Demo 各页自己的文案也进表了**：`gen-i18n.py` 拆成两份生成物——UIKit 表 `IMMessages.gen.kt`（`IMText.t()`）与 Demo 表 `demo/.../DemoMessages.gen.kt`（`DemoText.kt` 的 `dt()`）。10 个 Demo 文件接入；语言切换后 `activity.recreate()` 立即生效。`/code-review --fix` 抓到一处真 bug（`HistoryScreen.summary` 的 `cancel` 分支没分角色，被叫看到的是主叫视角文案）并修好。`test.sh` 全绿。
+- **09-21 多语言（zh-CN / en）Android 已做，未真机看过**：`IMCallKitConfig.locale` / `messages`，`IMText.t(key)` 取词，文案表由 `scripts/gen-i18n.py` 从 server `docs/i18n/strings.json` 生成；Demo 设置页「语言 / Language」。设计见 server `docs/design/I18N_DESIGN.md`。
 
 - **09-20 已改、未 commit、未真机验：通话页全屏 + 后台久了回来「界面丢了通话还在」**（真机复现，宿主 im-android 20:46~21:31，进程 / 信令 / 媒体全活、服务端认为人还在房里，对端一直显示他在）。
   根因：`IMCallPresentation.apply` 只在形态变化那一次拉通话页，形态已是 fullscreen 就不再拉。修法：宿主页回前台且通话未结束就补拉（判据 `IMPresentRules`，`PresentRulesTest` 7 条）；

@@ -43,11 +43,11 @@ internal object ContactPicker {
         val dialog = AlertDialog.Builder(activity)
             .setTitle(titleFor(checked))
             .setMultiChoiceItems(contacts.toTypedArray(), checked) { _, _, _ -> }
-            .setPositiveButton("完成") { _, _ ->
+            .setPositiveButton(dt("demo.picker.done")) { _, _ ->
                 // 按名单顺序回传，跟勾选顺序无关——稳定的顺序更好核对。
                 onDone(contacts.filterIndexed { index, _ -> checked[index] })
             }
-            .setNegativeButton("取消", null)
+            .setNegativeButton(dt("demo.picker.cancel"), null)
             .create()
 
         dialog.setOnShowListener {
@@ -66,5 +66,5 @@ internal object ContactPicker {
         dialog.show()
     }
 
-    private fun titleFor(checked: BooleanArray) = "选人 · 已选 ${checked.count { it }} / $LIMIT"
+    private fun titleFor(checked: BooleanArray) = dt("demo.picker.titleCount", "n" to checked.count { it }, "max" to LIMIT)
 }

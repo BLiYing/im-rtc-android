@@ -29,7 +29,7 @@ internal class DemoInviteProvider : IMInviteMemberProvider {
         callback: IMInviteCandidatesCallback,
     ) {
         when (query.trim()) {
-            "fail" -> main.post { callback.onError("模拟失败（演示用，换个搜索词）") }
+            "fail" -> main.post { callback.onError(dt("demo.invite.fail")) }
             "slow" -> main.postDelayed({ callback.onResult(pageFor(query, cursor), null) }, SLOW_DELAY_MS)
             else -> main.post {
                 val page = pageFor(query, cursor)
@@ -54,7 +54,7 @@ internal class DemoInviteProvider : IMInviteMemberProvider {
                 if (uid in ContactPicker.all()) {
                     IMInviteCandidate(uid)
                 } else {
-                    IMInviteCandidate(uid, subtitle = "假成员 · 凑分页用")
+                    IMInviteCandidate(uid, subtitle = dt("demo.invite.fakeSubtitle"))
                 }
             }
     }
