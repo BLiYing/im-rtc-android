@@ -270,7 +270,12 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         applyStageInsets()
         // 小窗的容器要在控制条上沿之内（与 iOS 的 stage 一致）：视频版式 stage 铺满屏幕，
         // 不告诉小窗的话四角贴边会压在按钮上。含控制条自己的下边距与手势条 inset。
-        pip.bottomReservePx = if (controls.visibility == VISIBLE) (height - controls.top).coerceAtLeast(0) else 0
+        // **不看 controls.visibility**：iOS 的小窗容器（stage）钉在 controlsStack.topAnchor 上，
+        // 是个结构性边界，跟控制条本身显示与否无关——控制条 3s 自动隐藏（alpha 淡到 0、INVISIBLE）
+        // 之后按钮的**位置**没变，只是看不见。之前按可见性来去这段留白，一淡出小窗就能贴到
+        // 屏幕真正的左下 / 右下角，松手又会被按钮盖住——用户在控制条隐藏时长按拖动看到的正是这个。
+        // INVISIBLE 的 View 仍参与布局，`controls.top` 一直有效，两种可见性下都能直接读。
+        pip.bottomReservePx = (height - controls.top).coerceAtLeast(0)
         if (!changed) return
         pip.layoutInContainer()
         // 第一轮 render 时 stage 还没量出来，格子边长只能按默认形状估。这里补摆一次。

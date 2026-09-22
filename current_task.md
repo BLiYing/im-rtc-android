@@ -7,6 +7,16 @@
 
 ## 当前焦点
 
+- **09-22 1v1 视频小窗四角贴边压按钮的 bug 修完，真机已验**：`IMCallView.onLayout` 里
+  `pip.bottomReservePx` 原先按 `controls.visibility == VISIBLE` 决定要不要让开按钮区，
+  控制条 3s 自动隐藏（淡到 `INVISIBLE`）后就把留白清成 0，于是长按小窗拖到左下/右下角、
+  松手能贴到屏幕真正的角，压住（看不见的）按钮。对照 iOS `IMPipView.swift`：容器
+  `superview.bounds` 结构性钉在 `controlsStack.topAnchor` 上，跟控制条显不显示无关。
+  改成不看 `visibility`、始终 `(height - controls.top).coerceAtLeast(0)`（`INVISIBLE`
+  的 View 仍参与布局，`controls.top` 全程有效）。`IMPipLayout` 纯函数没变，
+  `KitRulesTest.kt` 不用改。真机验法：PKD130 / Android 15，web bob 呼 android alice
+  1v1 视频接通，等控制条自动收起后长按小窗拖到左下 / 右下角松手，两个角都停在按钮上方、
+  不再贴到屏幕真正的角（拖动前后各截图对比过）。
 - **09-22 Demo 各页自己的文案也进表了**：`gen-i18n.py` 拆成两份生成物——UIKit 表 `IMMessages.gen.kt`（`IMText.t()`）与 Demo 表 `demo/.../DemoMessages.gen.kt`（`DemoText.kt` 的 `dt()`）。10 个 Demo 文件接入；语言切换后 `activity.recreate()` 立即生效。`/code-review --fix` 抓到一处真 bug（`HistoryScreen.summary` 的 `cancel` 分支没分角色，被叫看到的是主叫视角文案）并修好。`test.sh` 全绿。
 - **09-21 多语言（zh-CN / en）Android 已做，未真机看过**：`IMCallKitConfig.locale` / `messages`，`IMText.t(key)` 取词，文案表由 `scripts/gen-i18n.py` 从 server `docs/i18n/strings.json` 生成；Demo 设置页「语言 / Language」。设计见 server `docs/design/I18N_DESIGN.md`。
 
