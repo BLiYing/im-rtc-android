@@ -282,7 +282,7 @@ internal object IMMessages {
         "invite.emptyTyping" to "You can type a user ID above",
         "invite.slotsLeft" to "{n} more can be added",
         "ctl.speaker" to "Speaker",
-        "route.earpiece" to "iPhone",
+        "route.earpiece" to "Earpiece",
         "route.speaker" to "Speaker",
         "route.wiredHeadset" to "Wired Headset",
         "route.bluetooth" to "Bluetooth",
