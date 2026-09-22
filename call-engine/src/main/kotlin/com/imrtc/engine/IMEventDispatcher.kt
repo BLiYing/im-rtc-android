@@ -158,6 +158,9 @@ internal class IMEventDispatcher(
     /** 媒体层直接抛的，不经过状态机。 */
     fun firstVideoFrame(uid: String, trackId: String) = onMain { listener.onFirstVideoFrame(uid, trackId) }
 
+    fun audioRoutesChanged(routes: List<IMAudioRoute>, current: IMAudioRoute?) =
+        onMain { listener.onAudioRoutesChanged(routes, current) }
+
     /**
      * **找不到调用方**的错误（或调用方没传回调时的退回，R7）。`name` 从错误码表按 `code` 反查；
      * 查不到（未来新码、本端还没升级）就给 `unknown`。

@@ -8,6 +8,7 @@ import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.imrtc.engine.IMAudioRoute
 
 /**
  * 通话界面本体，三种版式（规范 §03 / §04）：
@@ -27,6 +28,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         fun onToggleMic()
         fun onToggleCamera()
         fun onToggleSpeaker()
+        /** 路由面板里点了一条（扬声器键处于路由选择形态时，点它弹面板而不是直接切）。 */
+        fun onPickAudioRoute(route: IMAudioRoute)
         fun onSwitchCamera()
         fun onMinimize()
         fun onSwap()
@@ -97,7 +100,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
     private val micButton = IMControlButton(context, IMKitIcon.MIC, IMText.t("ctl.mute"), IMKitIcon.MIC_SLASH, IMText.t("ctl.muted"))
     private val cameraButton = IMControlButton(context, IMKitIcon.VIDEO_SLASH, IMText.t("ctl.cameraOn"), IMKitIcon.VIDEO, IMText.t("ctl.cameraOff"))
-    private val speakerButton = IMControlButton(context, IMKitIcon.SPEAKER, IMText.t("ctl.speaker"))
+    internal val speakerButton = IMControlButton(context, IMKitIcon.SPEAKER, IMText.t("ctl.speaker"))
     private val switchCameraButton = IMControlButton(context, IMKitIcon.CAMERA_FLIP, IMText.t("ctl.flip"))
     /** 下排左边那个空位：有它挂断才真的在屏幕正中。 */
     private val spacer = View(context)
@@ -211,7 +214,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         }
         micButton.setOnClickListener { actions?.onToggleMic() }
         cameraButton.setOnClickListener { actions?.onToggleCamera() }
-        speakerButton.setOnClickListener { actions?.onToggleSpeaker() }
+        speakerButton.setOnClickListener { onSpeakerTapped() }
         switchCameraButton.setOnClickListener { actions?.onSwitchCamera() }
         hangupButton.setOnClickListener { actions?.onHangup() }
         answerButton.setOnClickListener { actions?.onAnswer() }
@@ -449,7 +452,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
         cameraButton.isOn = state.cameraOn
         cameraButton.isDisabledLook = state.cameraBlocked
         cameraButton.caption = IMText.t(if (state.cameraBlocked) "ctl.cameraBlocked" else "ctl.cameraOn")
-        speakerButton.isOn = state.speakerOn
+        renderSpeakerButton(state)
         // 红按钮的语义按房间类型分叉（规范 §05）：群 / 会议写「离开」，拨出中写「取消」。
         hangupButton.caption = when {
             state.isGroup || state.isMeeting -> IMText.t("ctl.leave")

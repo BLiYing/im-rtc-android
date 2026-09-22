@@ -2,6 +2,7 @@ package com.imrtc.uikit
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.MotionEvent
 import android.widget.FrameLayout
@@ -36,7 +37,24 @@ internal class IMControlButton(
     private val circle = FrameLayout(context)
     private val iconView = ImageView(context)
     private val captionView = TextView(context)
+    /** 右下角 8×8 的路由角标（chevron-up），只在扬声器键处于「路由选择」形态时出现（设计稿 §04 v3.5）。 */
+    private val chevron = ImageView(context)
     private var offCaption = caption
+
+    /** 换掉常态 / 开启态的图标（路由选择形态下显示在用路由的字形）；null = 用构造时给的那两枚。 */
+    var overrideIcon: IMKitIcon? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            paint()
+        }
+
+    var showsChevron = false
+        set(value) {
+            if (field == value) return
+            field = value
+            chevron.visibility = if (value) VISIBLE else GONE
+        }
 
     var isOn = false
         set(value) {
@@ -79,11 +97,23 @@ internal class IMControlButton(
             Size.SMALL -> IMKitTheme.ICON_SMALL_DP
         }
         circle.addView(iconView, FrameLayout.LayoutParams(dp(iconDp), dp(iconDp), Gravity.CENTER))
+        chevron.setImageResource(IMKitIcon.CHEVRON_UP.resId)
+        chevron.visibility = GONE
+        circle.addView(
+            chevron,
+            FrameLayout.LayoutParams(dp(8), dp(8), Gravity.BOTTOM or Gravity.END).apply {
+                bottomMargin = dp(6)
+                marginEnd = dp(6)
+            },
+        )
         addView(circle, LayoutParams(diameter, diameter))
         captionView.textSize = 11f
         captionView.gravity = Gravity.CENTER
         captionView.setTextColor(IMKitTheme.secondaryText)
         captionView.maxLines = 1
+        // 路由选择形态下文案是设备名：最多 6 字，超长中间省略（设计稿 §04）。
+        captionView.maxEms = 6
+        captionView.ellipsize = TextUtils.TruncateAt.MIDDLE
         addView(captionView, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(7) })
         paint()
     }
@@ -95,8 +125,9 @@ internal class IMControlButton(
             Role.NORMAL -> if (isOn) IMKitTheme.controlOn to IMKitTheme.controlOnIcon else IMKitTheme.controlOff to IMKitTheme.controlOffIcon
         }
         circle.background = IMKitTheme.circleDrawable(bg)
-        iconView.setImageResource((if (isOn) onIcon else icon).resId)
+        iconView.setImageResource((overrideIcon ?: if (isOn) onIcon else icon).resId)
         iconView.setColorFilter(fg)
+        chevron.setColorFilter(fg)
         captionView.text = if (isOn) onCaption else offCaption
         alpha = if (isDisabledLook) 0.35f else 1f
         contentDescription = captionView.text

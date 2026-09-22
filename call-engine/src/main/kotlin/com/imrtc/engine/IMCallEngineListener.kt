@@ -186,6 +186,13 @@ interface IMCallEngineListener {
     fun onNetworkQuality(entries: List<IMNetworkQuality>) {}
 
     /**
+     * 可选的音频路由清单或在用的那条变了（设计文档 §7.5，2026-09-22）：媒体起来那一刻报一次，
+     * 之后插拔耳机、连断蓝牙、用户手选都会再报。`current` 在清单为空时为 null。
+     * 界面据此决定扬声器键是二态开关还是路由选择（清单多于内置两条）。
+     */
+    fun onAudioRoutesChanged(routes: List<IMAudioRoute>, current: IMAudioRoute?) {}
+
+    /**
      * 某人的第一帧画面到了，UI 用来撤 loading。`trackId` 是那条视频轨道的 track_id；
      * 媒体层拿不到时给空串（**不是假值**——拿不到的场景见媒体层实现的类注释）。
      */

@@ -2,6 +2,7 @@ package com.imrtc.engine.webrtc
 
 import android.Manifest
 import android.content.Context
+import com.imrtc.engine.IMAudioRoute
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMMediaAdapter
 import com.imrtc.engine.media.IMVideoProfile
@@ -81,7 +82,8 @@ class IMWebRTCAdapter @JvmOverloads constructor(
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) block() else main.post(block)
     }
 
-    private val audio = IMAudioRouter(appContext)
+    // 路由清单 / 在用项变了往 Engine 报；lambda 里读的是调用那一刻的 events，与声明顺序无关。
+    private val audio = IMAudioRouter(appContext) { routes, current -> events?.onAudioRoutesChanged(routes, current) }
     private val peers = IMPeerConnections(appContext, PeerCallbacks(), preferHardwareH264)
 
     /** 上行怎么编（层、预算、codec、降级偏好）。见 [IMUplinkPolicy] 的类注释。 */
@@ -447,6 +449,12 @@ class IMWebRTCAdapter @JvmOverloads constructor(
     }
 
     override fun setSpeakerOn(on: Boolean) = audio.setSpeakerOn(on)
+
+    override val availableAudioRoutes: List<IMAudioRoute> get() = audio.routes()
+
+    override val currentAudioRoute: IMAudioRoute? get() = audio.current()
+
+    override fun setAudioRoute(route: IMAudioRoute) = audio.setRoute(route)
 
     // ── 采集 ──────────────────────────────────────────────────────────
 

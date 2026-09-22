@@ -1,5 +1,8 @@
 package com.imrtc.uikit
 
+import com.imrtc.engine.IMAudioRoute
+import com.imrtc.engine.IMAudioRouteKind
+
 /** 视图模型的全部变更入口。**界面不许自己改字段**，改法都在这里。 */
 internal object IMCallViewReducer {
 
@@ -287,6 +290,16 @@ internal object IMCallViewReducer {
     }
 
     fun toggleSpeaker(state: IMCallViewState) = state.copy(speakerOn = !state.speakerOn)
+
+    /**
+     * 路由清单 / 在用项变了。**扬声器布尔跟着在用的那条走**（在用 = 扬声器才亮）——两套意图各说各话
+     * 正是 iOS 上一版的风险点；`current` 为 null（清单为空）时不动布尔。
+     */
+    fun audioRoutes(state: IMCallViewState, routes: List<IMAudioRoute>, current: IMAudioRoute?) = state.copy(
+        audioRoutes = routes,
+        currentAudioRoute = current,
+        speakerOn = current?.let { it.kind == IMAudioRouteKind.SPEAKER } ?: state.speakerOn,
+    )
 
     fun reset() = IMCallViewState()
 

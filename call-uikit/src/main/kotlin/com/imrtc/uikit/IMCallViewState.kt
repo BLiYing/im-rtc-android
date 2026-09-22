@@ -1,5 +1,8 @@
 package com.imrtc.uikit
 
+import com.imrtc.engine.IMAudioRoute
+import com.imrtc.engine.IMAudioRouteKind
+
 /**
  * 通话界面的视图模型：**纯值 + 纯函数 reducer**，不碰 View、不碰 Engine。
  *
@@ -39,6 +42,12 @@ internal data class IMCallViewState(
     val micOn: Boolean = true,
     val cameraOn: Boolean = false,
     val speakerOn: Boolean = false,
+    /**
+     * 此刻可选的音频路由清单与在用的那条（Engine `onAudioRoutesChanged`，2026-09-22）。
+     * **通话级**：每通新建状态时自然清空，不用在各处复位。清单多于内置两条时扬声器键变成路由选择，见 [showsRoutePicker]。
+     */
+    val audioRoutes: List<IMAudioRoute> = emptyList(),
+    val currentAudioRoute: IMAudioRoute? = null,
     /** 摄像头权限被拒（或没有设备）。**通话继续，只是没有画面**（交互稿 §02 P3）：按钮变禁用态写「无权限」。 */
     val cameraBlocked: Boolean = false,
     /**
@@ -82,6 +91,12 @@ internal data class IMCallViewState(
 ) {
 
     enum class Phase { IDLE, INCOMING, OUTGOING, CONNECTING, CONNECTED, ENDED }
+
+    /**
+     * 扬声器键该是哪种形态（设计稿 §04 v3.5）：只有内置两条 = 二态开关；出现第三条（有线 / 蓝牙）= 路由选择。
+     * **看清单不看在用的那条**：用户在面板里选回听筒之后蓝牙其实还连着，入口不该因此消失（iOS 上一版栽过这个跟头）。
+     */
+    val showsRoutePicker: Boolean get() = audioRoutes.size > 2
 
     enum class Connection { OK, RECONNECTING, LOST }
 
@@ -305,4 +320,18 @@ videoSpeakerUid 挑「该显示谁的画面」——**只在远端成员里挑**
 internal fun IMCallViewState.videoSpeakerUid(): String {
     if (speakingUid.isNotEmpty() && members.containsKey(speakingUid)) return speakingUid
     return members.keys.firstOrNull().orEmpty()
+}
+
+/**
+ * routeDisplayName 面板那一行 / 按钮文案该写什么：外接设备用系统给的真名（「AirPods Pro」），
+ * 内置两条用本地化文案——Engine 没有界面、不做本地化，「听筒」「扬声器」只能在 Kit 取（与 iOS `imRouteDisplayName` 同形）。
+ */
+internal fun routeDisplayName(route: IMAudioRoute): String {
+    if (route.name.isNotEmpty()) return route.name
+    return when (route.kind) {
+        IMAudioRouteKind.EARPIECE -> IMText.t("route.earpiece")
+        IMAudioRouteKind.SPEAKER -> IMText.t("route.speaker")
+        IMAudioRouteKind.WIRED_HEADSET -> IMText.t("route.wiredHeadset")
+        IMAudioRouteKind.BLUETOOTH -> IMText.t("route.bluetooth")
+    }
 }

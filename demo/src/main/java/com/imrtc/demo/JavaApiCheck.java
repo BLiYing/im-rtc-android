@@ -1,5 +1,7 @@
 package com.imrtc.demo;
 
+import com.imrtc.engine.IMAudioRoute;
+import com.imrtc.engine.IMAudioRouteKind;
 import com.imrtc.uikit.IMProfileResolver;
 import android.app.Activity;
 import android.graphics.drawable.Drawable;
@@ -126,6 +128,15 @@ final class JavaApiCheck {
             }
 
             @Override
+            public void onAudioRoutesChanged(List<IMAudioRoute> routes, IMAudioRoute current) {
+                for (IMAudioRoute route : routes) {
+                    IMAudioRouteKind kind = route.getKind();
+                    String name = route.getName();
+                    String uid = route.getUid();
+                }
+            }
+
+            @Override
             public void onNetworkQuality(List<IMNetworkQuality> entries) {
                 for (IMNetworkQuality entry : entries) {
                     int level = entry.getLevel();
@@ -202,6 +213,14 @@ final class JavaApiCheck {
         engine.closeCamera();
         engine.switchCamera();
         engine.setSpeakerOn(true);
+        // 音频路由四选一（2026-09-22）：清单、在用项、切换。
+        for (IMAudioRoute route : engine.getAvailableAudioRoutes()) {
+            engine.setAudioRoute(route);
+        }
+        IMAudioRoute currentRoute = engine.getCurrentAudioRoute();
+        if (currentRoute != null && currentRoute.getUid().equals(IMAudioRoute.SPEAKER_UID)) {
+            engine.setSpeakerOn(false);
+        }
         engine.attachView("bob", engine.createVideoView(context));
         // 本端预览：先拿 cid，再按 cid 挂视图（与 iOS / Web 同形）。
         String previewCid = engine.startLocalPreview();

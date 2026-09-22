@@ -1,6 +1,5 @@
 package com.imrtc.engine
 
-import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMMediaAdapter
 import com.imrtc.engine.protocol.IMErrorCode
 import com.imrtc.engine.protocol.IMFrameType
@@ -472,10 +471,26 @@ class IMCallEngine private constructor(
         result.finish(null)
     }
 
-    /** 扬声器开关。提示类：没有结果，销毁后空操作。 */
+    /** 扬声器开关。**关 = 跟随系统**（接着耳机 / 蓝牙就走它们）。提示类：没有结果，销毁后空操作。 */
     fun setSpeakerOn(on: Boolean) {
         if (destroyed) return
         scheduler.post { media?.setSpeakerOn(on) }
+    }
+
+    /**
+     * 音频路由四选一（设计文档 §7.5，2026-09-22，与 iOS 同名）：可选清单 / 在用项 / 切换。
+     * **媒体没起来时清单为空**（响铃期、没接媒体适配器的宿主）——界面据此退回二态开关；
+     * 变化从 [IMCallEngineListener.onAudioRoutesChanged] 来，不必轮询。
+     * 切换是提示类：切不过去只记日志（设备可能刚被拔掉），通话照常；选扬声器等价于 [setSpeakerOn]`(true)`。
+     */
+    val availableAudioRoutes: List<IMAudioRoute>
+        get() = if (destroyed) emptyList() else media?.availableAudioRoutes.orEmpty()
+
+    val currentAudioRoute: IMAudioRoute? get() = if (destroyed) null else media?.currentAudioRoute
+
+    fun setAudioRoute(route: IMAudioRoute) {
+        if (destroyed) return
+        scheduler.post { media?.setAudioRoute(route) }
     }
 
     /** 造一个视频视图。没有媒体适配器时返回 null——UIKit 会退回头像占位。 */
@@ -536,29 +551,7 @@ class IMCallEngine private constructor(
      */
     fun setRemoteLayer(uid: String, layer: String) {
         if (destroyed) return
-        scheduler.post {
-            var sent = 0
-            for ((trackId, info) in loop.ctx.room.remoteTracks) {
-                if (info.uid != uid || info.kind != "video") continue
-                val result = IMCallResult(dispatcher, null, IMCallResult.UNIT)
-                loop.input(
-                    IMMachineInput.Act("update_layer", mapOf("track_id" to IMJson.Str(trackId), "max_layer" to IMJson.Str(layer))),
-                    result,
-                )
-                result.seal()
-                sent++
-            }
-            /*
-             **这两行是这条通路唯一的外部可见性**：服务端不记录成功的 room 帧，客户端也不逐帧打日志。
-             **找不到轨道不是错**：人先进来、轨道后到是常态，轨道到了 Kit 会重报
-             （`IMCallKit.invalidateReportedLayer`）。所以那一支记 DEBUG 不记 WARN。
-            */
-            if (sent > 0) {
-                IMRTCLog.i("engine", "层上界已报 uid=$uid layer=$layer tracks=$sent")
-            } else {
-                IMRTCLog.d("engine", "层上界暂不发 uid=$uid layer=$layer（他的视频轨道还没到）")
-            }
-        }
+        scheduler.post { IMRemoteLayer.report(loop, dispatcher, uid, layer) }
     }
 
     // ── 内部 ─────────────────────────────────────────────────────────

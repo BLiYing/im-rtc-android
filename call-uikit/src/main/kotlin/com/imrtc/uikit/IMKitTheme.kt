@@ -142,6 +142,12 @@ internal enum class IMKitIcon(val resId: Int) {
     CAMERA_FLIP(R.drawable.ic_im_camera_flip),
     PERSON_ADD(R.drawable.ic_im_person_add),
     MAGNIFYING_GLASS(R.drawable.ic_im_magnifyingglass),
+    /** 音频路由四选一（2026-09-22）：听筒 / 有线耳机 / 蓝牙的字形、面板里的勾、扬声器键右下角的路由角标。 */
+    EARPIECE(R.drawable.ic_im_earpiece),
+    HEADPHONES(R.drawable.ic_im_headphones),
+    BLUETOOTH(R.drawable.ic_im_bluetooth),
+    CHECK(R.drawable.ic_im_check),
+    CHEVRON_UP(R.drawable.ic_im_chevron_up),
 }
 
 /**

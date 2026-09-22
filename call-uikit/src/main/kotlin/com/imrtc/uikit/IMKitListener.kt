@@ -1,5 +1,6 @@
 package com.imrtc.uikit
 
+import com.imrtc.engine.IMAudioRoute
 import com.imrtc.engine.IMCallEndReason
 import com.imrtc.engine.IMCallSummary
 import com.imrtc.engine.IMKickedOutReason
@@ -226,6 +227,12 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
     override fun onNetworkQuality(entries: List<IMNetworkQuality>) {
         IMCallKit.update(IMCallViewReducer.networkQuality(state, entries.associate { it.uid to it.level }))
         host.onNetworkQuality(entries)
+    }
+
+    /** 路由清单 / 在用项：扬声器键据此在二态开关与路由选择之间变形（设计稿 §04 v3.5）。 */
+    override fun onAudioRoutesChanged(routes: List<IMAudioRoute>, current: IMAudioRoute?) {
+        IMCallKit.update(IMCallViewReducer.audioRoutes(state, routes, current))
+        host.onAudioRoutesChanged(routes, current)
     }
 
     override fun onFirstVideoFrame(uid: String, trackId: String) {

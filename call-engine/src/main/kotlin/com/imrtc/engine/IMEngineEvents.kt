@@ -145,5 +145,8 @@ internal class IMMediaEvents(
 
     override fun onFirstVideoFrame(uid: String, trackId: String) = dispatcher.firstVideoFrame(uid, trackId)
 
+    override fun onAudioRoutesChanged(routes: List<IMAudioRoute>, current: IMAudioRoute?) =
+        dispatcher.audioRoutesChanged(routes, current)
+
     override fun onMediaError(code: Int, message: String) = dispatcher.error(code, message)
 }

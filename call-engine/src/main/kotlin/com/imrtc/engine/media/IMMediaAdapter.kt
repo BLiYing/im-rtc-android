@@ -2,6 +2,7 @@ package com.imrtc.engine.media
 
 import android.content.Context
 import android.view.View
+import com.imrtc.engine.IMAudioRoute
 
 /**
  * 媒体层的**接缝**——`call-engine` 里只有这个接口，没有任何实现。
@@ -35,6 +36,12 @@ interface IMMediaAdapter {
 
         /** 媒体层出错（协商失败、ICE failed、采集权限被拒）。 */
         fun onMediaError(code: Int, message: String)
+
+        /**
+         * 可选的音频路由清单、或在用的那条变了（插拔耳机 / 连断蓝牙 / 用户手选之后）。
+         * 默认空实现：不管音频路由的适配器无事可做。
+         */
+        fun onAudioRoutesChanged(routes: List<IMAudioRoute>, current: IMAudioRoute?) {}
     }
 
     /** 装上回调出口。Engine 在创建时调一次。 */
@@ -142,6 +149,22 @@ interface IMMediaAdapter {
     /** 前后摄像头切换。 */
     fun switchCamera()
 
-    /** 扬声器 / 听筒。 */
+    /** 扬声器 / 听筒。**关 = 跟随系统**（接着耳机 / 蓝牙就走它们），不是钉死听筒。 */
     fun setSpeakerOn(on: Boolean)
+
+    /**
+     * 此刻可选的音频路由（设计文档 §7.5，2026-09-22）。**没起媒体时为空清单**——
+     * 空清单的语义是「不提供路由选择」，界面据此退回二态开关。默认实现给的就是空。
+     */
+    val availableAudioRoutes: List<IMAudioRoute> get() = emptyList()
+
+    /** 此刻在用的那条；清单为空时为 null。 */
+    val currentAudioRoute: IMAudioRoute? get() = null
+
+    /**
+     * 切到指定路由。**手选盖过默认值，但盖不过之后的插拔**（交互稿差异 7）：
+     * 用户选了扬声器，之后插上耳机仍自动切到耳机；拔出时回到他选的扬声器。
+     * 切不过去只记日志，绝不让通话失败。默认空实现。
+     */
+    fun setAudioRoute(route: IMAudioRoute) {}
 }

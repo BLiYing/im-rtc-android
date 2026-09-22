@@ -453,12 +453,6 @@ object IMCallKit {
         update(IMCallViewReducer.toggleCamera(state))
     }
 
-    internal fun toggleSpeaker() {
-        val next = !state.speakerOn
-        engine?.setSpeakerOn(next)
-        update(IMCallViewReducer.toggleSpeaker(state))
-    }
-
     /** 互换 1v1 的两块画面（交互稿 §04）。纯本端行为，不发帧。 */
     internal fun swap() = update(IMCallViewReducer.setSwapped(state, !state.isSwapped))
 

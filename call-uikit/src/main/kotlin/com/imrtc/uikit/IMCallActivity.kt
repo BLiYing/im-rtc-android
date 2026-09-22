@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
+import com.imrtc.engine.IMAudioRoute
 import com.imrtc.engine.log.IMRTCLog
 
 /**
@@ -45,6 +46,7 @@ class IMCallActivity : Activity() {
             override fun onToggleMic() = IMCallKit.toggleMic()
             override fun onToggleCamera() = IMCallKit.toggleCamera()
             override fun onToggleSpeaker() = IMCallKit.toggleSpeaker()
+            override fun onPickAudioRoute(route: IMAudioRoute) = IMCallKit.selectAudioRoute(route)
             override fun onSwitchCamera() = IMCallKit.switchCamera()
             override fun onMinimize() = minimize()
             override fun onSwap() = IMCallKit.swap()
