@@ -54,6 +54,10 @@ internal class IMControlButton(
             if (field == value) return
             field = value
             chevron.visibility = if (value) VISIBLE else GONE
+            // 路由选择形态下文案是设备名：最多 6 字，超长中间省略（设计稿 §04）。**只在这个形态下限**，
+            // 别的按钮（「无权限」「已静音」……）不该被这条规则截断。
+            captionView.maxWidth = if (value) dp(6 * 11) else Int.MAX_VALUE
+            captionView.ellipsize = if (value) TextUtils.TruncateAt.MIDDLE else null
         }
 
     var isOn = false
@@ -113,9 +117,6 @@ internal class IMControlButton(
         captionView.gravity = Gravity.CENTER
         captionView.setTextColor(IMKitTheme.secondaryText)
         captionView.maxLines = 1
-        // 路由选择形态下文案是设备名：最多 6 字，超长中间省略（设计稿 §04）。
-        captionView.maxEms = 6
-        captionView.ellipsize = TextUtils.TruncateAt.MIDDLE
         addView(captionView, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply { topMargin = dp(7) })
         paint()
     }

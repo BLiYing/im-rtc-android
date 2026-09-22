@@ -8,6 +8,8 @@ package com.imrtc.uikit
  */
 
 internal fun IMCallView.renderSpeakerButton(state: IMCallViewState) {
+    // 第三条路由没了（拔了耳机）或通话收场：面板上的行已经不对，收掉。
+    if (!state.showsRoutePicker || state.phase == IMCallViewState.Phase.ENDED) dismissRoutePanel()
     if (!state.showsRoutePicker) {
         speakerButton.showsChevron = false
         speakerButton.overrideIcon = null
@@ -26,8 +28,16 @@ internal fun IMCallView.renderSpeakerButton(state: IMCallViewState) {
 /** 点扬声器键：有第三条路由时弹面板、点一行才切；否则就是老的二态开关。 */
 internal fun IMCallView.onSpeakerTapped() {
     if (state.showsRoutePicker) {
-        IMAudioRoutePanel.show(context, state) { actions?.onPickAudioRoute(it) }
+        dismissRoutePanel()
+        routePanel = IMAudioRoutePanel.show(context, state) { actions?.onPickAudioRoute(it) }
+            .also { dialog -> dialog.setOnDismissListener { if (routePanel === dialog) routePanel = null } }
     } else {
         actions?.onToggleSpeaker()
     }
+}
+
+/** 收掉正弹着的路由面板（没弹就是空操作）。Activity 先销毁而 Dialog 还挂着会报 WindowLeaked。 */
+internal fun IMCallView.dismissRoutePanel() {
+    routePanel?.let { if (it.isShowing) it.dismiss() }
+    routePanel = null
 }

@@ -81,15 +81,16 @@ class IMAudioRoutePolicyTest {
     }
 
     @Test
-    fun `清单：听筒、扬声器恒在前两位且用固定 uid，外接设备带真名，HDMI 不进清单，BLE 与 SCO 同一只按 uid 去重`() {
-        val routes = IMAudioRoutePolicy.routes(listOf(Device(TYPE_HDMI, "TV", 30), airpods, speaker, wired, earpiece, Device(TYPE_BLE_HEADSET, "AirPods Pro", 9)))
+    fun `清单：听筒、扬声器恒在前两位且用固定 uid，外接设备带真名，HDMI 不进清单，BLE 与 SCO 同一只（id 不同）按同类同名去重`() {
+        val routes = IMAudioRoutePolicy.routes(listOf(Device(TYPE_HDMI, "TV", 30), airpods, speaker, wired, earpiece, Device(TYPE_BLE_HEADSET, "AirPods Pro", 10)))
             .mapNotNull(IMAudioRoutePolicy::toRoute)
         assertEquals(
             listOf(
                 IMAudioRoute(IMAudioRouteKind.EARPIECE, "", IMAudioRoute.EARPIECE_UID),
                 IMAudioRoute(IMAudioRouteKind.SPEAKER, "", IMAudioRoute.SPEAKER_UID),
                 IMAudioRoute(IMAudioRouteKind.WIRED_HEADSET, "USB-C 耳机", "7"),
-                IMAudioRoute(IMAudioRouteKind.BLUETOOTH, "AirPods Pro", "9"),
+                // 同一只耳机的 BLE（id 10）与 SCO（id 9）两个端口并成一行；留下的是 FOLLOW_SYSTEM_ORDER 里靠前的 BLE 那个。
+                IMAudioRoute(IMAudioRouteKind.BLUETOOTH, "AirPods Pro", "10"),
             ),
             routes,
         )

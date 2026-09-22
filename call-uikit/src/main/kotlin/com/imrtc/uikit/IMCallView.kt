@@ -101,6 +101,8 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
     private val micButton = IMControlButton(context, IMKitIcon.MIC, IMText.t("ctl.mute"), IMKitIcon.MIC_SLASH, IMText.t("ctl.muted"))
     private val cameraButton = IMControlButton(context, IMKitIcon.VIDEO_SLASH, IMText.t("ctl.cameraOn"), IMKitIcon.VIDEO, IMText.t("ctl.cameraOff"))
     internal val speakerButton = IMControlButton(context, IMKitIcon.SPEAKER, IMText.t("ctl.speaker"))
+    /** 正弹着的音频路由面板；通话结束 / 页面销毁 / 第三条路由消失时收掉，见 [dismissRoutePanel]。 */
+    internal var routePanel: android.app.Dialog? = null
     private val switchCameraButton = IMControlButton(context, IMKitIcon.CAMERA_FLIP, IMText.t("ctl.flip"))
     /** 下排左边那个空位：有它挂断才真的在屏幕正中。 */
     private val spacer = View(context)
@@ -341,7 +343,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
          Web 的 `CallOverlay` 第一句就是 `if (phase === 'idle') return null`，
          iOS 的 `IMCallWindow` 在 idle 时同步把整个 window 置 nil——两端都不给这一帧机会。
         */
-        if (state.phase == IMCallViewState.Phase.IDLE) return
+        if (state.phase == IMCallViewState.Phase.IDLE) { dismissRoutePanel(); return }
         val hasLocalVideo = actions?.hasLocalVideo() ?: false
         layout = state.layout
         val isEnded = state.phase == IMCallViewState.Phase.ENDED
@@ -580,6 +582,7 @@ internal class IMCallView(context: Context) : FrameLayout(context) {
 
     override fun onDetachedFromWindow() {
         chrome.cancel()
+        dismissRoutePanel()
         super.onDetachedFromWindow()
     }
 

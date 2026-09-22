@@ -117,9 +117,13 @@ internal class IMAudioRouter(
         if (routes.isEmpty()) return null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val device = audioManager.communicationDevice ?: return null
-            val uid = IMAudioRoutePolicy.uidOf(IMAudioRoutePolicy.Device(device.type, device.productName.toString(), device.id))
-            return routes.firstOrNull { it.uid == uid }
-                ?: routes.firstOrNull { it.kind == IMAudioRoutePolicy.kindOf(device.type) }
+            val probe = IMAudioRoutePolicy.toRoute(
+                IMAudioRoutePolicy.Device(device.type, device.productName.toString(), device.id),
+            ) ?: return null
+            // 先按 uid 认；同一只耳机的另一个 profile 端口（BLE / SCO 两个 id）按「同类同名」认；
+            // **不按类型兜底**——两只蓝牙同时连着时那会把勾打到错的那只上（code review 09-22）。
+            return routes.firstOrNull { it.uid == probe.uid }
+                ?: routes.firstOrNull { it.kind == probe.kind && it.name == probe.name }
         }
         @Suppress("DEPRECATION")
         val kind = when {
@@ -153,6 +157,14 @@ internal class IMAudioRouter(
             IMAudioRoutePolicy.removed(choice, devices.map(IMAudioRoutePolicy::uidOf))
         }
         applyRoute("设备$what")
+    }
+
+    /** 系统自己换了通信设备（蓝牙 SCO 晚一拍连上、或别的 App 抢了）：只重报在用项。上锁——别跟 stop() 抢。 */
+    @Synchronized
+    private fun onSystemDeviceChanged(device: AudioDeviceInfo?) {
+        if (!running) return
+        IMRTCLog.i("audio", "系统换了通信设备：type=${device?.type} name=${device?.productName}")
+        notifyChanged()
     }
 
     private fun applyRoute(why: String) {
@@ -216,10 +228,7 @@ internal class IMAudioRouter(
 
     // 调用点都已按 Build.VERSION_CODES.S 分支，见 applyRoute / start / stop。
     private fun listenCommunicationDevice() {
-        val listener = AudioManager.OnCommunicationDeviceChangedListener { device ->
-            IMRTCLog.i("audio", "系统换了通信设备：type=${device?.type} name=${device?.productName}")
-            notifyChanged()
-        }
+        val listener = AudioManager.OnCommunicationDeviceChangedListener { device -> onSystemDeviceChanged(device) }
         deviceListener = listener
         audioManager.addOnCommunicationDeviceChangedListener(Executor { main.post(it) }, listener)
     }

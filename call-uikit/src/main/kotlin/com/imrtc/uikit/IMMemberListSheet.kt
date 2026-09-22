@@ -2,11 +2,7 @@ package com.imrtc.uikit
 
 import android.app.Dialog
 import android.content.Context
-import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
-import android.view.ViewGroup
-import android.view.Window
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -37,18 +33,7 @@ internal object IMMemberListSheet {
         context: Context,
         state: IMCallViewState,
         resolver: IMProfileResolver?,
-    ): Dialog {
-        val dialog = Dialog(context)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.setContentView(buildContent(context, state, resolver))
-        dialog.window?.apply {
-            setBackgroundDrawable(GradientDrawable().apply { setColor(Color.TRANSPARENT) })
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            setGravity(Gravity.BOTTOM)
-        }
-        dialog.show()
-        return dialog
-    }
+    ): Dialog = IMBottomSheet.show(context, buildContent(context, state, resolver))
 
     private fun buildContent(
         context: Context,
@@ -56,12 +41,7 @@ internal object IMMemberListSheet {
         resolver: IMProfileResolver?,
     ): FrameLayout {
         val root = FrameLayout(context)
-        root.background = GradientDrawable().apply {
-            cornerRadii = FloatArray(8) { index ->
-                if (index < 4) context.dp(20).toFloat() else 0f
-            }
-            setColor(IMKitTheme.bannerBackground)
-        }
+        root.background = IMBottomSheet.background(context)
         root.setPadding(0, context.dp(12), 0, context.dp(16))
 
         val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }

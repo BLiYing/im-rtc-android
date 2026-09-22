@@ -5,13 +5,10 @@ import android.content.Context
 import android.graphics.Color
 import android.content.res.ColorStateList
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.ViewGroup
-import android.view.Window
-import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -32,20 +29,13 @@ import com.imrtc.engine.IMAudioRouteKind
  */
 internal object IMAudioRoutePanel {
 
-    /** show 弹出面板。`onPick` 在主线程回调；面板自己收起。 */
+    /**
+     * show 弹出面板。`onPick` 在主线程回调；点一行面板自己收起。
+     * **返回的 Dialog 由调用方持有**，通话结束 / 页面销毁 / 第三条路由消失时要 `dismiss()`（见 [IMCallView.dismissRoutePanel]）。
+     */
     fun show(context: Context, state: IMCallViewState, onPick: (IMAudioRoute) -> Unit): Dialog {
-        val dialog = Dialog(context)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.setContentView(buildContent(context, state) { route -> onPick(route); dialog.dismiss() })
-        dialog.setCanceledOnTouchOutside(true)
-        dialog.window?.apply {
-            setBackgroundDrawable(GradientDrawable().apply { setColor(Color.TRANSPARENT) })
-            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            setGravity(Gravity.BOTTOM)
-            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            setDimAmount(0.45f)
-        }
-        dialog.show()
+        lateinit var dialog: Dialog
+        dialog = IMBottomSheet.show(context, buildContent(context, state) { route -> onPick(route); dialog.dismiss() }, dim = 0.45f)
         return dialog
     }
 
@@ -55,11 +45,8 @@ internal object IMAudioRoutePanel {
         onPick: (IMAudioRoute) -> Unit,
     ): LinearLayout {
         val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        column.background = GradientDrawable().apply {
-            cornerRadii = FloatArray(8) { index -> if (index < 4) context.dp(20).toFloat() else 0f }
-            // 主题里没有设计稿那个 surface，用同语义的 banner（深色卡片底），与成员列表一致。
-            setColor(IMKitTheme.bannerBackground)
-        }
+        // 主题里没有设计稿那个 surface，用同语义的 banner（深色卡片底），与成员列表同一个壳。
+        column.background = IMBottomSheet.background(context)
         // 上下留白 16（设计稿：高度自适应 = 行数 × 56 + 32 + 安全区）。
         column.setPadding(0, context.dp(16), 0, context.dp(16))
         for (route in state.audioRoutes) {

@@ -65,7 +65,9 @@ internal object IMAudioRoutePolicy {
 
     /**
      * 可选清单：**听筒、扬声器恒在前两位**（内置两条名字留空，Kit 按语言填），外接的按 [FOLLOW_SYSTEM_ORDER] 排在后面。
-     * 同一台设备可能以两种类型出现（BLE + SCO），按 uid 去重。
+     * 同一只耳机可能以两个 profile 端口出现（BLE_HEADSET + BLUETOOTH_SCO，**id 不保证相同**），
+     * 所以除了按 uid，还按「同类同名」去重——代价是两只同名同类的耳机会并成一行，比同一只显示两行轻。
+     * 留下的是排在前面那一个（按 [FOLLOW_SYSTEM_ORDER]），[IMAudioRouter.current] 认在用项时也按同一条规则回退。
      */
     fun routes(devices: List<Device>): List<Device> {
         val byKind = devices.filter { kindOf(it.type) != null }
@@ -73,7 +75,7 @@ internal object IMAudioRoutePolicy {
             .mapNotNull { kind -> byKind.firstOrNull { kindOf(it.type) == kind } }
         val external = byKind.filter { it.type in EXTERNAL && it.type != AudioDeviceInfo.TYPE_BUILTIN_EARPIECE }
             .sortedBy { FOLLOW_SYSTEM_ORDER.indexOf(it.type) }
-        return (builtIn + external).distinctBy { uidOf(it) }
+        return (builtIn + external).distinctBy { uidOf(it) }.distinctBy { kindOf(it.type) to (if (it.type in EXTERNAL) it.name else "") }
     }
 
     fun toRoute(device: Device): IMAudioRoute? {
@@ -104,7 +106,11 @@ internal object IMAudioRoutePolicy {
         return choice.copy(autoExternal = uidOf(target))
     }
 
-    /** 拔掉 / 断开：正指着它的那一层作废——回到手选的那条，再没有就跟随系统（**绝不落到静音**）。 */
+    /**
+     * 拔掉 / 断开：正指着它的那一层作废——回到手选的那条，再没有就跟随系统（**绝不落到静音**）。
+     * 已知边界：同一只耳机闪断重连、系统给了新 id 时，手选会被这里清掉、重连后只当「自动切」——
+     * 再次断开落到跟随系统而不是回到手选。要修得把手选按「同类同名」记，先不做（真机没复现过）。
+     */
     fun removed(choice: Choice, removedUids: Collection<String>): Choice = Choice(
         manual = choice.manual?.takeUnless { it in removedUids },
         autoExternal = choice.autoExternal?.takeUnless { it in removedUids },
