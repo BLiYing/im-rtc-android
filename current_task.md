@@ -7,8 +7,9 @@
 
 ## 当前焦点
 
-- **09-22 音频路由四选一（听筒 / 扬声器 / 有线耳机 / 蓝牙）Android 落地，对齐 iOS 同一天做完的那套；`test.sh` 全绿，未上真机。**
-  用户已把 AirPods 连到安卓真机，下一步就是真机验。
+- **09-22 音频路由四选一（听筒 / 扬声器 / 有线耳机 / 蓝牙）Android 落地并真机 ✅**（PKD130 × frank iOS 新包，三通、面板来回切、挂断重打、群通话，用户确认双向有声；CLIENT_PARITY v1.65）。
+  头两轮「双向无声」是对端 iPhone 装的旧包，安卓本身没问题——**测路由前先确认对端是好的**。角标离边 8 → 11（真机反馈压在圆边上）。
+  测法 / 判据 / 坑沉淀在 server `docs/ops/AUDIO_ROUTE_TESTING.md`，盯日志用 server `scripts/audiowatch.sh - android`。
   - **Engine 公开 API**（设计文档 §7.5，五端同名）：`IMAudioRoute(kind, name, uid)` / `IMAudioRouteKind` 四态 /
     `availableAudioRoutes` / `currentAudioRoute` / `setAudioRoute()` / 回调 `onAudioRoutesChanged(routes, current)`。
     内置两条 uid 恒为 `builtin.earpiece` / `builtin.speaker`（与 iOS 同一对字符串），名字留空由 Kit 按语言填；
@@ -23,9 +24,7 @@
     判据 `IMCallViewState.showsRoutePicker` = 清单多于内置两条。五枚矢量图 `ic_im_{earpiece,headphones,bluetooth,check,chevron_up}`
     按设计稿 §05 同风格自己补的（稿里没画）。`route.*` 五条文案已进生成表。
   - 体量红线：三个文件被顶过 600 行，抽了 `IMRemoteLayer.kt`（Engine `setRemoteLayer` 的循环）、`IMCallKitAudio.kt`、`IMCallViewRoute.kt`。
-  - **真机验法**（PKD130 / Android 15，AirPods 连着，与 iOS 09-22 第九轮同一套）：① 1v1 语音接通，扬声器键应显示 AirPods 名 + 右下角标；
-    ② 点它弹面板（听筒 / 扬声器 / AirPods，当前项打勾），逐条切、对端确认双向有声；③ 挂断再打一通看第二通仍正常；
-    ④ 通话中摘下 / 戴回 AirPods 看自动切与回落；⑤ 群通话一次。logcat 看 `audio` tag：`通话声音走 type=… name=…`、`音频路由清单：…`。
+  - 未单独验：④ 通话中摘下 / 戴回耳机的自动切与回落（策略有单测，真机没做这一步）；API 31 以下旧路径。
 - **09-22 1v1 视频小窗四角贴边压按钮的 bug 修完，真机已验**：`IMCallView.onLayout` 里
   `pip.bottomReservePx` 原先按 `controls.visibility == VISIBLE` 决定要不要让开按钮区，
   控制条 3s 自动隐藏（淡到 `INVISIBLE`）后就把留白清成 0，于是长按小窗拖到左下/右下角、

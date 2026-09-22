@@ -101,9 +101,11 @@ internal class IMControlButton(
         chevron.visibility = GONE
         circle.addView(
             chevron,
+            // 离外接矩形 11：圆在 45° 角上比矩形往里缩了 8.2（56 × (1 − 1/√2) / 2），
+            // 用 8 会让角标外角正好压在圆边上（真机 09-22 用户反馈「太挨着边缘」），11 才整个落在圆里。iOS 同值。
             FrameLayout.LayoutParams(dp(8), dp(8), Gravity.BOTTOM or Gravity.END).apply {
-                bottomMargin = dp(6)
-                marginEnd = dp(6)
+                bottomMargin = dp(11)
+                marginEnd = dp(11)
             },
         )
         addView(circle, LayoutParams(diameter, diameter))
