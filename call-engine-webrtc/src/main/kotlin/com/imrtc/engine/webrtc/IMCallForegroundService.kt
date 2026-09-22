@@ -12,6 +12,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import com.imrtc.engine.log.IMRTCLog
+import java.util.Locale
 
 /**
  * 通话中的前台服务。
@@ -29,6 +30,20 @@ import com.imrtc.engine.log.IMRTCLog
  *
  * 宿主可以整个不用它（自己起前台服务），把 [start] / [stop] 换成自己的实现即可。
  */
+/**
+ * 前台服务通知的三句文案。**这里不能用 [com.imrtc.uikit] 的 `IMText`**——`call-engine-webrtc`
+ * 不依赖 `call-uikit`（宿主可以只用 Engine 不用 Kit，见文件头），所以只能跟系统语言，
+ * 不认 Kit 配置的 `locale`（没有 Kit 时也没有这个配置可读）。
+ */
+private object NotificationText {
+    private val isChinese: Boolean
+        get() = Locale.getDefault().language.lowercase() == "zh"
+
+    val callTitle: String get() = if (isChinese) "通话中" else "In call"
+    val callBody: String get() = if (isChinese) "点按返回通话" else "Tap to return to the call"
+    val channelName: String get() = if (isChinese) "通话" else "Call"
+}
+
 class IMCallForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -53,8 +68,8 @@ class IMCallForegroundService : Service() {
     private fun startInForeground(withCamera: Boolean) {
         ensureChannel()
         val notification: Notification = Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("通话中")
-            .setContentText("点按返回通话")
+            .setContentTitle(NotificationText.callTitle)
+            .setContentText(NotificationText.callBody)
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setOngoing(true)
             .apply { returnToCallIntent()?.let { setContentIntent(it) } }
@@ -108,7 +123,7 @@ class IMCallForegroundService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "通话", NotificationManager.IMPORTANCE_LOW).apply {
+            NotificationChannel(CHANNEL_ID, NotificationText.channelName, NotificationManager.IMPORTANCE_LOW).apply {
                 setShowBadge(false)
             },
         )
