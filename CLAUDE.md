@@ -6,7 +6,7 @@
 | 产物 | 是什么 | 谁用 |
 |---|---|---|
 | **`call-engine`** | **无 UI** 核心：信令、通话状态机、设备控制，全部能力通过**回调**暴露。**不依赖 libwebrtc** | 想自己画 UI 的宿主 |
-| **`call-engine-webrtc`** | 媒体实现（`org.webrtc`），以 `IMMediaAdapter` 接口接进 Engine | 需要真通话的宿主都要引 |
+| **`call-engine-webrtc`** | 媒体实现（`livekit.org.webrtc`，即改名版 `org.webrtc`，见下），以 `IMMediaAdapter` 接口接进 Engine | 需要真通话的宿主都要引 |
 | **`call-uikit`** | **整套通话 UI**：来电页/横幅、1v1 四态、群通话九宫格、悬浮窗 | 想一天内上线通话的宿主 |
 | **Demo App** | 登录 / 拨号 / 通话记录 / 设置，两种集成方式各跑一遍 | 验证「只用公开回调就能做出完整体验」 |
 
@@ -25,10 +25,14 @@ Android 用 Kotlin **独立实现**（2026-09-05 拍板），不共享桌面端�
 - 语言：**Kotlin**，JDK 17，**minSdk 24 / compileSdk 36 / targetSdk 36**
   （本机 SDK 已装到 android-36、build-tools 36.0.0；见 `current_task.md` 的「本机环境」）
 - 构建：**Gradle KTS + 版本目录 `gradle/libs.versions.toml`**（依赖版本集中一处锁定）
-- 媒体：**libwebrtc 预编译包 `io.github.webrtc-sdk:android`，锁 `150.7871.01`（M150）**，
+- 媒体：**libwebrtc 预编译包 `io.github.webrtc-sdk:android-prefixed`，锁 `150.7871.01`（M150）**，
   兜底 `144.7559.15`（M144，补丁最多的成熟线）。`PeerConnectionFactory` / `SurfaceViewRenderer` /
   `JavaAudioDeviceModule`。**与 iOS 的 M152 对不齐是已知且可接受的**——理由与防线见
-  `../im-rtc-server/docs/CLIENT_PARITY.md` §3
+  `../im-rtc-server/docs/CLIENT_PARITY.md` §3。
+  用 `-prefixed` 变体：`org.webrtc`（含 native JNI 绑定层 `jni_zero`）在这个发行版里整体
+  改名到 `livekit.org.webrtc` / `livekit.org.jni_zero`，避免跟宿主自带的另一份 `org.webrtc`
+  （别的音视频 SDK、或宿主自己的老引擎）撞 duplicate class——本仓与文档里提到的 `org.webrtc`
+  之后都是指这份改名后的包。
 - 信令：**OkHttp `WebSocket`**，JSON
 - JSON：**自研严格值模型**（对齐 iOS 的 `IMJSON`：类型里压根没有 null 与 double 两个 case）。
   **禁止 `org.json`**——它在 JVM 单测里是空壳桩，方法一律返回默认值，测试会假绿
@@ -41,7 +45,7 @@ Android 用 Kotlin **独立实现**（2026-09-05 拍板），不共享桌面端�
 im-rtc-android/
 ├── settings.gradle.kts / build.gradle.kts
 ├── gradle/libs.versions.toml           # 依赖与版本，唯一真相源
-├── call-engine/                        # 无 UI，且不依赖 org.webrtc
+├── call-engine/                        # 无 UI，且不依赖 livekit.org.webrtc
 │   ├── src/main/kotlin/com/imrtc/engine/
 │   │   ├── IMCallEngine.kt             # 门面：login/call/accept/hangup/joinRoom…
 │   │   ├── IMCallEngineListener.kt     # 回调表（对应设计文档 §7.5 回调总表）
@@ -52,7 +56,7 @@ im-rtc-android/
 │   │   ├── device/                     # 麦克风/摄像头/扬声器、蓝牙路由、权限
 │   │   └── log/                        # IMRTCLog + 脱敏 + 可注入 sink
 │   └── src/test/kotlin/                # 纯 JVM 单测：向量、状态机、编解码（不需要设备）✅ 已落地
-├── call-engine-webrtc/                 # 媒体实现（org.webrtc）+ 前台服务 + 音频路由
+├── call-engine-webrtc/                 # 媒体实现（livekit.org.webrtc）+ 前台服务 + 音频路由
 ├── call-uikit/                         # 来电横幅 / 1v1 / 九宫格 / 悬浮窗 / 控制条
 ├── demo/                               # **Demo App**：登录/拨号/通话记录/设置（本仓的一个模块，不是独立工程）
 │                                       含 JavaApiCheck.java（Java 互操作编译即验证）

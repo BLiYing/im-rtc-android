@@ -17,7 +17,7 @@ import android.widget.TextView
  * 一个成员格子（规范 §06「格子」）：有画面时显示画面，没有时显示**渐变底 + 首字母**的头像盘。
  * 左下名字标签（正在说话时底变绿）、右上静音角标、右下网络角标，邀请中的格子整格 55% 不透明 + 顶部一行终局。
  *
- * **画面只经 Engine 造的 View 挂载**（CONVENTIONS §1）：UIKit 不 import org.webrtc，
+ * **画面只经 Engine 造的 View 挂载**（CONVENTIONS §1）：UIKit 不 import livekit.org.webrtc，
  * 渲染器由媒体层造好交过来，这里只管放进 [videoHost]。
  */
 internal class IMVideoTile(context: Context) : FrameLayout(context) {

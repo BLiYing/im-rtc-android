@@ -7,6 +7,19 @@
 
 ## 当前焦点
 
+- **09-27 org.webrtc 改用 `io.github.webrtc-sdk:android-prefixed`（`livekit.org.webrtc` + `jni_zero` 一并改名）**：
+  起因是宿主 rongxin_android 接入时崩在 `NoClassDefFoundError: Lorg/webrtc/EglBase`——它自家老 VoIP 引擎
+  （`libECMedia.so`，JNI 硬绑定 `org.webrtc`）跟本 SDK 标准版 `io.github.webrtc-sdk:android` 的 `org.webrtc`
+  撞 duplicate class，宿主排掉了标准版依赖，但老引擎的 fork 里根本没有 `EglBase` 这个类，装上就崩在登录首屏。
+  改动：`gradle/libs.versions.toml` 依赖坐标换 `-prefixed`（同版本号 `150.7871.01`，未升级 milestone）；
+  `call-engine-webrtc` 十一个源文件 + 1 个测试文件 `org.webrtc.*` → `livekit.org.webrtc.*`；
+  `consumer-rules.pro` 补 `livekit.org.jni_zero.**` 的 keep/dontwarn（漏这条是已知坑：native 层按名字反射
+  找 `JniInit`，Java 侧没有显式引用，R8 会当死代码裁掉，症状是装机正常、一调
+  `PeerConnectionFactory.initialize()` 就崩且堆栈看不出是这里——社区里 `livekit/react-native-webrtc#107`
+  等好几个项目踩过同一个坑）；`CONVENTIONS.md`/`CLAUDE.md`/`README.md`/`settings.gradle.kts` 里描述分层
+  边界的 `org.webrtc` 提法一并改注。`./scripts/test.sh` 六步全绿（含 `assembleDebug` 与单测）。
+  **未真机验**：这是媒体依赖的底层替换，按本文件规则音视频功能一律真机验收——尤其要拿开 R8/minify 的
+  release 包验一次 `livekit.org.jni_zero` 的 keep 规则真的生效（debug 包默认不跑 R8，这条编译单测测不出来）。
 - **09-22 SDK 2.1.0 已发版**（tag `a735dda`，JitPack 三模块构建成功）：本次内容即下面这些条目——音频路由四选一、多语言、通话记录端到端。协议版本未变（仍为 2）。
 
 - **09-22 音频路由四选一（听筒 / 扬声器 / 有线耳机 / 蓝牙）Android 落地并真机 ✅**（PKD130 × frank iOS 新包，三通、面板来回切、挂断重打、群通话，用户确认双向有声；CLIENT_PARITY v1.65）。
@@ -62,6 +75,8 @@
 
 ## 下一步
 
+0. **org.webrtc → livekit.org.webrtc 改名后的真机验证**（见上）：至少一次真实通话（含视频），且要用开了
+   R8/minify 的 release 包验证 `livekit.org.jni_zero` 的 consumer 规则确实生效，不能只信 debug 包编译过。
 0. **还没验的**：视频通话拨出中收起、接通后球变视频缩略没点过；1v1 视频默认走听筒（改前就这样，要不要默认扬声器待定）；翻页后格子里是不是同一个人（见上，`4d01377` 是否已修）。
 1. **真机窗口清单**：
    - 铃声：蓝牙耳机场景 + **补记机型与 Android 版本**（O+ / O- 焦点 API 走的哪条）。
@@ -77,6 +92,11 @@
 - group 必须是 `com.github.BLiYing.im-rtc-android`（`gradle.properties` 的 `IMRTC_GROUP`），换回别的 uikit 对 engine 的传递依赖会拉不到。
 
 **测试 / 工具**
+- **`scripts/gen-i18n.py` 的兄弟仓路径在 worktree 里算错**（09-27 发现，跟 CONVENTIONS §11 那条「兄弟仓在哪
+  一个仓两处各自算」的教训是同一类）：它自己用 `ROOT.parent` 硬算 `im-rtc-server` 位置，不像 bash 的
+  `sibling_root()` 那样认 `git rev-parse --git-common-dir`；worktree 里 `..` 指到 `.claude/worktrees/`，
+  不是仓外层，`test.sh` 第 4b 步在 worktree 里跑会报「找不到文案表」。临时绕过：显式设
+  `RTC_I18N_FILE=<主检出同级>/im-rtc-server/docs/i18n/strings.json`。脚本本身没改，留给下次碰它的人抽成一处。
 - `SignalConnectionTest` 里 `scheduler.advance(N)` 超过 30 s 会触发心跳超时重连、污染退避断言：压在 30 s 内，或显式 `transport.deliver(PONG, "")`。
 - 仓根 `temp_verify.py` 是多会话共用的活文件，本仓验证脚本单独建文件。
 - 禁止 `org.json`（JVM 单测里是空壳桩）；`protocol/` 与 `statemachine/` 不许 import android.*（门禁守着）。

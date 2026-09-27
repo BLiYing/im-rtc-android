@@ -12,7 +12,7 @@ package com.imrtc.engine.webrtc
  *
  * # 为什么是几何判据，不是「看版式」
  *
- * `call-uikit` 按分层约定**不许 import org.webrtc**，传不了「此刻是九宫格还是全屏」
+ * `call-uikit` 按分层约定**不许 import livekit.org.webrtc**，传不了「此刻是九宫格还是全屏」
  * 这种 UI 概念。而只要「格子宽高」与「源宽高」两个数就够算——以后加画中画、
  * 共享屏幕、横屏，都不用回来改这里。
  *

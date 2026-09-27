@@ -1,9 +1,9 @@
 package com.imrtc.engine.webrtc
 
 import com.imrtc.engine.media.IMVideoProfile
-import org.webrtc.VideoCapturer
-import org.webrtc.VideoSink
-import org.webrtc.VideoTrack
+import livekit.org.webrtc.VideoCapturer
+import livekit.org.webrtc.VideoSink
+import livekit.org.webrtc.VideoTrack
 
 /**
  * [IMWebRTCAdapter] 里几处逐字重复的小动作，单独成文件是体量拆分

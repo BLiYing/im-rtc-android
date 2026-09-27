@@ -6,18 +6,25 @@
 ## 1. 分层与模块划分
 
 ```
-call-engine          无 UI。**不依赖 org.webrtc**，也不 import android.view/widget。
-call-engine-webrtc   媒体实现。依赖 org.webrtc + call-engine，实现 IMMediaAdapter。
+call-engine          无 UI。**不依赖 livekit.org.webrtc**，也不 import android.view/widget。
+call-engine-webrtc   媒体实现。依赖 livekit.org.webrtc + call-engine，实现 IMMediaAdapter。
 call-uikit           UI。依赖 call-engine，只通过公开回调获取信息。
 demo                 示例 App。依赖三者，不含任何 SDK 逻辑。
 ```
+
+> **包名说明**：媒体依赖用的是 `io.github.webrtc-sdk:android-prefixed`，
+> 原始 WebRTC 的 Java 包 `org.webrtc` 在这个发行版里被整体改名成 `livekit.org.webrtc`
+> （连 native JNI 绑定层 `jni_zero` 一起改名），本仓与本文档提到的 `org.webrtc` 一律指这份改名后的包。
+> 换的原因见 `call-engine-webrtc/build.gradle.kts` 与 `gradle/libs.versions.toml` 的注释：
+> 宿主如果自带另一份未改名的 `org.webrtc`（别的音视频 SDK、或宿主自己的老引擎 fork），
+> 两份类名相同会 duplicate class 编译失败；改名后两份能共存，宿主不需要排除任何一边。
 
 **依赖方向单向**：`demo → call-uikit → call-engine`，`call-engine-webrtc → call-engine`。
 **call-engine 绝不反向依赖任何一个。**
 Engine 内部：`IMCallEngine（门面）→ protocol / statemachine / signaling / media / device`，
 子模块之间通过接口解耦，不互相 import 具体类型。
 
-**`call-engine` 为什么不许依赖 org.webrtc**（与 iOS 同一条约束，理由也一样）：
+**`call-engine` 为什么不许依赖 livekit.org.webrtc**（与 iOS 同一条约束，理由也一样）：
 libwebrtc 是几十 MB 的预编译包，一旦被 Engine 直接依赖，「跑一次单测」就变成
 「起模拟器 / 连真机 + 拉几十 MB」。媒体只以 `IMMediaAdapter` 接口出现，真实现放隔壁模块。
 
@@ -31,9 +38,9 @@ libwebrtc 是几十 MB 的预编译包，一旦被 Engine 直接依赖，「跑�
 | 一个新回调 | `IMCallEngineListener.kt` + 设计文档 §7.5 同步 | 临时加个 lambda 属性 |
 | 一个新信令帧 | `protocol/frames/` + 帧注册表 + 状态机对应分支 | 在 WebSocket 回调里就地解析 |
 | 一个新界面 | `call-uikit/<场景>/` 独立文件 | 往已有 Activity/Fragment 里塞 |
-| 媒体能力 | `call-engine-webrtc/`，经 `IMMediaAdapter` 接口暴露 | UIKit 里直接调 org.webrtc |
+| 媒体能力 | `call-engine-webrtc/`，经 `IMMediaAdapter` 接口暴露 | UIKit 里直接调 livekit.org.webrtc |
 
-**`call-uikit` 禁止直接 import `org.webrtc`**。画面通过 Engine 提供的
+**`call-uikit` 禁止直接 import `livekit.org.webrtc`**。画面通过 Engine 提供的
 `attachView(uid, view)` 挂载，换媒体实现时 UIKit 一行不用改。
 
 ## 2. 文件体量红线（防「上帝类」）
@@ -136,7 +143,9 @@ libwebrtc 是几十 MB 的预编译包，一旦被 Engine 直接依赖，「跑�
   每次交付写清楚在哪个版本、哪台机器上验的。
 - **ABI 与体积**：libwebrtc aar 带 `arm64-v8a` / `armeabi-v7a` / `x86_64`，会显著撑大包体。
   宿主要能按需裁剪（`abiFilters`），README 里写明各 ABI 的体积。
-- **给消费者提供 `consumer-rules.pro`**：宿主开 R8 时 `org.webrtc` 的 native 回调类不能被混淆掉。
+- **给消费者提供 `consumer-rules.pro`**：宿主开 R8 时 `livekit.org.webrtc` 与 `livekit.org.jni_zero`
+  的 native 回调类都不能被混淆/裁掉——后者尤其容易漏，Java 侧没有显式引用，R8 判定「没人用」
+  会直接裁掉，症状是装机正常、一初始化 `PeerConnectionFactory` 就崩，还看不出是这里。
 
 ## 9. UI（仅 call-uikit）
 

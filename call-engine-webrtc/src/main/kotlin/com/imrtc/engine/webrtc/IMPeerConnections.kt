@@ -2,24 +2,24 @@ package com.imrtc.engine.webrtc
 
 import android.content.Context
 import com.imrtc.engine.log.IMRTCLog
-import org.webrtc.AudioSource
-import org.webrtc.DefaultVideoDecoderFactory
-import org.webrtc.DefaultVideoEncoderFactory
-import org.webrtc.EglBase
-import org.webrtc.HardwareVideoEncoderFactory
-import org.webrtc.IceCandidate
-import org.webrtc.MediaConstraints
-import org.webrtc.MediaStream
-import org.webrtc.PeerConnection
-import org.webrtc.PeerConnectionFactory
-import org.webrtc.RtpReceiver
-import org.webrtc.RtpTransceiver
-import org.webrtc.SdpObserver
-import org.webrtc.SessionDescription
-import org.webrtc.SimulcastVideoEncoderFactory
-import org.webrtc.SoftwareVideoEncoderFactory
-import org.webrtc.VideoEncoderFactory
-import org.webrtc.audio.JavaAudioDeviceModule
+import livekit.org.webrtc.AudioSource
+import livekit.org.webrtc.DefaultVideoDecoderFactory
+import livekit.org.webrtc.DefaultVideoEncoderFactory
+import livekit.org.webrtc.EglBase
+import livekit.org.webrtc.HardwareVideoEncoderFactory
+import livekit.org.webrtc.IceCandidate
+import livekit.org.webrtc.MediaConstraints
+import livekit.org.webrtc.MediaStream
+import livekit.org.webrtc.PeerConnection
+import livekit.org.webrtc.PeerConnectionFactory
+import livekit.org.webrtc.RtpReceiver
+import livekit.org.webrtc.RtpTransceiver
+import livekit.org.webrtc.SdpObserver
+import livekit.org.webrtc.SessionDescription
+import livekit.org.webrtc.SimulcastVideoEncoderFactory
+import livekit.org.webrtc.SoftwareVideoEncoderFactory
+import livekit.org.webrtc.VideoEncoderFactory
+import livekit.org.webrtc.audio.JavaAudioDeviceModule
 
 /**
  * 两条 PeerConnection 的持有者：**pub 推流、sub 收流，各自的 offerer 是固定的**（协议 §3.3）。
@@ -52,7 +52,7 @@ internal class IMPeerConnections(
         fun onLocalCandidate(pc: String, candidate: String, sdpMid: String, sdpMLineIndex: Int)
         fun onSubConnected()
         /** 远端轨道到达。`streamId` 就是 msid——服务端把 uid 放在里面。 */
-        fun onRemoteTrack(pc: String, streamId: String, track: org.webrtc.MediaStreamTrack)
+        fun onRemoteTrack(pc: String, streamId: String, track: livekit.org.webrtc.MediaStreamTrack)
         fun onError(message: String)
     }
 
@@ -334,7 +334,7 @@ internal class IMPeerConnections(
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) = Unit
         override fun onAddStream(stream: MediaStream) = Unit
         override fun onRemoveStream(stream: MediaStream) = Unit
-        override fun onDataChannel(channel: org.webrtc.DataChannel) = Unit
+        override fun onDataChannel(channel: livekit.org.webrtc.DataChannel) = Unit
         override fun onRenegotiationNeeded() = Unit
         override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
             // **uid 从 msid 里取**：streamIds 在 RtpReceiver 上拿不到，只有这条回调带得出来。

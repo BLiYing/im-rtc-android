@@ -5,7 +5,7 @@
 | 产物 | 是什么 |
 |---|---|
 | **`call-engine`** | **无 UI** 核心：信令 / 状态机 / 设备，能力通过**回调**暴露；不依赖 libwebrtc |
-| **`call-engine-webrtc`** | 媒体实现（`org.webrtc`），以 `MediaAdapter` 接口接进 Engine |
+| **`call-engine-webrtc`** | 媒体实现（`livekit.org.webrtc`，改名版 `org.webrtc`，避免撞宿主自带的同名类），以 `MediaAdapter` 接口接进 Engine |
 | **`call-uikit`** | **整套通话 UI**：来电页与横幅、1v1 四态、群通话九宫格、悬浮窗 |
 | **Demo App** | 登录 / 拨号 / 通话记录 / 设置，两种集成方式各跑一遍 |
 

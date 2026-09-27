@@ -1,7 +1,7 @@
 package com.imrtc.engine.webrtc
 
 import com.imrtc.engine.log.IMRTCLog
-import org.webrtc.VideoTrack
+import livekit.org.webrtc.VideoTrack
 
 /*
  远端画面的**挂载与换绑**：轨道、归属、渲染器三者到达顺序不定，全都汇到这里判重。

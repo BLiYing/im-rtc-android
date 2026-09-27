@@ -6,25 +6,25 @@ import com.imrtc.engine.IMAudioRoute
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMMediaAdapter
 import com.imrtc.engine.media.IMVideoProfile
-import org.webrtc.AudioTrack
-import org.webrtc.Camera1Enumerator
-import org.webrtc.Camera2Enumerator
-import org.webrtc.CameraEnumerator
-import org.webrtc.CameraVideoCapturer
-import org.webrtc.MediaStreamTrack
-import org.webrtc.PeerConnection
-import org.webrtc.RendererCommon
-import org.webrtc.RtpParameters
-import org.webrtc.RtpTransceiver
-import org.webrtc.SurfaceTextureHelper
-import org.webrtc.SurfaceViewRenderer
-import org.webrtc.VideoSource
-import org.webrtc.VideoTrack
+import livekit.org.webrtc.AudioTrack
+import livekit.org.webrtc.Camera1Enumerator
+import livekit.org.webrtc.Camera2Enumerator
+import livekit.org.webrtc.CameraEnumerator
+import livekit.org.webrtc.CameraVideoCapturer
+import livekit.org.webrtc.MediaStreamTrack
+import livekit.org.webrtc.PeerConnection
+import livekit.org.webrtc.RendererCommon
+import livekit.org.webrtc.RtpParameters
+import livekit.org.webrtc.RtpTransceiver
+import livekit.org.webrtc.SurfaceTextureHelper
+import livekit.org.webrtc.SurfaceViewRenderer
+import livekit.org.webrtc.VideoSource
+import livekit.org.webrtc.VideoTrack
 
 /**
  * [IMMediaAdapter] 的 libwebrtc 实现（M150）。
  *
- * **只有这个模块依赖 `org.webrtc`**——Engine 那边只认接口，所以「跑一次单测」不必先拉几十 MB。
+ * **只有这个模块依赖 `livekit.org.webrtc`**——Engine 那边只认接口，所以「跑一次单测」不必先拉几十 MB。
  *
  * ## 三条与协议对齐的做法
  *
@@ -565,7 +565,7 @@ class IMWebRTCAdapter @JvmOverloads constructor(
             events?.onMediaReady()
         }
 
-        override fun onRemoteTrack(pc: String, streamId: String, track: org.webrtc.MediaStreamTrack) {
+        override fun onRemoteTrack(pc: String, streamId: String, track: livekit.org.webrtc.MediaStreamTrack) {
             val video = track as? VideoTrack ?: return
             /*
              **键是 track_id，不是 stream id。** 订阅侧 SDP 的 msid 第二段就是 track_id

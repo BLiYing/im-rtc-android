@@ -2,8 +2,8 @@ package com.imrtc.engine.webrtc
 
 import android.os.Handler
 import com.imrtc.engine.log.IMRTCLog
-import org.webrtc.RendererCommon
-import org.webrtc.SurfaceViewRenderer
+import livekit.org.webrtc.RendererCommon
+import livekit.org.webrtc.SurfaceViewRenderer
 
 /**
  * 每块渲染器按 [IMVideoFit] 的判据决定是裁切填满还是等比留边；帧尺寸或父容器一变就重算。
