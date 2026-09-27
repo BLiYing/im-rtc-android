@@ -7,6 +7,14 @@
 
 ## 当前焦点
 
+- **09-27 SDK 2.1.1 发版（仅 Android，单端补丁）**：内容就是下面这条 org.webrtc 改名修复——
+  这个修复在 09-22 打的 `2.1.0` tag 之后才做，JitPack 只认 tag，rongxin_android 拉到的
+  `2.1.0` 其实还是没改名前的版本，问题并没有真正解决，所以必须单独发一个补丁号。
+  其余三端（Web/iOS/桌面）没有涉及发布物的代码改动，仍停在 `2.1.0`，不需要跟着升级。
+  发布前过了一遍 `./scripts/test.sh` 六步 + `publishToMavenLocal` 后
+  `-PimrtcSdk=local :demo:assembleDebug` 本地包验证。`/guide` 的 Android 导入页与
+  `/guide/changelog` 已加一张仅 Android 的 2.1.1 卡片。tag / JitPack 触发见发布记录。
+
 - **09-27 org.webrtc 改用 `io.github.webrtc-sdk:android-prefixed`（`livekit.org.webrtc` + `jni_zero` 一并改名）**：
   起因是宿主 rongxin_android 接入时崩在 `NoClassDefFoundError: Lorg/webrtc/EglBase`——它自家老 VoIP 引擎
   （`libECMedia.so`，JNI 硬绑定 `org.webrtc`）跟本 SDK 标准版 `io.github.webrtc-sdk:android` 的 `org.webrtc`
