@@ -4,7 +4,9 @@ import android.app.Activity
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.CompoundButton
 import android.widget.LinearLayout
+import android.widget.Switch
 import com.imrtc.engine.log.IMRTCLog
 import kotlin.concurrent.thread
 
@@ -38,6 +40,20 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
     private val groupLabel = DemoUI.label(activity, "", 15f, DemoUI.LABEL)
     private val dot = View(activity)
 
+    /**
+     * 调试密钥登录开关，与身份卡上的 SDKAppID 提示成对。
+     *
+     * **登录后锁定**：换票方式在登录那一刻就定了，中途拨它不会生效——见 [refresh]。
+     */
+    private val debugLoginSwitch = Switch(activity).apply {
+        setOnCheckedChangeListener { _: CompoundButton, on: Boolean -> DemoSession.useDebugKeyLogin = on }
+    }
+
+    /** 调试模式下显示当前用的 SDKAppID，让人一眼看出这一次登录没有走服务端免密登录。 */
+    private val debugBadgeLabel = DemoUI.label(
+        activity, dt("demo.identity.debugBadge", "appId" to DemoSession.DEBUG_APP_ID), 13f, DemoUI.TINT,
+    )
+
     private val loginButton = DemoUI.button(activity, dt("demo.login.title")) { onLogin() }
     private val logoutButton = DemoUI.button(activity, dt("demo.logout")) { DemoSession.logout() }
     private val callButtons: List<Button>
@@ -61,23 +77,22 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         // 隧道那段提示是三行起步（见 LoginHint），4 行会被截掉命令那行。
         loginErrorLabel.maxLines = 8
 
+        val identityContent = mutableListOf<View>(
+            serverField,
+            DemoUI.note(activity, DemoSession.form.serverNote),
+            userField,
+        )
+        // 调试密钥登录整行在 release 构建里不露面——不只是禁用，是压根不给看见这个入口
+        // （同一道理见 DemoSession.useDebugKeyLogin 的类注释）。
+        if (BuildConfig.DEBUG) identityContent += listOf(debugLoginRow(), debugBadgeLabel)
+        identityContent += listOf(identityLine(), loginErrorLabel, loginButton, logoutButton)
+
         view = DemoUI.scroll(
             activity,
             DemoUI.stack(
                 activity,
                 listOf(
-                    DemoUI.card(
-                        activity, dt("demo.identity"),
-                        listOf(
-                            serverField,
-                            DemoUI.note(activity, DemoSession.form.serverNote),
-                            userField,
-                            identityLine(),
-                            loginErrorLabel,
-                            loginButton,
-                            logoutButton,
-                        ),
-                    ),
+                    DemoUI.card(activity, dt("demo.identity"), identityContent),
                     DemoUI.card(
                         activity, dt("demo.dial.single"),
                         listOf(calleeField, DemoUI.row(activity, listOf(audio, video))),
@@ -129,6 +144,11 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
         logoutButton.visibility = if (loggedIn) View.VISIBLE else View.GONE
         serverField.isEnabled = !loggedIn
         userField.isEnabled = !loggedIn
+        // 换票方式在登录那一刻就定了，登录后拨它不会生效——锁上，别给假承诺。
+        debugLoginSwitch.isEnabled = !loggedIn
+        debugLoginSwitch.isChecked = DemoSession.useDebugKeyLogin
+        // 只在「已登录 + 走的是调试密钥」时露出来，否则平白占一行看不出意义的文字。
+        debugBadgeLabel.visibility = if (loggedIn && DemoSession.useDebugKeyLogin) View.VISIBLE else View.GONE
         callButtons.forEach { it.isEnabled = loggedIn; it.alpha = if (loggedIn) 1f else 0.4f }
         groupLabel.text = if (DemoSession.groupPick.isEmpty()) {
             dt("demo.dial.pickEmpty")
@@ -226,6 +246,18 @@ internal class DialerScreen(private val activity: Activity) : DemoScreen {
     }
 
     // ── 两个小拼装 ────────────────────────────────────────────────────
+
+    private fun debugLoginRow(): View = LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        addView(
+            DemoUI.label(activity, dt("demo.login.debugKey.title"), 13f, DemoUI.SECONDARY).apply {
+                maxLines = 2
+            },
+            LinearLayout.LayoutParams(0, DemoUI.WRAP, 1f),
+        )
+        addView(debugLoginSwitch)
+    }
 
     private fun identityLine(): View = LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL

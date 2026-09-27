@@ -39,21 +39,39 @@ internal object DemoSession {
 
     /**
      * 调试密钥登录开关：`true` 时跳过服务端 `/v1/demo/login`，本地用调试密钥直接签票
-     * （见 [IMDebugTokenGenerator]），对齐 im-rtc-web demo-react 的同名开关。
+     * （见 [IMDebugTokenGenerator]），对齐 im-rtc-web demo-react 登录面板上的同名开关
+     * （草图 §02-B 身份卡）。**默认关、每次登录前在身份卡上手动勾**——不持久化成
+     * 「下次启动也开着」，避免有人忘记关掉之后拿着调试租户的票去跑真实验收。
      *
      * **调试模式与默认模式（`/v1/demo/login`，服务端 `-demo-app-id`）的 SDKAppID 各自独立，
      * 不共用同一个租户**——默认模式那个 appId 是服务端启动参数定的，这里看不见也不该猜；
-     * 调试模式这四个常量必须是服务端 `rtc_app_key` 表里另外注册的一条 `dbg-` 密钥。
+     * 调试模式这四个常量必须是服务端 `rtc_app_key` 表里另外注册的一条 `dbg-` 密钥，
+     * 四端 Demo（Web/Android/iOS/桌面）共用同一套常量，方便跨端对拨联调。
      */
-    private const val USE_DEBUG_KEY_LOGIN = false
-    private const val DEBUG_APP_ID = "10000003"
+    const val DEBUG_APP_ID = "10000003"
     private const val DEBUG_KEY_ID = "dbg-1"
     private const val DEBUG_KEY_SECRET = "4d2a7de87c2cde231ce2100918145beae7d7805a1d0334e6416ac0c320dacc70"
     private const val DEBUG_TOKEN_TTL_SEC = 12L * 3600
 
-    /** demoLogin 二选一：走调试密钥本地签票，或走服务端 `/v1/demo/login`。三处换票都走这里。 */
+    /**
+     * 身份卡上的开关本身。**登录后锁定**（[DialerScreen] 把它禁用掉）：适配器与
+     * 换票方式都是登录那一刻定下的，中途拨它不会生效，锁上比给假承诺诚实。
+     * 登录成功后仍读得到这个值，身份卡靠它判断要不要显示 SDKAppID 提示。
+     *
+     * **`BuildConfig.DEBUG` 之外强制回落 `false`**：[IMDebugTokenGenerator] 的类注释明确要求
+     * 「只应在 debug 构建里调用，请宿主自己用 `if (BuildConfig.DEBUG)` 包住调用点」——
+     * 库模块拿不到宿主的 `BuildConfig`，这道闸必须在宿主（本 Demo）这一侧收，
+     * 否则 release 包会带着一个真能用的「跳过服务端鉴权、本地签任意 uid 的票」开关。
+     */
+    var useDebugKeyLogin: Boolean = false
+        set(value) {
+            field = value && BuildConfig.DEBUG
+            notifyChanged()
+        }
+
+    /** demoLogin 二选一：走调试密钥本地签票，或走服务端 `/v1/demo/login`。两处换票都走这里。 */
     private fun resolveLoginToken(server: String, user: String): DemoApi.LoginResult =
-        if (USE_DEBUG_KEY_LOGIN) {
+        if (BuildConfig.DEBUG && useDebugKeyLogin) {
             val token = IMDebugTokenGenerator.generateDebugToken(
                 DEBUG_APP_ID, DEBUG_KEY_ID, DEBUG_KEY_SECRET, user, deviceId, DEBUG_TOKEN_TTL_SEC,
             )

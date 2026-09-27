@@ -23,6 +23,8 @@ android {
     buildTypes {
         release { isMinifyEnabled = false }
     }
+    // DemoSession 靠 BuildConfig.DEBUG 把调试密钥登录锁在 debug 构建里（IMDebugTokenGenerator 的文档要求）。
+    buildFeatures { buildConfig = true }
 }
 
 // 三档见 settings.gradle.kts 顶部注释。

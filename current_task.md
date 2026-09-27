@@ -25,14 +25,20 @@
   彻底验完；但 rongxin_android 那边同一时刻测 1v1 视频看不到 web 端画面（1v1 语音是好的）——两个租户、
   纯 SDK 路径都排除了，问题被收窄到 rongxin_android 自己的接入代码或者是一次性偶发，还没有结论，
   下一步在 rongxin_android 上不改代码原样重测一次视频。
-- **09-27 Demo App 加调试密钥登录开关**（`DemoSession.kt` 的 `USE_DEBUG_KEY_LOGIN`，默认 `false`，
-  对齐 im-rtc-web demo-react 同名开关）：起因是要在不碰 rongxin_android 的前提下，用本仓自己的 Demo
+- **09-27 Demo App 调试密钥登录开关**：起因是要在不碰 rongxin_android 的前提下，用本仓自己的 Demo
   去复现上面那个视频问题——多了一条不用起服务端 `-demo-login` 免密登录也能联调的路。**调试模式与默认
   模式（`/v1/demo/login`，服务端 `-demo-app-id`）的 SDKAppID 严格独立，不共用同一个租户**：默认模式的
   appId 由服务端启动参数决定，调试模式这组常量（`10000003` / `dbg-1` / 密钥）是服务端 `rtc_app_key`
   表里另外注册的一条，改的时候两组别混。三处换票（`login` / `relogin` / `onTokenWillExpire`）统一走
-  新加的 `resolveLoginToken()`。`./scripts/test.sh` 六步全绿；真机验过开关两个状态都能正常登录、
+  `resolveLoginToken()`。`./scripts/test.sh` 六步全绿；真机验过开关两个状态都能正常登录、
   且确认真的切到了对应租户（服务端日志 `app_id` 字段核对过）。
+  **09-27 下午拉齐四端**：原来是硬编码常量（改代码才能切），现在改成身份卡上的真开关
+  `DemoSession.useDebugKeyLogin`（`DialerScreen` 里的 `Switch`，登录后随字段一起锁定，
+  **不落盘**——每次重开都要重新勾，防止忘关之后拿调试租户的票去跑真实验收）；登录后身份卡多一行
+  SDKAppID 提示（`demo.identity.debugBadge`）。同一套开关 + 提示已同步做到 Web / iOS / 桌面四端
+  （常量四端同值，文案表在 server `docs/i18n/strings.json` 新增 `demo.login.debugKey.*` /
+  `demo.identity.debugBadge`）。`./scripts/test.sh` 六步全绿。
+- **09-27 三项收尾确认**：铃声蓝牙耳机场景真机验证通过（OPPO PKD130，Android 15，走 O+ 焦点 API 路径），09-16 遗留的机型/版本记录补齐；视频通话拨出中收起、接通后球变视频缩略——测试通过；1v1 视频默认走听筒——确认现状是对的，不用改。2.0.0 调用结果改造已随 2.1.0 一并发布。
 - **09-22 SDK 2.1.0 已发版**（tag `a735dda`，JitPack 三模块构建成功）：本次内容即下面这些条目——音频路由四选一、多语言、通话记录端到端。协议版本未变（仍为 2）。
 
 - **09-22 音频路由四选一（听筒 / 扬声器 / 有线耳机 / 蓝牙）Android 落地并真机 ✅**（PKD130 × frank iOS 新包，三通、面板来回切、挂断重打、群通话，用户确认双向有声；CLIENT_PARITY v1.65）。
@@ -91,11 +97,8 @@
 0. **org.webrtc → livekit.org.webrtc 改名后的真机验证**（见上）：1v1 语音 + 纯 SDK Demo 间的 1v1 视频
    都已真机验过；**还差 rongxin_android 上的 1v1 视频**（现在看到的是收不到远端画面，原样重测一次看是否
    偶发）和 release 包（R8/minify）下 `livekit.org.jni_zero` consumer 规则是否真生效，不能只信 debug 包。
-0. **还没验的**：视频通话拨出中收起、接通后球变视频缩略没点过；1v1 视频默认走听筒（改前就这样，要不要默认扬声器待定）；翻页后格子里是不是同一个人（见上，`4d01377` 是否已修）。
-1. **真机窗口清单**：
-   - 铃声：蓝牙耳机场景 + **补记机型与 Android 版本**（O+ / O- 焦点 API 走的哪条）。
-   - 老批次（forceEnd 断网 / 秒挂、后台重连节奏、1v1 视频细节）：archive「2026-09-15：forceEnd …真机验收清单」。
-2. 2.0.0 调用结果改造：真机验 → 用户通知后发版。
+1. **还没验的**：翻页后格子里是不是同一个人（见上，`4d01377` 是否已修）。
+2. 老批次真机窗口（forceEnd 断网 / 秒挂、后台重连节奏、1v1 视频细节）：archive「2026-09-15：forceEnd …真机验收清单」。
 3. 待办：静默失败清单 `../im-rtc-server/docs/ops/silent-failure/android.md`。
 
 ## 已知坑 / 限制
