@@ -94,7 +94,7 @@ interface IMMediaAdapter {
     /**
      * 造一个能显示视频的 View（`SurfaceViewRenderer`）。
      *
-     * 这个口子存在的唯一理由是**分层**：`call-uikit` 不许 import `org.webrtc`（CONVENTIONS §1），
+     * 这个口子存在的唯一理由是**分层**：`call-uikit` 不许 import `livekit.org.webrtc`（CONVENTIONS §1），
      * 但总得有人把渲染器 new 出来。由媒体层造、UIKit 只管挂到视图树上，
      * 换媒体实现时 UIKit 一行不用改。
      */

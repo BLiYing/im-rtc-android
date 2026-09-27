@@ -3,8 +3,8 @@ package com.imrtc.engine.webrtc
 import android.os.Handler
 import android.os.SystemClock
 import com.imrtc.engine.log.IMRTCLog
-import org.webrtc.EglRenderer
-import org.webrtc.SurfaceViewRenderer
+import livekit.org.webrtc.EglRenderer
+import livekit.org.webrtc.SurfaceViewRenderer
 
 /**
  * 对端摄像头**重开**之后，等新画面真的画到屏上，再报一次 `onFirstVideoFrame`。

@@ -3,7 +3,7 @@ package com.imrtc.engine.webrtc
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
-import org.webrtc.RtpCapabilities
+import livekit.org.webrtc.RtpCapabilities
 
 /**
  * codec 排序（[IMUplinkPolicy.h264First]）。

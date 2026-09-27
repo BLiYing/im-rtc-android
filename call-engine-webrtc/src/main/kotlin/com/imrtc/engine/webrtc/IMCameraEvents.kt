@@ -1,7 +1,7 @@
 package com.imrtc.engine.webrtc
 
 import com.imrtc.engine.log.IMRTCLog
-import org.webrtc.CameraVideoCapturer
+import livekit.org.webrtc.CameraVideoCapturer
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
