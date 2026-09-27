@@ -11,6 +11,7 @@ import android.os.Looper
 import com.imrtc.engine.IMCallEngine
 import com.imrtc.engine.IMCallEngineListener
 import com.imrtc.engine.IMCallOptions
+import com.imrtc.engine.IMDebugTokenGenerator
 import com.imrtc.engine.log.IMRTCLog
 import com.imrtc.engine.media.IMVideoProfile
 import com.imrtc.engine.webrtc.IMWebRTCAdapter
@@ -35,6 +36,31 @@ import kotlin.concurrent.thread
  * 空壳桩问题。SDK 里禁用 `org.json` 的理由是 JVM 单测会假绿（CLAUDE.md 技术栈那节），与这里无关。
  */
 internal object DemoSession {
+
+    /**
+     * 调试密钥登录开关：`true` 时跳过服务端 `/v1/demo/login`，本地用调试密钥直接签票
+     * （见 [IMDebugTokenGenerator]），对齐 im-rtc-web demo-react 的同名开关。
+     *
+     * **调试模式与默认模式（`/v1/demo/login`，服务端 `-demo-app-id`）的 SDKAppID 各自独立，
+     * 不共用同一个租户**——默认模式那个 appId 是服务端启动参数定的，这里看不见也不该猜；
+     * 调试模式这四个常量必须是服务端 `rtc_app_key` 表里另外注册的一条 `dbg-` 密钥。
+     */
+    private const val USE_DEBUG_KEY_LOGIN = false
+    private const val DEBUG_APP_ID = "10000003"
+    private const val DEBUG_KEY_ID = "dbg-1"
+    private const val DEBUG_KEY_SECRET = "4d2a7de87c2cde231ce2100918145beae7d7805a1d0334e6416ac0c320dacc70"
+    private const val DEBUG_TOKEN_TTL_SEC = 12L * 3600
+
+    /** demoLogin 二选一：走调试密钥本地签票，或走服务端 `/v1/demo/login`。三处换票都走这里。 */
+    private fun resolveLoginToken(server: String, user: String): DemoApi.LoginResult =
+        if (USE_DEBUG_KEY_LOGIN) {
+            val token = IMDebugTokenGenerator.generateDebugToken(
+                DEBUG_APP_ID, DEBUG_KEY_ID, DEBUG_KEY_SECRET, user, deviceId, DEBUG_TOKEN_TTL_SEC,
+            )
+            DemoApi.LoginResult(token, user, System.currentTimeMillis() + DEBUG_TOKEN_TTL_SEC * 1000)
+        } else {
+            DemoApi(server).demoLogin(user)
+        }
 
     private val main = Handler(Looper.getMainLooper())
     private lateinit var prefs: SharedPreferences
@@ -253,7 +279,7 @@ internal object DemoSession {
         isLoggingIn = true
         notifyChanged()
         thread {
-            runCatching { DemoApi(server).demoLogin(user) }
+            runCatching { resolveLoginToken(server, user) }
                 .onSuccess { result ->
                     main.post {
                         isLoggingIn = false
@@ -475,7 +501,7 @@ internal object DemoSession {
             val currentUser = username
             if (currentServer.isEmpty() || currentUser.isEmpty()) return
             thread {
-                runCatching { DemoApi(currentServer).demoLogin(currentUser) }
+                runCatching { resolveLoginToken(currentServer, currentUser) }
                     .onSuccess { result ->
                         main.post {
                             // 下一次重连生效，不打断当前通话。
