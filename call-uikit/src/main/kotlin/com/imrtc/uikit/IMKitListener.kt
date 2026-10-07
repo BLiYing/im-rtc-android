@@ -20,6 +20,7 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
 
     // 顶部橙条：正在重连 / 连接已断开（规范 §08）。通话不结束、计时器继续走。
     override fun onConnected(sessionId: String, resumed: Boolean) {
+        IMKitLogin.onConnected()
         IMCallKit.update(IMCallViewReducer.connection(state, IMCallViewState.Connection.OK))
         host.onConnected(sessionId, resumed)
     }
@@ -29,19 +30,23 @@ internal class IMKitListener(private val host: IMCallEngineListener) : IMCallEng
         // 不必再靠 `code == 4403` 猜（4401 用尽时 code 还是 4401，猜不出来）。
         //
         // **已经是 LOST 就不再翻回 RECONNECTING**：放弃是终态。重连成功时 onConnected 会把它拨回 OK。
+        IMKitLogin.onDisconnected()
         val lost = !willReconnect || state.connection == IMCallViewState.Connection.LOST
         IMCallKit.update(IMCallViewReducer.connection(state, if (lost) IMCallViewState.Connection.LOST else IMCallViewState.Connection.RECONNECTING))
         host.onDisconnected(code, willReconnect)
     }
 
     override fun onKickedOut(reason: IMKickedOutReason) {
+        // 配了 tokenProvider 时：authExpired 由 Kit 换票重登，顶号 / 配置被拒不再自动登录（宿主照常收到）。
+        IMKitLogin.onKickedOut(reason)
         IMCallKit.update(IMCallViewReducer.connection(state, IMCallViewState.Connection.LOST))
         host.onKickedOut(reason)
     }
 
     override fun onTokenWillExpire(expiresAtMs: Long) {
-        // Kit 对票期没有界面表达——换票是宿主的事（票从宿主的账号体系来）。
-        // 这里只做透传，不吞掉：吞了的话用 Kit 的宿主就收不到这个回调了。
+        // 配了 tokenProvider 时 Kit 自己取新票续上；没配就是宿主的事（票从宿主的账号体系来）。
+        // 照样透传，不吞掉：吞了的话用 Kit 的宿主就收不到这个回调了。
+        IMKitLogin.onTokenWillExpire()
         host.onTokenWillExpire(expiresAtMs)
     }
 

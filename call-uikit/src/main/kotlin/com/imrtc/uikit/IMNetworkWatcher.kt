@@ -15,7 +15,15 @@ import com.imrtc.engine.log.IMRTCLog
  * 只要 `ACCESS_NETWORK_STATE`（普通权限，装上即有，call-engine-webrtc 已声明）。
  * 注册失败（个别 ROM 限制每个 App 的回调数）只记一条日志，不影响通话——退回老的退避节奏。
  */
-internal class IMNetworkWatcher(private val onChanged: () -> Unit) {
+internal class IMNetworkWatcher(
+    private val onChanged: () -> Unit,
+    /**
+     * **每次**有默认网络可用都调（不经 [IMDefaultNetworkTracker] 过滤）：Kit 取票登录在退避里等着时据此立即再试。
+     * 没网时注册的话系统不会先回调一次「当前网络」，网络回来那一下在 tracker 看来是第一次、不算「换了」——
+     * 只挂 [onChanged] 会把它吞掉（2026-10-07 OPPO 实测：断网冷启动后开 Wi-Fi，等到 16 秒那档退避才登上）。
+     */
+    private val onAvailable: () -> Unit = {},
+) {
 
     private val tracker = IMDefaultNetworkTracker<Network>()
     private var manager: ConnectivityManager? = null
@@ -26,6 +34,7 @@ internal class IMNetworkWatcher(private val onChanged: () -> Unit) {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                onAvailable()
                 if (!tracker.onAvailable(network)) return
                 IMRTCLog.i("kit", "系统默认网络换了 → 通知 Engine 立即重连")
                 onChanged()

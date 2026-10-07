@@ -19,7 +19,7 @@ internal object IMKitResults {
         if (error != null) IMRTCLog.w("kit", "$what 失败 code=${error.code} ${error.name} for=${error.forType}")
     }
 
-    /** 拨号：宿主邀请鉴权回调拒绝（1409）与已在别处通话（1408）有专属提示，其余码由 `onCallEnd(error)` 那条路负责。 */
+    /** 拨号：宿主邀请鉴权回调拒绝（1409）、已在别处通话（1408）与没登录（2007）有专属提示，其余码由 `onCallEnd(error)` 那条路负责。 */
     fun placeCall() = IMResultCallback<String> { _, error ->
         if (error == null) return@IMResultCallback
         IMRTCLog.w("kit", "拨号被拒 code=${error.code} ${error.name}")
@@ -27,6 +27,8 @@ internal object IMKitResults {
             INVITE_DENIED -> IMCallKit.hint(IMText.t("hint.inviteRejected"))
             // 本端界面看着空闲、但同一账号在别的设备上通话：入口守门拦不到，只能靠服务端回 1408。
             ALREADY_IN_CALL -> IMBusyGuard.toast(IMBusyGuard.MESSAGE)
+            // 没登录（没配 tokenProvider 的宿主没登上 / 刚好断了）：原先只有笼统的结束画面。
+            NOT_LOGGED_IN -> IMBusyGuard.toast(IMText.t("hint.serviceUnreachable"))
         }
     }
 
@@ -64,4 +66,5 @@ internal object IMKitResults {
     private const val NOT_CALL_OWNER = 1407
     private const val INVITE_DENIED = 1409
     private const val ALREADY_IN_CALL = 1408
+    private const val NOT_LOGGED_IN = 2007
 }

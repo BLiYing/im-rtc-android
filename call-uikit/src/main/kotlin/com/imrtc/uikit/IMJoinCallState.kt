@@ -15,6 +15,12 @@ internal object IMJoinCallState {
      */
     fun allowedFrom(phase: IMCallViewState.Phase): Boolean = IMBusyGuard.allows(phase)
 
+    /** 「接通中…」这一屏还是不是这一通。 */
+    private fun stillJoining(callId: String): Boolean {
+        val state = IMCallKit.state
+        return state.phase == IMCallViewState.Phase.CONNECTING && state.callId == callId
+    }
+
     /** [IMCallKit.joinCall] 的实现：守门 → 进「接通中…」→ 麦克风权限门 → 发 `call.join`。 */
     fun start(callId: String) {
         val instance = IMCallKit.engine ?: return
@@ -24,14 +30,14 @@ internal object IMJoinCallState {
         // 与接听同一道权限门，但只要麦克风：加入之前不知道这通是不是视频，摄像头等用户在通话里再开。
         IMCallKit.ensurePermissions(IMPermissionGate.devicesFor("audio", withCamera = false)) { outcome ->
             // 权限门可能停在系统框上好几秒，这期间用户可能已经收起了这一屏。
-            val state = IMCallKit.state
-            val stillJoining = state.phase == IMCallViewState.Phase.CONNECTING && state.callId == callId
             val blocked = outcome == IMPermissionGate.Outcome.MIC_BLOCKED || outcome == IMPermissionGate.Outcome.CANCELLED
             when {
-                !stillJoining -> Unit
+                !stillJoining(callId) -> Unit
                 blocked -> IMCallKit.update(IMCallViewReducer.reset())
-                // 被拒的码从这次调用的结果里取（2.0.0），见 [IMKitResults.joinCall]。
-                else -> instance.joinCall(callId, IMKitResults.joinCall(callId))
+                // 没登上先补一次（KIT_TOKEN_PROVIDER_DESIGN §6）；被拒的码从这次调用的结果里取（2.0.0），见 [IMKitResults.joinCall]。
+                else -> IMKitLogin.thenReady({ stillJoining(callId) }) {
+                    if (stillJoining(callId)) instance.joinCall(callId, IMKitResults.joinCall(callId))
+                }
             }
         }
     }

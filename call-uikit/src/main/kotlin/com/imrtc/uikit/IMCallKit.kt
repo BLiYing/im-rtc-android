@@ -75,7 +75,11 @@ object IMCallKit {
 
     /** 切后台停摄像头、回前台按原选择恢复，见 [IMBackgroundCamera]；默认网络换了叫 Engine 立即重连，见 [IMNetworkWatcher]。 */
     private val backgroundCamera = IMBackgroundCamera()
-    private val networkWatcher = IMNetworkWatcher { engine?.notifyNetworkChanged() }
+    // 两个回调都在 ConnectivityManager 的线程上来：碰 Kit 会话要切回主线程（会话只在主线程上用）。
+    private val networkWatcher = IMNetworkWatcher(
+        onChanged = { engine?.notifyNetworkChanged() },
+        onAvailable = { main.post { IMKitLogin.onNetworkRestored() } },
+    )
 
     /** 铃声播放层，见 [IMRingPlayer]。造得晚——要 `appContext`，[start] 里才有。 */
     private var ring: IMRingPlayer? = null
@@ -86,7 +90,7 @@ object IMCallKit {
     }
 
     /**
-     * 接管通话 UI。**在 login 之前调**——来电随时可能到。
+     * 接管通话 UI。**在 login 之前调**——来电随时可能到。配了 [IMCallKitConfig.tokenProvider] 时 login 由 Kit 来做。
      * 传进来的 `engine` 的 listener 要先经 [wrap] 包一层：宿主自己的 listener 照常收到全部回调，Kit 只是搭个便车。
      */
     @JvmOverloads
@@ -100,14 +104,18 @@ object IMCallKit {
         IMActivityTracker.onForegroundChanged = { foreground ->
             // 读属性不读参数：stop() 之后 Kit 的 engine 置空，这里就不该再去碰那个旧实例。
             this.engine?.let { backgroundCamera.onForegroundChanged(it, state, foreground) }
+            if (foreground) IMKitLogin.onNetworkRestored()
         }
         // 宿主页面回到前台就按当前状态再挑一次形态（全屏形态下顺带补拉丢了的通话页，见 [IMPresentRules]）。
         IMActivityTracker.onHostResumed = { presentation.apply(state, appContext, hostResumed = true) }
         networkWatcher.start(context.applicationContext)
+        // 配了 tokenProvider 就由 Kit 取票登录（KIT_TOKEN_PROVIDER_DESIGN），宿主不要再自己 login。
+        IMKitLogin.start(context.applicationContext, engine, config.tokenProvider)
     }
 
     @JvmStatic
     fun stop() {
+        IMKitLogin.stop()
         engine = null
         networkWatcher.stop()
         stopTimer()
@@ -142,7 +150,7 @@ object IMCallKit {
     @JvmOverloads
     @JvmStatic
     fun placeCall(calleeIds: List<String>, mediaType: String, isGroup: Boolean = false) =
-        placeCallWith(calleeIds, mediaType, isGroup, "", "") {
+        IMPlaceCall.place(calleeIds, mediaType, isGroup, "", "") {
             it.call(calleeIds, mediaType, isGroup, IMKitResults.placeCall())
         }
 
@@ -152,42 +160,9 @@ object IMCallKit {
      */
     @JvmStatic
     fun placeCall(calleeIds: List<String>, mediaType: String, options: IMCallOptions) =
-        placeCallWith(calleeIds, mediaType, options.isGroup, options.chatGroupId, options.userData) {
+        IMPlaceCall.place(calleeIds, mediaType, options.isGroup, options.chatGroupId, options.userData) {
             it.call(calleeIds, mediaType, options, IMKitResults.placeCall())
         }
-
-    /** 两个 `placeCall` 重载共用的权限门 + 界面切换，`dispatch` 只是最后真正发帧的那一下不同。 */
-    private fun placeCallWith(
-        calleeIds: List<String>,
-        mediaType: String,
-        isGroup: Boolean,
-        chatGroupId: String,
-        userData: String,
-        dispatch: (IMCallEngine) -> Unit,
-    ) {
-        val instance = IMBusyGuard.freeEngine() ?: return
-        update(IMCallViewReducer.outgoing(state, calleeIds, mediaType, isGroup, chatGroupId, userData))
-        ensurePermissions(IMPermissionGate.devicesForPlacing(mediaType, isGroup)) { outcome ->
-            when (outcome) {
-                IMPermissionGate.Outcome.OK -> {
-                    if (!stillPlacing()) return@ensurePermissions
-                    // 摄像头到手、而且开着才接采集——**拨出中就该看见自己**（草图 §03-E）。
-                    onLocalMediaStarted()
-                    syncCameraIntent(instance)
-                    dispatch(instance)
-                }
-                IMPermissionGate.Outcome.CAMERA_BLOCKED -> {
-                    if (!stillPlacing()) return@ensurePermissions
-                    update(IMCallViewReducer.cameraBlocked(state))
-                    syncCameraIntent(instance)
-                    dispatch(instance)
-                }
-                // 同上先看一眼：这一屏可能已经不在了，reset() 会把无关的当前状态整个抹掉。
-                IMPermissionGate.Outcome.MIC_BLOCKED, IMPermissionGate.Outcome.CANCELLED ->
-                    if (stillPlacing()) update(IMCallViewReducer.reset())
-            }
-        }
-    }
 
     /**
      * 主动加入一通进行中的群通话（HOST_INTEGRATION_DESIGN §3.4 / §4.1）。
@@ -204,17 +179,28 @@ object IMCallKit {
         val instance = IMBusyGuard.freeEngine() ?: return
         ensurePermissions(IMPermissionGate.devicesFor("video", withCamera = true)) { outcome ->
             if (outcome == IMPermissionGate.Outcome.MIC_BLOCKED || outcome == IMPermissionGate.Outcome.CANCELLED) return@ensurePermissions
-            update(IMCallViewReducer.meeting(state, roomId))
-            if (outcome == IMPermissionGate.Outcome.CAMERA_BLOCKED) {
-                update(IMCallViewReducer.cameraBlocked(state))
-            } else {
-                onLocalMediaStarted()
-            }
-            syncCameraIntent(instance)
-            // 会议房发 "audio"：音频服务端自动订，视频由分页画廊按当前页订（见 joinRoom 的注释）。
-            instance.joinRoom(roomId, roomToken, IMKitResults.logOnly("进会议"), autoSubscribe = "audio")
+            IMKitLogin.thenReady(null) { enterMeeting(instance, roomId, roomToken, outcome) }
         }
     }
+
+    private fun enterMeeting(instance: IMCallEngine, roomId: String, roomToken: String, outcome: IMPermissionGate.Outcome) {
+        update(IMCallViewReducer.meeting(state, roomId))
+        if (outcome == IMPermissionGate.Outcome.CAMERA_BLOCKED) {
+            update(IMCallViewReducer.cameraBlocked(state))
+        } else {
+            onLocalMediaStarted()
+        }
+        syncCameraIntent(instance)
+        // 会议房发 "audio"：音频服务端自动订，视频由分页画廊按当前页订（见 joinRoom 的注释）。
+        instance.joinRoom(roomId, roomToken, IMKitResults.logOnly("进会议"), autoSubscribe = "audio")
+    }
+
+    /**
+     * 确保已登录（配了 [IMCallKitConfig.tokenProvider] 时由 Kit 补一次取票登录），主线程回调。
+     * 宿主自己直接用 Engine 的地方（`fetchCallHistory`）先调它。没配 tokenProvider 时恒为 `true`。
+     */
+    @JvmStatic
+    fun ensureReady(callback: IMReadyCallback) = IMKitLogin.ensureReady(callback)
 
     /** 宿主自己调了 `engine.call` 的话，用这一条把拨出界面拉起来（回调里只有被叫侧的信息）。 */
     @JvmStatic
@@ -351,7 +337,7 @@ object IMCallKit {
      * 来电页上关掉摄像头再接听的（= 以语音接听，§11-10）、摄像头权限被拒的，都不该被开摄像头；
      * 后两种可能根本没给过摄像头权限。之后点「开摄像头」由 `openCamera` 补发视频。
      */
-    private fun syncCameraIntent(instance: IMCallEngine) {
+    internal fun syncCameraIntent(instance: IMCallEngine) {
         if (state.mediaType != "video" || state.cameraOn) return
         instance.closeCamera()
         // 兜底：进房前开过的预览不许留着采集（toggleCamera 已经停过的话这里是空操作）。
@@ -385,7 +371,7 @@ object IMCallKit {
     private val redButton = IMRedButton(main, { state }, ::update, { engine })
 
     /** 过完权限门拨出那一屏还在不在（判据与理由都在 [IMLateGuard]），不在就记一笔。 */
-    private fun stillPlacing(): Boolean = IMLateGuard.stillPlacing(state).also {
+    internal fun stillPlacing(): Boolean = IMLateGuard.stillPlacing(state).also {
         if (!it) IMRTCLog.w("kit", "过完权限门时这一屏已经不在了，invite 不发（phase=${state.phase}）")
     }
 

@@ -110,6 +110,15 @@ class IMCallKitConfig {
             IMText.locale = value
         }
 
+    /**
+     * 从你的后台取一张 RTC 接入票（server `docs/design/KIT_TOKEN_PROVIDER_DESIGN.md`）。**在 [IMCallKit.start] 时读一次**。
+     *
+     * **给了它，登录归 Kit**：start 即取票登录，失败按退避重试（网络换了 / 回到前台立即再试），
+     * 票快过期自动续、被踢 `AUTH_EXPIRED` 自动重登，拨号 / 加入前没登上会先补一次；[IMCallKit.stop] 时登出。
+     * 宿主**不要再自己调 `engine.login` / `logout`**。不给：与 2.1.x 一致，宿主自己管登录。与 Web / iOS 同名同义。
+     */
+    var tokenProvider: IMTokenProvider? = null
+
     /** 按语言覆盖个别文案（只写要改的 key，key 见跨端文案表 `docs/i18n/strings.json`）。 */
     var messages: Map<IMLocale, Map<String, String>> = emptyMap()
         set(value) {
