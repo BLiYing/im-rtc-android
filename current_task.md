@@ -7,7 +7,7 @@
 
 ## 当前焦点
 
-- **10-07 Kit `tokenProvider`（2.2.0 待发，未提交）**：`IMCallKitConfig.tokenProvider`（`fun interface`，Java 可用）由 Kit 取票登录、退避重试、拨号 / 加入 / 进会议前补登录、续票、`AUTH_EXPIRED` 重登；新增 `IMCallKit.ensureReady`；拨号回 2007 Toast。逻辑 `IMKitSession.kt`（纯类）+ `IMKitLogin.kt`；拨号流程挪到 `IMPlaceCall.kt`（`IMCallKit.kt` 594→576 行）。测试 `KitSessionTest`（16 条）。`test.sh` 6 步绿。**待**：im-android 宿主 mavenLocal 联调。
+- **10-08 SDK 2.2.0 已发版：Kit `tokenProvider`**：`IMCallKitConfig.tokenProvider`（`fun interface`，Java 可用）由 Kit 取票登录、退避重试、拨号 / 加入 / 进会议前补登录、续票、`AUTH_EXPIRED` 重登；新增 `IMCallKit.ensureReady`；拨号回 2007 Toast。逻辑 `IMKitSession.kt`（纯类）+ `IMKitLogin.kt`；拨号流程挪到 `IMPlaceCall.kt`（`IMCallKit.kt` 594→576 行）。测试 `KitSessionTest`（16 条）。`test.sh` 6 步绿。im-android 已接入（OPPO 实测通过；修了没网时注册的网络监听吞掉第一次可用），JitPack 三模块构建成功，Demo 公网包档 assemble 过。
 - **09-27 SDK 2.1.1 发版（仅 Android，单端补丁）**：内容就是下面这条 org.webrtc 改名修复——
   这个修复在 09-22 打的 `2.1.0` tag 之后才做，JitPack 只认 tag，rongxin_android 拉到的
   `2.1.0` 其实还是没改名前的版本，问题并没有真正解决，所以必须单独发一个补丁号。
